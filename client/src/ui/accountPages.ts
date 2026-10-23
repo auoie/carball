@@ -95,6 +95,9 @@ export interface AccountPagesActions {
   readonly ask: (title: string, body: string, yes: () => void) => void;
   /** The account changed (signed in, renamed, signed out): the menu's entry follows */
   readonly changed: (account: Account | null) => void;
+  /** The account about to go (signed out, everywhere, or deleted): the page's search cancelled first, settled once the
+   *  service has the cancel, its session still standing for it (else the search would go on, matchable) */
+  readonly leaving: () => Promise<void>;
   /** Leave the page (Back, Cancel) */
   readonly back: () => void;
   /** Go to a provider's sign-in (a page load) */
@@ -215,8 +218,9 @@ export class AccountPages {
         .catch(fail);
     });
     const signOut = this.#button(T.signOut, () => {
-      this.#api
-        .signOut()
+      this.#actions
+        .leaving()
+        .then(async () => this.#api.signOut())
         .then(() => {
           this.#actions.changed(null);
           this.showSignIn();
@@ -224,8 +228,9 @@ export class AccountPages {
         .catch(fail);
     });
     const everywhere = this.#button(T.signOutEverywhere, () => {
-      this.#api
-        .signOutEverywhere()
+      this.#actions
+        .leaving()
+        .then(async () => this.#api.signOutEverywhere())
         .then(() => {
           this.#actions.changed(null);
           this.showSignIn(T.signedOutEverywhere);
@@ -234,8 +239,9 @@ export class AccountPages {
     });
     const remove = this.#button(T.deleteAccount, () => {
       this.#actions.ask(T.deleteTitle, T.deleteBody, () => {
-        this.#api
-          .deleteAccount()
+        this.#actions
+          .leaving()
+          .then(async () => this.#api.deleteAccount())
           .then(() => {
             this.#actions.changed(null);
             this.showSignIn();

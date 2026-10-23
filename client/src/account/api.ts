@@ -3,13 +3,15 @@
 // check, the account's rename, sign-out and deletion. The deployment's page only: a development page plays on its game
 // server's own tickets, with no accounts.
 
-/** A signed-in account (GET /api/me): its ratings in the playlists (1v1, 2v2, 3v3), a leaver's queue ban's end (ms) */
+/** A signed-in account (GET /api/me): its ratings in the playlists (1v1, 2v2, 3v3), a leaver's queue ban's end and a
+ *  no-show's search cooldown's end (ms) */
 export interface Account {
   readonly id: string;
   readonly name: string;
   readonly providers: readonly Provider[];
   readonly ratings: readonly ShownRating[];
   readonly queueBanUntil: number | null;
+  readonly searchCooldownUntil: number | null;
 }
 
 /** A playlist's rating as the page shows it ("?" while provisional: lichess's) */
@@ -143,7 +145,7 @@ export class AccountsApi {
 }
 
 function account(body: unknown): Account {
-  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown; ratings?: unknown; queueBanUntil?: unknown };
+  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown; ratings?: unknown; queueBanUntil?: unknown; searchCooldownUntil?: unknown };
   if (typeof b.id !== "string" || typeof b.name !== "string" || !Array.isArray(b.providers)) throw new AccountError("server");
   const ratings: ShownRating[] = [];
   for (const r of Array.isArray(b.ratings) ? (b.ratings as unknown[]) : []) {
@@ -152,13 +154,17 @@ function account(body: unknown): Account {
       ratings.push({ playlist: x.playlist, rating: x.rating, provisional: x.provisional === true, games: typeof x.games === "number" ? x.games : 0 });
     }
   }
-  const until = typeof b.queueBanUntil === "string" ? Date.parse(b.queueBanUntil) : NaN;
+  const time = (value: unknown): number | null => {
+    const at = typeof value === "string" ? Date.parse(value) : NaN;
+    return Number.isFinite(at) ? at : null;
+  };
   return {
     id: b.id,
     name: b.name,
     providers: PROVIDERS.filter((p) => (b.providers as unknown[]).includes(p)),
     ratings,
-    queueBanUntil: Number.isFinite(until) ? until : null,
+    queueBanUntil: time(b.queueBanUntil),
+    searchCooldownUntil: time(b.searchCooldownUntil),
   };
 }
 

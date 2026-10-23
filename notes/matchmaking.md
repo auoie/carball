@@ -132,11 +132,15 @@ played, and reported. There's one server per region.
     of the account, a quitter ban, a no-show cooldown).
   - `DELETE` is Cancel Search, of the session's own account's search (RV-896).
 - A search is matched only once its page has polled it: a start whose answer never reached its page (which then can't
-  cancel it) is never matched, and goes 10 s on (RV-892).
+  cancel it) is never matched, and goes 45 s on (RV-892). And only while its page polls it: a poll open, or one answered
+  in the last 3 s (PollGap: the next follows at once). A search whose polls stopped (an outage refusing the polls'
+  session reads, its page gone) isn't matched into a no-show (the flow audit's 4, 2026-10-23).
 - Each poll is sent when the last one returns, not on a timer (a hidden tab's timers are throttled).
-- A search with no poll open and none in the last 10 s is dropped. A poll needs the searcher's own session (RV-871),
-  so a search whose session ended (signed out, banned, deleted) goes 10 s after its last poll returns: up to about
-  35 s, a 25 s poll's wait and the 10 s (RV-872, RV-897).
+- A search with no poll open and none in the last 45 s (SearchLife) is dropped: longer than the page's retries of a
+  failed poll (1, 2, 4, 8 and 8 s apart), so a passing outage keeps the search and its wait (the flow audit's 4; it was
+  10 s). A poll needs the searcher's own session (RV-871), so a search whose session ended (signed out, banned,
+  deleted) goes 45 s after its last poll returns, unmatched from 3 s on (RV-872, RV-897). Sign Out and Delete Account
+  cancel the page's search first, while the session stands (the flow audit's 6).
 - A page closed or reloaded while it searches sends the `DELETE` as it goes (RV-866); Cancel Search during the start
   lets the start finish and deletes what it returns (RV-867).
 - Each start, a restart's after a `404` too, measures the pings again, and the automatic region pick comes from those
@@ -149,10 +153,11 @@ played, and reported. There's one server per region.
   - a start that renews the cookie sent as the page goes can lose the renewed cookie (a sub-second window), and so can
     one answered 502 though the API took it; then the old cookie works through its 10-minute grace and the player is
     signed out, as with RV-889;
-  - a start whose answer was lost gives up the account's rejoin for good (RV-869); its search, never matched, goes 10 s
+  - a start whose answer was lost gives up the account's rejoin for good (RV-869); its search, never matched, goes 45 s
     on;
-  - after a sign-out, a search can still be matched in the up to ~35 s before it goes: its poll may bring a seat, or the
-    account becomes a no-show and the others' match is cancelled.
+  - after a sign-out from another tab (this page's own cancels its search first), a search can still be matched in the
+    3 s after its last poll: its poll may bring a seat, or the account becomes a no-show and the others' match is
+    cancelled.
 - A server name the API can't take (not host:port, too long) or given twice is dropped from the request, by the page
   and by the API, never failing the search (RV-868); such a name stops a queue server's start.
 - A `404` (the API restarted) makes the page search again once; a `502`/`503` is retried with a backoff.
@@ -179,9 +184,13 @@ queue is in its memory).
 server (its `aud`), one match and one seat, lives 30 s, and is taken once (RV-850): the server keeps its one-time id,
 and a seat is taken once.
 - The server opens the match at the first valid claim and waits for the rest, 10 s from that first claim (about the
-  user's 12 s from MatchFound, RV-367, after the 3 s countdown).
+  user's 12 s from MatchFound, RV-367, after the 3 s countdown). The match page opens its claim at once, beside its
+  assets' load, with the server's URL the menu handed over (no config.json read again: the flow audit's 1, 2026-10-23).
 - **A no-show:** the server cancels, kicks the others with `KICK_NOT_ALL_JOINED` and reports the cancel. The API gives
-  the no-show the 2-minute cooldown. The others go back into the lists with their original wait, which puts them first.
+  the no-show the 2-minute cooldown, which `/api/me` carries (`searchCooldownUntil`) and the Play page shows under Find
+  Match as the ban's line (a Cancel Search during "Joining in" is a no-show: its page reads it back 2 s on; the flow
+  audit's 5). The others go back into the lists with their original wait, which puts them first; a match page in a
+  hidden tab (no frames) acts on the kick as its session ends (the flow audit's 3).
 
 **One match per account** (MX1R-1).
 - **Before its start, a match holds no one.** A search then is the player's to make: if the match goes on without

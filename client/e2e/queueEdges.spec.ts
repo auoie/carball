@@ -266,6 +266,31 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   for (const context of contexts) await context.close();
 });
 
+test("a match page running no frames (a hidden tab's) still goes back to search when its match is cancelled (the flow audit's 3)", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  // (A's match pages get no animation frames, as a hidden tab: the cancel's kick and close acted on as the session ends)
+  const a = await menuPage(browser, errors, async (page) => {
+    await page.addInitScript(() => {
+      if (new URLSearchParams(location.search).has("match")) window.requestAnimationFrame = () => 0;
+    });
+  });
+  const b = await menuPage(browser, errors);
+  await findMatch(a);
+  await findMatch(b);
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Joining", { timeout: 15_000 });
+  const bContext = b.context();
+  await b.close();
+  await a.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
+  await a.waitForURL((url) => !/[?&]match(&|$)/.test(url.search), { timeout: 60_000 });
+  await expect(a.locator("#search-banner")).toContainText("Not every player joined the match. Searching again.", { timeout: 30_000 });
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 30_000 });
+  await a.locator("#search-banner .search-cancel").click();
+  expect(errors).toEqual([]);
+  await a.context().close();
+  await bContext.close();
+});
+
 test("a no-show: the player who came is told and searches again, the no-show can't search for two minutes (RV-367, MX1)", async ({ browser }) => {
   test.setTimeout(180_000);
   const errors: string[] = [];
@@ -323,8 +348,9 @@ test("a page reloaded while it searches: its search cancelled as it goes, anothe
 }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
-  // (b ready on the Play page, 1v1 ticked, before a reloads: its search starts a moment after the reload, well inside
-  // the 10 s a search not deleted would stay matchable, a's having been polled)
+  // (b ready on the Play page, 1v1 ticked, before a reloads: its search starts a moment after the reload. a's search,
+  // had it stayed, is deleted as a goes, and is matched no more 3 s after its last poll anyway (PollGap, the flow
+  // audit's 4); the delete itself: accounts.spec.ts)
   const b = await menuPage(browser, errors);
   const menuB = b.locator("#main-menu");
   await menuB.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
@@ -337,7 +363,7 @@ test("a page reloaded while it searches: its search cancelled as it goes, anothe
   await menuB.getByRole("button", { name: /^find match$/i }).click();
   await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
   expect(Date.now() - reloaded, "b searching soon enough to meet a's search, had it stayed").toBeLessThan(6000);
-  // (past the 10 s a search left behind stays matchable: still searching, no match made with it)
+  // (well past the time a search left behind stays matchable: still searching, no match made with it)
   await b.waitForTimeout(11_000);
   await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching");
   expect(b.url()).not.toMatch(/[?&]match(&|$)/);

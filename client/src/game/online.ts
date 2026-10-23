@@ -207,9 +207,11 @@ export class Online {
   /** Why the server kicked this player (KICK_*), before it ends the session */
   #kicked: number | null = null;
   #sessionEnded = false;
-  /** How the session ended, once (a queue match's page goes back to the menu with it) */
-  onSessionEnd: ((why: SessionEnd) => void) | null = null;
-  /** The match is over (its winner decided, or a no contest), once a match: its saved ranked seat goes (RJ1, RX32) */
+  #onSessionEnd: ((why: SessionEnd) => void) | null = null;
+  /** The match over told (`onMatchOver`), once */
+  #matchOverTold = false;
+  /** The match is over (its winner decided, or a no contest), once a match: its saved ranked seat goes (RJ1, RX32). Set
+   *  before `onSessionEnd` (an end already come is acted on as that's set) */
   onMatchOver: (() => void) | null = null;
   /** The idle warning's tip (src/ui/idleTip.ts) */
   idleTip: { update(shown: boolean): void } | null = null;
@@ -347,7 +349,41 @@ export class Online {
     connection.onClose = (reason) => {
       this.#disconnected = reason;
       this.#session.disconnected = true;
+      // (acted on now, not at the next frame: a hidden tab runs none, so a match cancelled before its start (its kick
+      // queued) takes its page back to the menu, searching again within the matchmaker's ReturnFor, as the way in
+      // already works hidden, RV-354; once the page listens for the end)
+      if (this.#onSessionEnd) this.#endFromQueue();
     };
+  }
+
+  /** How the session ended, once (a queue match's page goes back to the menu with it); an end already come is acted on
+   *  as the handler's set */
+  get onSessionEnd(): ((why: SessionEnd) => void) | null {
+    return this.#onSessionEnd;
+  }
+
+  set onSessionEnd(handler: ((why: SessionEnd) => void) | null) {
+    this.#onSessionEnd = handler;
+    if (handler && this.#disconnected !== null) this.#endFromQueue();
+  }
+
+  /** The session's end acted on outside a frame (a hidden tab's): the queued messages' kick and the match's latest phase
+   *  read first (the rest needn't be: the page goes) */
+  #endFromQueue(): void {
+    if (this.#sessionEnded) return;
+    let phase = this.#match?.phase;
+    for (const m of this.#controlMessages) {
+      if (m.type === "kicked") this.#kicked = m.reason;
+      else if (m.type === "match") phase = m.phase;
+    }
+    if (matchOver(phase)) this.#tellMatchOver();
+    this.#watchSessionEnd(phase);
+  }
+
+  #tellMatchOver(): void {
+    if (this.#matchOverTold) return;
+    this.#matchOverTold = true;
+    this.onMatchOver?.();
   }
 
   /** The Stat Graphs' network rows' feed (HUD-21: set by the page) */
@@ -670,7 +706,8 @@ export class Online {
           this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
           if (this.#phases.length > 16) this.#phases.shift();
           this.#enterPhase(m.phase, this.#match === null);
-          if (matchOver(m.phase) && !matchOver(this.#match?.phase)) this.onMatchOver?.();
+          if (matchOver(m.phase) && !matchOver(this.#match?.phase)) this.#tellMatchOver();
+          if (!matchOver(m.phase)) this.#matchOverTold = false; // (a rematch's match: told again at its end)
           if (m.phase === "countdown") this.#roundStartTick = m.serverTick; // (the replay's goal time counts from here: HT-6)
         }
         if (m.overtime && this.#match !== null && !this.#match.overtime) {
@@ -776,10 +813,10 @@ export class Online {
 
   /** The session's end, once its messages are read: a kick's reason (idle, a match cancelled before its start), the
    *  match over (the end screen: the server lets a queue match go), else a lost connection */
-  #watchSessionEnd(): void {
+  #watchSessionEnd(phase: MatchPhase | undefined = this.#match?.phase): void {
     if (this.#disconnected === null || this.#sessionEnded) return;
     this.#sessionEnded = true;
-    this.onSessionEnd?.(sessionEndReason(this.#kicked, this.#match?.phase));
+    this.#onSessionEnd?.(sessionEndReason(this.#kicked, phase));
   }
 
   /** A new phase as this client sees it (MIO-16: the end's timings run from here). `first`: the first match state after

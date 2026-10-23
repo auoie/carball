@@ -17,6 +17,7 @@ const ACCOUNT = {
     { playlist: 2, rating: 1500, deviation: 500, provisional: true, games: 0 },
   ],
   queueBanUntil: "2026-10-18T12:05:00Z",
+  searchCooldownUntil: "2026-10-18T12:02:00Z",
 };
 
 describe("the accounts service's calls", () => {
@@ -31,6 +32,7 @@ describe("the accounts service's calls", () => {
         { playlist: 2, rating: 1500, provisional: true, games: 0 },
       ],
       queueBanUntil: Date.parse("2026-10-18T12:05:00Z"),
+      searchCooldownUntil: Date.parse("2026-10-18T12:02:00Z"),
     });
     expect(await a.me()).toBeNull();
     // (each with its time limit's signal, RX31)

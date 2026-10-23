@@ -293,6 +293,10 @@ describe("the pages' handoffs", () => {
     // (a claim's ticket its match ticket, not one fetched: RV-887's P01)
     const claiming = await claimAddress(new URLSearchParams(""), "carball.zolt.top", deployed, () => Promise.resolve(), "eu", "bWF0Y2g");
     expect(await claiming.ticket?.(5n)).toBe("bWF0Y2g");
+    // (its server's URL handed over by the menu: opened with it at once, config.json not read again: the flow audit's 1)
+    const unread = (): Promise<GameServerConfig> => Promise.reject(new Error("config.json read"));
+    const direct = await claimAddress(new URLSearchParams(""), "carball.zolt.top", unread, () => Promise.resolve(), "eu", "bWF0Y2g", eu.url);
+    expect([direct.url, direct.certHash, await direct.ticket?.(5n)]).toEqual([eu.url, null, "bWF0Y2g"]);
     // (each region's server as the matchmaker names it, 443 when its URL has no port: P02)
     expect(regions.map((r) => r.server)).toEqual(["game.example:4433", "game-eu.example:4433"]);
     expect(serverOfUrl("https://Game.Example/play")).toBe("game.example:443");
@@ -326,6 +330,11 @@ describe("the pages' handoffs", () => {
     expect(takeClaim(storage)?.ticket).toBe("eyJh.eyJz.c2ln");
     storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "A".repeat(1025) }, storage);
     expect(takeClaim(storage)?.ticket).toBeUndefined();
+    // (its server's URL kept, an https one alone)
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, url: "https://game-eu.example:4433/play" }, storage);
+    expect(takeClaim(storage)?.url).toBe("https://game-eu.example:4433/play");
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, url: "javascript:alert(1)" }, storage);
+    expect(takeClaim(storage)?.url).toBeUndefined();
     storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, ticket: "not a ticket!", playlists: [9] }));
     expect(takeClaim(storage)).toEqual({ token: 5n, playlist: 2, searchedAt: 1 });
     // (a claim refused as gone: its playlists searched again, its clock kept; the matchmaker keeps its place)

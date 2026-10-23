@@ -31,7 +31,8 @@ export interface SearchNotes {
 
 /** A search the page can end: Cancel Search, or the page going (a match found meanwhile still answered) */
 export interface MatchmakerSearch {
-  cancel(): void;
+  /** Cancel Search: closed at once, its delete sent; the promise settles once the delete is answered (or failed) */
+  cancel(): Promise<void>;
   finish(): Promise<void>;
 }
 
@@ -329,12 +330,16 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
   }
 
   /** Cancel Search: cancelled at the service (a match it found meanwhile stands: not claimed, a no-show), no answer */
-  cancel(): void {
-    if (this.#over) return;
+  cancel(): Promise<void> {
+    if (this.#over) return Promise.resolve();
     this.#over = true;
     this.#abort.abort();
     const id = this.#id;
-    if (id !== null) void this.#call("DELETE", `/api/search/${id}`, undefined, true).catch(() => undefined);
+    if (id === null) return Promise.resolve();
+    return this.#call("DELETE", `/api/search/${id}`, undefined, true).then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   /** The page going elsewhere with the search running: cancelled at the service, then one last look (no wait: the cancel
@@ -343,7 +348,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
     if (this.#over) return;
     const id = this.#id;
     if (id === null) {
-      this.cancel();
+      await this.cancel();
       return;
     }
     this.#over = true;

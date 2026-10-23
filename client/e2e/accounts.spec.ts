@@ -13,6 +13,8 @@ interface Fake {
   banned?: boolean;
   /** The ban's length from the page's load (ms; 9.5 minutes when only `banned`) */
   banFor?: number;
+  /** A no-show's search cooldown's length from the page's load (ms) */
+  cooldownFor?: number;
   /** A sign-up with Turnstile's check (a made-up site key): its next `refuse` sign-ups answered "turnstile" */
   turnstile?: { refuse: number };
   /** config.json's status (200 when unset); /api/me's status when not 200, and its delay (ms) */
@@ -25,6 +27,7 @@ interface Fake {
 async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
   // (the ban's end fixed when the fake starts: the page reads /api/me again later, RX30C)
   const banUntil = fake.banned || fake.banFor ? new Date(Date.now() + (fake.banFor ?? 9.5 * 60_000)).toISOString() : null;
+  const cooldownUntil = fake.cooldownFor ? new Date(Date.now() + fake.cooldownFor).toISOString() : null;
   const json = (route: Route, status: number, body?: unknown): Promise<void> =>
     route.fulfill({ status, contentType: "application/json", body: body === undefined ? "" : JSON.stringify(body) });
   const account = (): object => ({
@@ -38,6 +41,7 @@ async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
       { playlist: 3, rating: 1500, deviation: 500, provisional: true, games: 0 },
     ],
     ...(banUntil === null ? {} : { queueBanUntil: banUntil }),
+    ...(cooldownUntil === null ? {} : { searchCooldownUntil: cooldownUntil }),
   });
   const wrote = (r: Request): void => {
     fake.writes.push({ method: r.method(), path: new URL(r.url()).pathname, guarded: r.headers()["x-carball"] === "1", body: r.postData() });
@@ -291,7 +295,7 @@ test("Find Match waits for the account; a deployment's config or accounts that c
   expect(errors).toEqual([]);
 });
 
-test("the ban line under Find Match counts down, and goes when the ban's over (RX30C)", async ({ browser }) => {
+test("the ban line under Find Match counts down, and goes when the ban's over (RX30C); a no-show's cooldown its line too", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   await hideGamepads(context);
   const page = await context.newPage();
@@ -323,7 +327,67 @@ test("the ban line under Find Match counts down, and goes when the ban's over (R
   const shortLine = next.locator("#main-menu .main-menu-ban");
   await expect(shortLine).toBeHidden({ timeout: 15_000 });
   await short.close();
+  // (a no-show's search cooldown: its line in the ban's place, counting down)
+  const cooling = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(cooling);
+  const third = await cooling.newPage();
+  third.on("pageerror", (e) => errors.push(e.message));
+  await fakeDeployment(third, { name: "Ziggy", cooldownFor: 100_000, writes: [] });
+  await third.goto("/?render=off");
+  await expect(third.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await third
+    .locator("#main-menu")
+    .getByRole("button", { name: /^play$/i })
+    .click();
+  await expect(third.locator("#main-menu .main-menu-ban")).toHaveText(
+    /^Your last match was cancelled because you didn't join it in time or left before it started\. You can search again in 1:[0-3]\d\.$/,
+  );
+  await cooling.close();
   expect(errors).toEqual([]);
+});
+
+test("Sign Out while searching: the search deleted first, its session still standing, then the sign-out (the flow audit's 6)", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(context);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const fake: Fake = { name: "Ziggy", writes: [] };
+  await fakeDeployment(page, fake);
+  // (the search's calls, over the fake's: the start answered, its poll held, the delete answered a moment later)
+  let started = false;
+  await page.route("**/api/search**", async (route) => {
+    const r = route.request();
+    if (r.method() === "POST") {
+      started = true;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ search: "ab".repeat(16), version: 1, state: "searching" }) });
+    }
+    if (r.method() === "DELETE") {
+      fake.writes.push({ method: "DELETE", path: "/api/search", guarded: true, body: null });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return route.fulfill({ status: 204 });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, state: "searching" }) }).catch(() => undefined);
+  });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const menu = page.locator("#main-menu");
+  const entry = menu.locator(".main-menu-account");
+  await expect(entry).toHaveText("Ziggy");
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  await menu.getByRole("button", { name: /^find match$/i }).click();
+  await expect.poll(() => started, { timeout: 15_000 }).toBe(true);
+  await expect(page.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  // (back to the top page, its account entry, the search going on under the banner)
+  await menu.getByRole("button", { name: "Back", exact: true }).filter({ visible: true }).click();
+  await entry.click();
+  await menu.getByRole("button", { name: "Sign Out", exact: true }).click();
+  await expect(entry).toHaveText("Sign In", { timeout: 10_000 });
+  expect(fake.writes.map((w) => `${w.method} ${w.path}`)).toEqual(["DELETE /api/search", "POST /api/signout"]);
+  await expect(page.locator("#search-banner")).toBeHidden();
+  expect(errors).toEqual([]);
+  await context.close();
 });
 
 test("a deployment's page going while it searches deletes its search, with the write's header and the session's cookie (RV-866, RV-894)", async ({

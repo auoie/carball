@@ -308,6 +308,14 @@ func TestFleetEvents(t *testing.T) {
 	if code := searchCode(b1); code != http.StatusOK {
 		t.Errorf("the one who came: %d", code)
 	}
+	// (the no-show's cooldown on its account's page, the Play page's line; none for the one who came)
+	want := e.clock.Now().Add(2 * time.Minute).UTC().Format(time.RFC3339)
+	if got := decode(t, e.get(b2, "/api/me"))["searchCooldownUntil"]; got != want {
+		t.Errorf("the no-show's cooldown on /api/me: %v, want %s", got, want)
+	}
+	if got, ok := decode(t, e.get(b1, "/api/me"))["searchCooldownUntil"]; ok {
+		t.Errorf("a cooldown for the one who came: %v", got)
+	}
 	// (a restart of the server: its matches before it freed)
 	e.clock.Add(3 * time.Minute)
 	m1, _ = match()

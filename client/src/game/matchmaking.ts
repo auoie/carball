@@ -104,9 +104,10 @@ export interface SearchHandlers {
   replaced(): void;
 }
 
-/** A search session's ends: closed at once (Cancel Search), or closed and its last answer awaited (the page going) */
+/** A search session's ends: closed at once (Cancel Search: the promise settles once the service has its cancel), or
+ *  closed and its last answer awaited (the page going) */
 export interface SearchSession {
-  cancel(): void;
+  cancel(): Promise<void>;
   finish(): Promise<void>;
 }
 
@@ -240,13 +241,22 @@ export class Matchmaking {
   /** Cancel Search (MM-10): the session closed, the cancel sound, the panel and banner gone; during "Joining in" the
    *  slot given up at once (RV-355) */
   cancel(): void {
-    if (this.#state === null) return;
+    void this.cancelled();
+  }
+
+  /** The same, settled once the service has the cancel: an account about to sign out or go first cancels its search
+   *  while its session still stands (else it would go on, matchable, till it lapsed: the flow audit's 6) */
+  cancelled(): Promise<void> {
+    if (this.#state === null) return Promise.resolve();
     const searching = this.searching;
     const found = this.#state.status === "joining" ? this.#found : null;
+    const delivered = this.#session?.cancel() ?? Promise.resolve();
+    this.#session = null;
     this.#stop();
     this.#state = null;
     if (found !== null) this.ports.decline(found);
     if (searching) this.ports.sound("cancel");
+    return delivered;
   }
 
   /** The page going elsewhere (another map) with this search: the search finished (its session closed and its last
@@ -269,7 +279,7 @@ export class Matchmaking {
   }
 
   #stop(): void {
-    this.#session?.cancel();
+    void this.#session?.cancel();
     this.#session = null;
     for (const t of this.#timers.splice(0)) clearTimeout(t);
     this.#found = null;

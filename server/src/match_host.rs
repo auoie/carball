@@ -539,12 +539,14 @@ impl MatchHost {
     }
 
     /// Whether an account (its key) has a player in a match here (claimed, its session here): one match at a time (the
-    /// matchmaker's rule, held here too for a claim; a seat it left, held empty for a rejoin, doesn't count)
+    /// matchmaker's rule, held here too for a claim; a seat it left, held empty for a rejoin, doesn't count; nor a match
+    /// decided: its result told at its winner, the matchmaker frees its accounts then, so one on its end screen may claim
+    /// the next match it finds)
     pub fn account_busy(&self, key: u64) -> bool {
         key != 0
             && self.matches.values().any(|m| {
                 !m.open
-                    && !m.game.as_ref().is_some_and(Game::is_over)
+                    && !m.decided()
                     && m.reservations.iter().any(|r| r.key == key && r.claimed.is_some() && r.here_since.is_some())
             })
     }
@@ -1483,8 +1485,13 @@ mod tests {
         run_to(&mut host, 0.0, 3.0);
         host.leave(1, true);
         assert!(host.rejoin(match_id, 10, seat(1), tx.clone()).is_err(), "1v1: no rejoin");
+        assert!(host.account_busy(2), "the other player, in the match");
         run_to(&mut host, 3.0, 4.0);
         assert!(!host.account_busy(1), "the forfeit's winner decided: the seat no longer held");
+        assert!(
+            host.match_count() == 1 && !host.account_busy(2),
+            "the winner on its end screen: free for its next match"
+        );
     }
 
     #[test]

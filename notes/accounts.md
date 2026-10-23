@@ -208,7 +208,7 @@ player by the account (RX29C).
   carries the leave's time, and the ban runs from it (held within the acceptance window: a report that gets through late
   bans for what's left). The API raises the account's `queue_bans` row by the ladder (ours, the user's choice of LV1's: 5 min → 15 min → 1 h → 6 h →
   24 h cap, one step forgiven for every 24 h without a leave); the matchmaker refuses a search while it runs, and the
-  page shows until when (`/api/me`'s `queueBanUntil`). A rejoin needs no search, so the ban never blocks it: its ticket
+  page shows until when (`/api/me`'s `queueBanUntil`; a no-show's cooldown likewise, `searchCooldownUntil`). A rejoin needs no search, so the ban never blocks it: its ticket
   is a **rejoin's** (`POST /api/ticket?rejoin=MATCH`, purpose `rejoin` and that match's id), which the ban doesn't stop
   when it came from that same match, and which the game server takes for that match's rejoin alone (a match ticket only
   for a claim of its seat). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the

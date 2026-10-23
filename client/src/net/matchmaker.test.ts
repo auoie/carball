@@ -193,7 +193,7 @@ describe("the search with the matchmaker", () => {
     await vi.waitFor(() => {
       expect(got).toEqual(["searching"]);
     });
-    search.cancel();
+    void search.cancel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls.some((c) => c.method === "DELETE" && c.path === `/api/search/${"a".repeat(32)}`)).toBe(true);
     expect(got).toEqual(["searching"]);
@@ -276,7 +276,7 @@ describe("the search with the matchmaker", () => {
     await vi.waitFor(() => {
       expect(calls.length).toBe(1);
     });
-    search.cancel();
+    void search.cancel();
     answer();
     await vi.waitFor(() => {
       expect(calls.some((c) => c.method === "DELETE" && c.path === `/api/search/${"a".repeat(32)}`)).toBe(true);
@@ -354,7 +354,7 @@ describe("the search with the matchmaker", () => {
     await vi.waitFor(() => {
       expect(got).toEqual(["searching"]);
     });
-    search.cancel();
+    void search.cancel();
     await vi.waitFor(() => {
       expect(calls.some((c) => c.method === "DELETE")).toBe(true);
     });
@@ -421,7 +421,7 @@ describe("the search with the matchmaker", () => {
       slow.http,
       noWait,
     );
-    building.cancel();
+    void building.cancel();
     made();
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(slow.calls).toEqual([]);

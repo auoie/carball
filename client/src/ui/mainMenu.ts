@@ -4,7 +4,7 @@
 // 2026-10-17). The game's labels verbatim (Play, Settings, Free Play, Find Match: the user's decisions,
 // 2026-10-14); the playlists' names are ours. No Quit: a browser tab closes itself. Play vs Bots (ours: the
 // offline match against bot packages, local/botMatch.ts) shows only when there's a bot to play.
-import { PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
+import { OWN_SEARCH_TEXT, PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
 import type { Team } from "../engine/world";
 import { CARS, storeCar, storeTeam, storedCar, storedTeam } from "../game/cars";
 import type { BotChoices } from "../local/botMatch";
@@ -140,6 +140,7 @@ export class MainMenu {
   /** A leaver's queue ban under Find Match (LV1: the Play menu shows it), until when (ms) */
   readonly #banLine: HTMLDivElement;
   #banUntil: number | null = null;
+  #cooldownUntil: number | null = null;
   /** The ban line's countdown, each second while the ban runs (RX30C) */
   #banTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -390,6 +391,17 @@ export class MainMenu {
   /** A leaver's queue ban's end (ms; null: none): its line under Find Match while it runs */
   setQueueBan(until: number | null): void {
     this.#banUntil = until;
+    this.#drawBanLine();
+  }
+
+  /** A no-show's search cooldown's end (ms; null: none): its line under Find Match while it runs, the ban's first (a
+   *  match it stalled: claimed and left before its start, or not claimed in time; said nowhere else until a search) */
+  setSearchCooldown(until: number | null): void {
+    this.#cooldownUntil = until;
+    this.#drawBanLine();
+  }
+
+  #drawBanLine(): void {
     this.#drawBan();
     if (this.#banTimer === null && !this.#banLine.hidden) {
       this.#banTimer = setInterval(() => {
@@ -398,12 +410,15 @@ export class MainMenu {
     }
   }
 
-  /** The line as the ban stands now: its minutes left, gone (its countdown stopped) once it's over */
+  /** The line as the ban (else the cooldown) stands now: its time left, gone (its countdown stopped) once both are over */
   #drawBan(): void {
     const now = Date.now();
-    const on = this.#banUntil !== null && this.#banUntil > now;
+    const banned = this.#banUntil !== null && this.#banUntil > now;
+    const cooling = this.#cooldownUntil !== null && this.#cooldownUntil > now;
+    const on = banned || cooling;
     this.#banLine.hidden = !on;
-    if (on && this.#banUntil !== null) this.#banLine.textContent = queueBanText(this.#banUntil, now);
+    if (banned && this.#banUntil !== null) this.#banLine.textContent = queueBanText(this.#banUntil, now);
+    else if (cooling && this.#cooldownUntil !== null) this.#banLine.textContent = OWN_SEARCH_TEXT.cooldown((this.#cooldownUntil - now) / 1000);
     if (!on && this.#banTimer !== null) {
       clearInterval(this.#banTimer);
       this.#banTimer = null;

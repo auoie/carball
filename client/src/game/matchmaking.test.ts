@@ -19,6 +19,7 @@ function harness() {
       return {
         cancel: () => {
           s.cancelled = true;
+          return Promise.resolve();
         },
         finish: () =>
           new Promise<void>((resolve) => {
@@ -90,6 +91,27 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     mm.frame(100);
     expect(joined).toEqual([]);
     expect(mm.state).toBeNull();
+  });
+
+  it("cancelled() settles once the session's cancel reached the service (sign-out and delete wait for it); none: at once", async () => {
+    let delivered: (() => void) | null = null;
+    const mm = new Matchmaking({
+      search: () => ({ cancel: () => new Promise<void>((resolve) => (delivered = resolve)), finish: () => Promise.resolve() }),
+      sound: () => undefined,
+      join: () => undefined,
+      decline: () => undefined,
+    });
+    let settled = false;
+    await mm.cancelled(); // (no search: at once)
+    mm.start([1]);
+    const cancelling = mm.cancelled().then(() => (settled = true));
+    expect(mm.state).toBeNull();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(delivered).not.toBeNull();
+    (delivered as unknown as () => void)();
+    await cancelling;
+    expect(settled).toBe(true);
   });
 
   it("a failed search shows Failed and its warning line, then goes; a new search starts with a warning line", () => {
@@ -243,7 +265,7 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(declined).toEqual([10n]);
     // (the tip with one region ticked of several)
     const tipped = new Matchmaking({
-      search: () => ({ cancel: () => undefined, finish: () => Promise.resolve() }),
+      search: () => ({ cancel: () => Promise.resolve(), finish: () => Promise.resolve() }),
       sound: () => undefined,
       join: () => undefined,
       decline: () => undefined,

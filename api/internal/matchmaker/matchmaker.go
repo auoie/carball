@@ -18,8 +18,13 @@ import (
 
 // The matchmaker's times
 const (
-	// SearchLife is how long a search lives with no poll open or answered (its page gone)
-	SearchLife = 10 * time.Second
+	// SearchLife is how long a search lives with no poll open or answered (its page gone): longer than the page's retries
+	// of a failed poll (1, 2, 4, 8 and 8 s apart: client/src/net/matchmaker.ts), so a passing outage (the database not
+	// answering a poll's session read) doesn't drop it and start its wait afresh
+	SearchLife = 45 * time.Second
+	// PollGap is how long after its last poll answered a search with no poll open is still matched (its page's next poll
+	// follows at once): a search no page is polling now (an outage, its page gone) isn't matched into a no-show
+	PollGap = 3 * time.Second
 	// AnswerKept is how long a found or ended search's answer is kept for a poll that lost it
 	AnswerKept = 30 * time.Second
 	// StartWait is how long an assigned match is kept with no word that it started (no one claimed it)
@@ -409,7 +414,7 @@ func (m *Matchmaker) Tick(now time.Time) {
 	}
 	lists := map[byte][]*search{}
 	for _, s := range m.open {
-		if !s.polled {
+		if !s.polled || (s.polls == 0 && now.Sub(s.lastPoll) >= PollGap) {
 			continue
 		}
 		for _, p := range s.playlists {
@@ -589,6 +594,14 @@ func (m *Matchmaker) Restarted(server string, at time.Time) {
 			m.free(id)
 		}
 	}
+}
+
+// CooldownOf is the account's no-show cooldown's end, while one runs at now (a match it stalled: NoShowCooldown)
+func (m *Matchmaker) CooldownOf(account string, now time.Time) (time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	until, ok := m.cooldowns[account]
+	return until, ok && until.After(now)
 }
 
 // Quitter ends a reported quitter's search (one begun in the leave's moments), with their ban (until when)

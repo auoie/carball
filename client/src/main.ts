@@ -99,6 +99,10 @@ import { PadReadout } from "./ui/padReadout";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
+/** How long after a decline (a found match left during "Joining in") the account is read again (ms): the game server's
+ *  cancel through its outbox to the accounts service first, the no-show's cooldown then on the Play page */
+const DECLINE_REREAD_MS = 2000;
+
 // Every arena collision mesh: scripts/arena_gen.py writes one file per piece (each its own static body, as in the game)
 const arenaUrls = Object.values(import.meta.glob<string>("@arena/collision_meshes/arena/*.cmf", { query: "?url", import: "default", eager: true }));
 
@@ -133,6 +137,28 @@ async function main(): Promise<void> {
   }
   const onlinePage = server !== null || claim !== null || botMatch !== null;
   let settings = loadSettings();
+  // (a claim that fails: back to the menu with what to show (claimNotice). Its config.json and its ticket tried again
+  // inside its window (claimAddress, RX31), a ticket the server refuses once more (openClaim, RX30C))
+  const claimFailed = (e: unknown): void => {
+    if (!claim) return;
+    storeNotice(claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone));
+    location.replace(pageUrl("menu", location));
+  };
+  // (a queue match's session opened at once, beside the engine's, the arena's and the cars' load and the warm-up, not
+  // after them: the roster's 10 s run from the match's first claim. What the server sends meanwhile waits for the game:
+  // Connection's queue, its close told when the game listens (RV-444); no updates until this page sends inputs; the
+  // flow audit's 1)
+  const claimSession =
+    claim === null
+      ? null
+      : (async () => {
+          const address = await claimAddress(params, location.hostname, undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket, claim.url);
+          const match: MatchSession = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
+          const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
+          // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
+          return claim.rejoin ? openClaim(open) : open();
+        })();
+  claimSession?.catch(claimFailed);
   // (the menu page's notice from a match page, read here)
   const menuNotice = onlinePage ? null : takeNotice();
   const playlistName = (teamSize: number): string | null => PLAYLISTS.find((p) => p.teamSize === teamSize)?.name ?? null;
@@ -213,38 +239,23 @@ async function main(): Promise<void> {
       return { name: "night", theme: createTheme(), session: null };
     }
     loading.step("connecting");
-    // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
-    let address;
-    let match: MatchSession = { intent: "join" };
-    // (a claim that fails: back to the menu with what to show (claimNotice). Its config.json and its ticket tried again
-    // inside its window (claimAddress, RX31), a ticket the server refuses once more (openClaim, RX30C))
-    const claimFailed = (e: unknown): void => {
-      if (!claim) return;
-      storeNotice(claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone));
-      location.replace(pageUrl("menu", location));
-    };
-    if (claim) {
-      // (a claim's ticket its match ticket, the matchmaker's; a rejoin's fetched)
-      address = await claimAddress(params, location.hostname, undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket).catch(
-        (e: unknown) => {
-          claimFailed(e);
-          throw e;
-        },
-      );
-      match = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
-    } else if (__CARBALL_BOTS__ && botMatch) {
-      // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
-      const [{ localServerAddress }, { BOTS_BASE }] = await Promise.all([import("./local/localTransport"), import("./bots/listing")]);
-      address = localServerAddress(botMatch, arenaMeshes, BOTS_BASE);
+    // (the queue's match: its claim's session, opened as the page began; a development server's open match,
+    // ?server=host:infoPort; the bots' local host)
+    let session: Awaited<ReturnType<typeof Connection.open>>;
+    if (claimSession) {
+      session = await claimSession;
     } else {
-      const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
-      address = await devServerAddress(host, Number(port));
+      let address;
+      if (__CARBALL_BOTS__ && botMatch) {
+        // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
+        const [{ localServerAddress }, { BOTS_BASE }] = await Promise.all([import("./local/localTransport"), import("./bots/listing")]);
+        address = localServerAddress(botMatch, arenaMeshes, BOTS_BASE);
+      } else {
+        const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
+        address = await devServerAddress(host, Number(port));
+      }
+      session = await Connection.open(address, joinPreferences(settings), { intent: "join" });
     }
-    const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
-    // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
-    const opened = claim?.rejoin ? openClaim(open) : open();
-    opened.catch(claimFailed);
-    const session = await opened;
     // (every join saves the record anew, a rejoin's too: a ranked 2v2 or 3v3 offered back for 900 s from this join if it's
     // left by accident, a 1v1 clearing it; the claiming account's alone: LV1, RJ1, RX30C)
     if (claim) {
@@ -647,9 +658,9 @@ async function main(): Promise<void> {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
           });
         return {
-          cancel: () => {
+          cancel: async () => {
             cancelled = true;
-            running?.cancel();
+            await running?.cancel();
           },
           finish: async () => {
             cancelled = true;
@@ -674,15 +685,23 @@ async function main(): Promise<void> {
           map: found.map,
           ...(account ? { account: account.id } : {}),
           ...(region ? { server: region.id } : {}),
+          // (a deployment's server's URL: the claim opens with it at once, the flow audit's 1)
+          ...(region?.address.certHash === null ? { url: region.address.url } : {}),
         });
         location.assign(pageUrl("match", location));
       },
-      // (the seat claimed and left at once: the match is cancelled now for its other players, RV-355)
+      // (the seat claimed and left at once: the match is cancelled now for its other players, RV-355; this account its
+      // no-show, its cooldown read back a moment later for the Play page's line)
       decline: (found) => {
         claimAddress(params, location.hostname, undefined, undefined, regionOf(found)?.id, found.ticket)
           .then(async (address) => {
             const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token: found.id });
             connection.close();
+            if (accountsOn) {
+              setTimeout(() => {
+                void readAccount();
+              }, DECLINE_REREAD_MS);
+            }
           })
           .catch(() => undefined);
       },
@@ -798,6 +817,7 @@ async function main(): Promise<void> {
       mainMenu?.setAccountEntry(accountsOn ? (a?.name ?? ACCOUNT_TEXT.entrySignedOut) : null);
       mainMenu?.setRatings(a?.ratings ?? null);
       mainMenu?.setQueueBan(a?.queueBanUntil ?? null);
+      mainMenu?.setSearchCooldown(a?.searchCooldownUntil ?? null);
     };
     const showAccountPage = (note: string | null = null): void => {
       if (!accountPages || !mainMenu) return;
@@ -914,6 +934,7 @@ async function main(): Promise<void> {
         modal.ask(title, body, yes);
       },
       changed: setAccount,
+      leaving: async () => matchmaking.cancelled(),
       back: () => {
         mainMenu?.showTop();
       },
@@ -1264,12 +1285,13 @@ async function main(): Promise<void> {
         lost: { modal: "lost" },
         ended: undefined,
       };
-      online.onSessionEnd = (why) => {
-        leave(notices[why]);
-      };
-      // (the match ended while this page played it: no rejoin of it offered later, RJ1, RX32)
+      // (the match ended while this page played it: no rejoin of it offered later, RJ1, RX32; set first: an end already
+      // come is acted on as onSessionEnd is set)
       online.onMatchOver = () => {
         clearRankedSeatOf(welcome.matchId);
+      };
+      online.onSessionEnd = (why) => {
+        leave(notices[why]);
       };
     } else if (botMatch) {
       // (the local host gone, its worker failing: the menu, with the lost connection's modal)

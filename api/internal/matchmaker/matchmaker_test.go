@@ -373,6 +373,28 @@ func TestNoShow(t *testing.T) {
 
 // A newer search of the account replaces its open one; Cancel Search ends one; a search no page polls goes; a found
 // answer is kept for a poll that lost it, then goes
+// A search its page stopped polling (an outage: the polls' session reads refused; its page gone) isn't matched past
+// PollGap, so it's no one's no-show; it lives on past the page's retries (SearchLife), matched again once polled, its
+// wait kept
+func TestASearchNotPolledIsntMatchedAndOutlivesThePagesRetries(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("p1", 1500), []byte{1}, near)
+	h.search(t, player("p2", 1500), []byte{1}, near)
+	h.now = t0.Add(PollGap) // (neither polled since)
+	h.m.Tick(h.now)
+	if h.found(t, "p1") != nil {
+		t.Fatal("matched with no poll open or lately answered")
+	}
+	// (the page's retries: 1, 2, 4, 8 and 8 s apart, inside SearchLife)
+	if retries := (1 + 2 + 4 + 8 + 8) * time.Second; SearchLife <= retries+10*time.Second {
+		t.Errorf("SearchLife %v doesn't outlive the page's retries (%v and their requests)", SearchLife, retries)
+	}
+	h.at(30 * time.Second) // (both polled again: the outage over)
+	if h.found(t, "p1") == nil || h.found(t, "p2") == nil {
+		t.Error("not matched once polled again")
+	}
+}
+
 func TestSearchLife(t *testing.T) {
 	h := newHarness()
 	h.search(t, player("tab", 1500), []byte{1}, near)

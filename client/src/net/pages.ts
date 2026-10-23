@@ -37,6 +37,9 @@ export interface Claim {
   readonly account?: string;
   /** The region whose server hosts the match (`Region`'s id); none: the first (a claim from before the regions) */
   readonly server?: string;
+  /** That server's WebTransport URL (a deployment's region, as the menu had it): the claim opens with it at once, no
+   *  config.json read again inside the roster's 10 s (the flow audit's 1) */
+  readonly url?: string;
 }
 
 /** A search back from a match cancelled for someone else: when its first search began (ms, wall clock; the matchmaker
@@ -81,6 +84,7 @@ export function storeClaim(claim: Claim, storage = session()): void {
         rejoin: claim.rejoin,
         account: claim.account,
         server: claim.server,
+        url: claim.url,
       }),
     );
   } catch {
@@ -104,6 +108,7 @@ export function takeClaim(storage = session()): Claim | null {
       rejoin?: unknown;
       account?: unknown;
       server?: unknown;
+      url?: unknown;
     };
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
@@ -120,6 +125,7 @@ export function takeClaim(storage = session()): Claim | null {
       ...(value.rejoin === true ? { rejoin: true as const } : {}),
       ...(typeof value.account === "string" ? { account: value.account } : {}),
       ...keptServer(value.server),
+      ...(typeof value.url === "string" && SERVER_URL.test(value.url) ? { url: value.url } : {}),
     };
   } catch {
     return null;
@@ -329,7 +335,8 @@ export const CLAIM_RETRY_MS = 1000;
 
 /** A claim's address: `queueAddress`, its config.json tried up to `CLAIM_TRIES` times; its ticket the claim's match
  *  ticket (`matchTicket`), else (a rejoin) the ticket fetched, tried as often; the sign-in gone and a ban are answers,
- *  not tried again */
+ *  not tried again. A deployment's claim whose server's URL the menu handed over (`url`) opens with it at once, no
+ *  config.json read (the flow audit's 1) */
 export async function claimAddress(
   params: URLSearchParams,
   host: string,
@@ -337,7 +344,11 @@ export async function claimAddress(
   pause: (ms: number) => Promise<void> = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   server?: string,
   matchTicket?: string,
+  url?: string,
 ): Promise<ServerAddress> {
+  if (url !== undefined && matchTicket !== undefined && params.get("queue") === null && SERVER_URL.test(url)) {
+    return { url, certHash: null, ticket: async () => Promise.resolve(matchTicket) };
+  }
   const tried = async <T>(attempt: () => Promise<T>, again: (e: unknown) => boolean): Promise<T> => {
     for (let i = 1; ; i++) {
       try {
