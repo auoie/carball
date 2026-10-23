@@ -217,7 +217,13 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", State{}, err
 	}
+	// (a search no page polled yet replaced: a start whose answer was lost, the page trying again (RV-881); the retry
+	// keeps the wait it took, a cancelled match's kept one included, RV-904)
+	var inherited time.Time
 	if old := m.open[p.Account]; old != nil {
+		if !old.polled {
+			inherited = old.since
+		}
 		m.end(old, ReasonReplaced, time.Time{}, now)
 	}
 	m.arrivals++
@@ -228,6 +234,9 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 	if w, ok := m.waits[p.Account]; ok {
 		s.since = w.since
 		delete(m.waits, p.Account)
+	}
+	if !inherited.IsZero() && inherited.Before(s.since) {
+		s.since = inherited
 	}
 	m.searches[s.id] = s
 	m.open[p.Account] = s

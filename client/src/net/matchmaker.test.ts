@@ -2,7 +2,7 @@
 // polls and answers, refusals, a restart's 404 searched once more, failed polls retried, Cancel Search and the page going
 import { describe, expect, it, vi } from "vitest";
 import { type FoundMatch, type SearchHandlers } from "../game/matchmaking";
-import { MATCHMAKER_TEXT, MatchmakerSearchSession, type SearchRequest, foundMatch } from "./matchmaker";
+import { MATCHMAKER_TEXT, MatchmakerSearchSession, type SearchRequest, devMatchmakerBase, foundMatch } from "./matchmaker";
 import { REFUSED_IN_MATCH } from "./protocol";
 
 interface Reply {
@@ -355,6 +355,7 @@ describe("the search with the matchmaker", () => {
     expect(post?.init?.credentials).toBe("same-origin");
     expect((post?.init?.headers as Record<string, string>)["X-Carball"]).toBe("1");
     expect(del?.init?.keepalive).toBe(true);
+    expect(del?.init?.signal ?? null).toBeNull(); // (never aborted with the page: RV-913's M12)
     expect((del?.init?.headers as Record<string, string>)["X-Carball"]).toBe("1");
     // (a development matchmaker's: no credentials)
     const dev = service({ "POST http://127.0.0.1:8090/api/search": [{ status: 503, body: { error: "no-server" } }] });
@@ -369,6 +370,64 @@ describe("the search with the matchmaker", () => {
     );
     await devAnswers.done;
     expect(dev.calls[0]?.init?.credentials).toBe("omit");
+  });
+
+  it("polls lost, 504 or no answer, tried 1 + 5 times, the pauses doubling to 8 s; then the connection said lost (RV-913's M11, X04)", async () => {
+    const pauses: number[] = [];
+    const pause = (ms: number): Promise<void> => {
+      pauses.push(ms);
+      return Promise.resolve();
+    };
+    const { http, calls } = service({ "POST /api/search": [started], "GET /api/search/": Array.from({ length: 10 }, () => ({ status: 504 })) });
+    const { handlers, got, done } = answers();
+    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    await done;
+    expect(got.at(-1)).toBe(`failed ${MATCHMAKER_TEXT.lost}`);
+    expect(pauses).toEqual([1000, 2000, 4000, 8000, 8000]);
+    expect(calls.filter((c) => c.method === "GET")).toHaveLength(6);
+  });
+
+  it("Cancel Search during a start's retry pause: no start after it (RV-903); during the request's making, none at all (RV-913's X06)", async () => {
+    const { http, calls } = service({ "POST /api/search": [{ status: 503 }, started] });
+    const { handlers } = answers();
+    let search: { cancel(): void } | null = null;
+    const pause = (): Promise<void> => {
+      search?.cancel();
+      return Promise.resolve();
+    };
+    search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    // (the request still being made, its pings measured, when Cancel Search comes)
+    let made = (): void => undefined;
+    const slow = service({ "POST /api/search": [started] });
+    const building = MatchmakerSearchSession.start(
+      { base: "" },
+      () =>
+        new Promise<SearchRequest>((resolve) => {
+          made = () => {
+            resolve(request);
+          };
+        }),
+      answers().handlers,
+      {},
+      slow.http,
+      noWait,
+    );
+    building.cancel();
+    made();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(slow.calls).toEqual([]);
+  });
+
+  it("a development page's matchmaker: the preview's same-origin path, or this machine's host:port; nothing else (RV-911, RV-913's Q01)", () => {
+    expect(devMatchmakerBase("/dev-matchmaker/14451")).toBe("/dev-matchmaker/14451");
+    expect(devMatchmakerBase("127.0.0.1:14451")).toBe("http://127.0.0.1:14451");
+    expect(devMatchmakerBase("[::1]:8090")).toBe("http://[::1]:8090");
+    expect(devMatchmakerBase("h".repeat(64))).toBe(`http://${"h".repeat(64)}`);
+    for (const bad of [null, "", "h".repeat(65), "/dev-matchmaker/x", "/elsewhere/1", "evil.example/path", "a b:1", "x@y:1"]) {
+      expect(devMatchmakerBase(bad), String(bad)).toBeNull();
+    }
   });
 
   it("reads a found match's fields, nothing else", () => {

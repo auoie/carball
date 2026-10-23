@@ -1,9 +1,9 @@
-# syntax=docker/dockerfile:1
 # check=skip=SecretsUsedInArgOrEnv
 # Carball's three images (APP-CONTRACT.md), built from the commit alone: scripts/build_images.sh sends `git archive`'s
 # files as the context (with --worktree, the working tree's committed or new files), checks them (`--target checks`),
 # then builds each image (`--target web`, `game`, `api`). Every compiler runs here, from official images pinned by digest
-# (update a tag and its digest together); the final images are the slim runtimes with the outputs alone.
+# (update a tag and its digest together); the final images are the slim runtimes with the outputs alone. Docker's own
+# Dockerfile frontend reads this file (no `# syntax=` image: one more download, floating, RV-914).
 #
 # Caching: each build stage is cached by its inputs' content (Docker's layers), so a release that doesn't touch the
 # engine reuses its three C++ builds (the WebAssembly module, the local host's libraries, the server's), and one that
@@ -57,10 +57,11 @@ RUN --mount=type=cache,id=carball-cargo-registry-host,target=/usr/local/cargo/re
     && CARGO_BUILD_JOBS="$JOBS" CARGO_OFFLINE=0 CARGO_TARGET_DIR=/target CARBALL_ENGINE_WASM=/src/engine/build-wasm-host bash scripts/build_host.sh host \
     && mkdir /out && cp engine/build-wasm-host/carball_host.mjs engine/build-wasm-host/carball_host.wasm /out/
 
-# The engine's libraries for the server, as cargo's CMake build makes them (its flags; server/build.rs)
+# The engine's libraries for the server, as cargo's CMake build makes them (its flags; server/build.rs). CMake from the
+# image's Debian, its version pinned (RV-915: a new one fails the install loudly, then update it here)
 FROM rust AS server-engine
 ARG JOBS
-RUN apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends cmake=3.31.6-2 cmake-data=3.31.6-2 && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY engine/ engine/
 RUN flags="-ffunction-sections -fdata-sections -fPIC -m64 -w" \

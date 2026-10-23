@@ -277,6 +277,8 @@ pub struct Admission {
     starts: HashMap<IpAddr, VecDeque<Instant>>,
     /// The starts given back for pings, the last minute's
     pings: HashMap<IpAddr, VecDeque<Instant>>,
+    /// When the addresses last ended were let go: once a minute at most (RV-909)
+    swept: Option<Instant>,
 }
 
 /// Drops the times a minute or more before `now`
@@ -289,6 +291,9 @@ fn last_minute(times: &mut VecDeque<Instant>, now: Instant) {
 impl Admission {
     /// A new session from `address`, if its limits allow it (counted then: `release` when it ends)
     pub fn admit(&mut self, address: IpAddr, now: Instant, limits: &NetLimits) -> bool {
+        if self.swept.is_none_or(|t| now.saturating_duration_since(t) >= Duration::from_secs(60)) {
+            self.sweep(now);
+        }
         let starts = self.starts.entry(address).or_default();
         last_minute(starts, now);
         let active = self.active.get(&address).copied().unwrap_or(0);
@@ -298,6 +303,18 @@ impl Admission {
         starts.push_back(now);
         *self.active.entry(address).or_default() += 1;
         true
+    }
+
+    /// Lets go of the addresses with no session open and no start or ping in the last minute: they'd otherwise stay, one
+    /// for every address ever seen (RV-909)
+    fn sweep(&mut self, now: Instant) {
+        self.swept = Some(now);
+        for times in [&mut self.starts, &mut self.pings] {
+            times.retain(|address, t| {
+                last_minute(t, now);
+                !t.is_empty() || self.active.contains_key(address)
+            });
+        }
     }
 
     /// A session from `address` that turned out a region's ping: its start not counted (each search pings every region,
@@ -895,6 +912,26 @@ mod tests {
         let t1 = t0 + Duration::from_secs(61);
         assert_eq!((0..5).filter(|_| ping(&mut admission, t1)).count(), 5, "a minute on");
         assert!(admission.admit(a, t1, &limits), "and a claim");
+    }
+
+    /// RV-909: an address gone for a minute is let go, its starts and pings with it; one with a session open is kept
+    #[test]
+    fn addresses_gone_a_minute_are_let_go() {
+        let limits = NetLimits::default();
+        let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
+        let t0 = Instant::now();
+        let mut admission = Admission::default();
+        assert!(admission.admit(a, t0, &limits));
+        admission.refund(a, t0, &limits);
+        admission.release(a);
+        assert!(admission.admit(a, t0, &limits));
+        admission.release(a);
+        assert!(admission.admit(b, t0, &limits)); // (b's session stays open)
+        assert_eq!((admission.starts.len(), admission.pings.len()), (2, 1));
+        let later = t0 + Duration::from_secs(61);
+        assert!(admission.admit(b, later, &limits));
+        assert!(!admission.starts.contains_key(&a) && !admission.pings.contains_key(&a), "a gone a minute let go");
+        assert!(admission.starts.contains_key(&b), "b kept: its sessions open");
     }
 
     #[test]

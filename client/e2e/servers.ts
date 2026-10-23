@@ -30,7 +30,15 @@ const matchmaker = (name: string, port: number): Server => ({
 });
 
 const SERVERS: readonly Server[] = [
-  { name: "preview", command: "node_modules/.bin/vite", args: ["preview", "--port", "4173", "--strictPort"], url: "http://localhost:4173/", reuse: true },
+  // (the development matchmakers below behind it, same-origin as a deployment's: /dev-matchmaker/PORT, RV-911)
+  {
+    name: "preview",
+    command: "node_modules/.bin/vite",
+    args: ["preview", "--port", "4173", "--strictPort"],
+    url: "http://localhost:4173/",
+    reuse: true,
+    env: { CARBALL_PREVIEW_MATCHMAKERS: "14450,14451,14452" },
+  },
   // The game server for the online tests (the first run builds it)
   {
     name: "game",

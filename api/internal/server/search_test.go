@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"crypto/ed25519"
 	"fmt"
 	"io"
@@ -478,6 +479,42 @@ func TestPollDoesNotRotateTheSession(t *testing.T) {
 	e.clock.Add(11 * time.Minute)
 	if code := e.get(bare, "/api/search/"+id+"?after=0", "Cookie", "__Host-cb_session="+first).StatusCode; code == http.StatusUnauthorized {
 		t.Fatalf("the original token past a rotation's grace, after a poll a day on: %d", code)
+	}
+	if e.meStatus(b) != http.StatusOK || sessionToken(b, u) == first {
+		t.Error("the next ordinary call didn't rotate it")
+	}
+}
+
+// Cancel Search's DELETE never rotates the session either (it often goes as its page does, its answer never read): a day
+// on, it sets no cookie, the token stays good past a rotation's grace, and the next ordinary call rotates it (RV-905)
+func TestCancelDoesNotRotateTheSession(t *testing.T) {
+	e := setup(t, nil)
+	b, _, _ := e.player("sub-rot-del")
+	u, _ := url.Parse(e.srv.URL)
+	first := sessionToken(b, u)
+	id := decode(t, e.searchAs(b, []int{1}, map[string]int{euServer: 30}))["search"].(string)
+	e.clock.Add(25 * time.Hour)
+	// (the delete as a page going sends it: its reply's cookies never kept)
+	bare := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, e.srv.URL+"/api/search/"+id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", e.srv.URL)
+	req.Header.Set("X-Carball", "1")
+	req.Header.Set("Cookie", "__Host-cb_session="+first)
+	resp, err := bare.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent || len(resp.Header.Values("Set-Cookie")) != 0 {
+		t.Fatalf("a Cancel Search a day on: %d, cookies %v", resp.StatusCode, resp.Header.Values("Set-Cookie"))
+	}
+	// (past the grace a rotation would have started, the original token still good)
+	e.clock.Add(11 * time.Minute)
+	if code := e.get(bare, "/api/search/"+id+"?after=0", "Cookie", "__Host-cb_session="+first).StatusCode; code == http.StatusUnauthorized {
+		t.Fatal("the original token refused after a Cancel Search a day on")
 	}
 	if e.meStatus(b) != http.StatusOK || sessionToken(b, u) == first {
 		t.Error("the next ordinary call didn't rotate it")

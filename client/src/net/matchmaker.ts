@@ -41,9 +41,9 @@ export const MATCHMAKER_TEXT = {
   busy: "too many searches: wait a minute and try again",
   lost: "the connection to the matchmaker was lost",
   unreachable: "the matchmaker isn't reachable right now: try again in a moment",
-  /** Refused while the account plays a match (connected to it: one left isn't counted), so in another tab or window or
-   *  on another device; the next step said (RV-886: the game has no words for it, ours) */
-  inMatch: "you're playing a match in another tab or window: finish it there, then search again",
+  /** Refused while the account plays a match (connected to it: one left isn't counted): in another tab, window or device;
+   *  the next step said (RV-886, RV-912: the game has no words for it, ours) */
+  inMatch: "you're playing a match in another tab, window or device: finish it there, then search again",
   restarted: "the matchmaker restarted: search again",
   noMatchmaker: "no matchmaker to search with (a development page: ?matchmaker=host:port)",
 } as const;
@@ -56,6 +56,14 @@ const POLL_PAUSE_MAX_MS = 8000;
 interface Answer {
   readonly status: number;
   readonly body: Record<string, unknown> | null;
+}
+
+/** A development page's matchmaker from `?matchmaker=`: the preview's same-origin path to one (`/dev-matchmaker/PORT`:
+ *  the browser tests', RV-911), or a host:port of this machine's (`npm run dev`'s, cross-origin); none for anything else */
+export function devMatchmakerBase(param: string | null): string | null {
+  if (param === null) return null;
+  if (/^\/dev-matchmaker\/\d{1,5}$/.test(param)) return param;
+  return /^[A-Za-z0-9.[\]:-]{1,64}$/.test(param) ? `http://${param}` : null;
 }
 
 /** A match found's fields as the page keeps them; null if they're not a match's */
@@ -173,6 +181,8 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
         return false;
       }
       await this.pause(Math.min(1000 * 2 ** failures, POLL_PAUSE_MAX_MS));
+      // (cancelled during the pause: no start sent after it, RV-903)
+      if (this.#isOver()) return false;
     }
     const error = answer.body?.["error"];
     if (answer.status === 200 && typeof answer.body?.["search"] === "string") {

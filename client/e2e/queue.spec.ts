@@ -8,7 +8,7 @@ import { expect, fakeGamepad, hideGamepads, test, tickPlaylists } from "./fixtur
 
 const QUEUE = "127.0.0.1:14440";
 /** The page's query: the server, its development matchmaker */
-const SEARCH = `queue=${QUEUE}&matchmaker=127.0.0.1:14450`;
+const SEARCH = `queue=${QUEUE}&matchmaker=/dev-matchmaker/14450`; // (the preview's same-origin path: RV-911)
 
 async function menuPage(browser: Browser, errors: string[]): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });

@@ -1,6 +1,17 @@
 // The regions a search goes to (notes/matchmaking.md, Regions), with made-up regions and pings
 import { describe, expect, it } from "vitest";
-import { PINGS_KEPT_MS, chooseRegions, searchPlan, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./regions";
+import {
+  PINGS_KEPT_MS,
+  chooseRegions,
+  pingAnswer,
+  searchPlan,
+  searchRequest,
+  storePings,
+  storeRegions,
+  storedPings,
+  storedRegions,
+  toggleRegion,
+} from "./regions";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -122,5 +133,12 @@ describe("the regions searched", () => {
     expect(searchPlan(listed, { ids: ["c"], manual: true }, ["c"], measured, [1])).toMatchObject({ chosen: ["c"], automatic: false });
     // (one region: that one, no pick)
     expect(searchPlan([{ id: "a", server: "a.example:4433" }], null, [], measured, [2]).automatic).toBe(false);
+  });
+
+  it("a ping's answer: its ms and its name; a name the matchmaker wouldn't take, no answer; none, from before the name, its URL's (RV-893, RV-913)", () => {
+    expect(pingAnswer({ ms: 31, server: "game-eu.example:4433" })).toEqual({ ms: 31, name: "game-eu.example:4433" });
+    expect(pingAnswer({ ms: 31, server: "bad_name:4433" })).toBeNull();
+    expect(pingAnswer({ ms: 31, server: "" })).toEqual({ ms: 31, name: null });
+    expect(pingAnswer(null)).toBeNull();
   });
 });

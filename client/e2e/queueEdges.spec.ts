@@ -7,7 +7,7 @@ import { expect, hideGamepads, test, tickPlaylists } from "./fixtures";
 
 const QUEUE = "127.0.0.1:14442";
 /** The page's query: the server, its development matchmaker */
-const SEARCH = `queue=${QUEUE}&matchmaker=127.0.0.1:14451`;
+const SEARCH = `queue=${QUEUE}&matchmaker=/dev-matchmaker/14451`; // (the preview's same-origin path: RV-911)
 
 test.describe.configure({ mode: "serial" });
 
@@ -318,19 +318,27 @@ test("a page closed while it searches: its search cancelled at once, another pla
   await b.context().close();
 });
 
-test("a page reloaded while it searches: its search cancelled as it goes, another player's search not matched with it (RV-894)", async ({ browser }) => {
+test("a page reloaded while it searches: its search cancelled as it goes, another player's search not matched with it (RV-894, RV-911)", async ({
+  browser,
+}) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
+  // (b ready on the Play page, 1v1 ticked, before a reloads: its search starts a moment after the reload, well inside
+  // the 10 s a search not deleted would stay matchable, a's having been polled)
+  const b = await menuPage(browser, errors);
+  const menuB = b.locator("#main-menu");
+  await menuB.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+  await tickPlaylists(menuB, ["1v1"]);
   const a = await menuPage(browser, errors);
   await findMatch(a);
   await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
-  await a.reload();
-  await expect(a.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  const b = await menuPage(browser, errors);
-  await findMatch(b);
+  const reloaded = Date.now();
+  await a.reload({ waitUntil: "commit" });
+  await menuB.getByRole("button", { name: /^find match$/i }).click();
   await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
-  // (a's search polled, so matchable for 10 s had its delete not come: still searching 4 s on, no match made with it)
-  await b.waitForTimeout(4000);
+  expect(Date.now() - reloaded, "b searching soon enough to meet a's search, had it stayed").toBeLessThan(6000);
+  // (past the 10 s a search left behind stays matchable: still searching, no match made with it)
+  await b.waitForTimeout(11_000);
   await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching");
   expect(b.url()).not.toMatch(/[?&]match(&|$)/);
   await b.locator("#search-banner .search-cancel").click();

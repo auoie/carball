@@ -166,7 +166,8 @@ class FakeControl {
     return name in this.attributes;
   }
   closest(selector: string): object | null {
-    // (the playlists a choosing group: data-pad-choose)
+    // (the playlists a choosing group: data-pad-choose; a row of boxes, data-pad-boxes: those marked `boxes`)
+    if (selector === "[data-pad-boxes]") return "boxes" in this.attributes ? {} : null;
     return selector === "[data-pad-choose]" && this.attributes["role"] === "radio" ? {} : null;
   }
   focus(): void {
@@ -235,5 +236,43 @@ describe("a menu page as a list with a pad (the user's request: native to contro
     nav.frame(pad([]), (t += 0.05));
     expect(focused.at(-1)).toBe("find");
     expect(step(LEFT), "a lone button: left does nothing").toBe("find");
+  });
+
+  it("a row of boxes (the playlists: data-pad-boxes) one row, left and right along it, A ticking one; a lone box a row of its own (RV-883)", () => {
+    const NoElement = function NoElement(): void {
+      // (never constructed)
+    };
+    vi.stubGlobal("HTMLElement", NoElement);
+    vi.stubGlobal("HTMLInputElement", NoElement);
+    vi.stubGlobal("document", { activeElement: null });
+    const box = (left: number, top: number): { left: number; top: number; width: number; height: number } => ({ left, top, width: 70, height: 28 });
+    const controls = [
+      new FakeControl("1v1", box(0, 0), { role: "checkbox", "aria-checked": "true", boxes: "" }),
+      new FakeControl("2v2", box(80, 0), { role: "checkbox", "aria-checked": "false", boxes: "" }),
+      new FakeControl("3v3", box(160, 0), { role: "checkbox", "aria-checked": "false", boxes: "" }),
+      new FakeControl("alone", box(0, 40), { role: "checkbox", "aria-checked": "false" }),
+      new FakeControl("find", box(80, 40)),
+    ];
+    const menu = { id: "main-menu", querySelectorAll: (q: string) => (q === "[data-pad-page]" ? [] : controls) } as unknown as HTMLElement;
+    const nav = new PadMenuNav({ menu: () => menu, back: () => true, start: () => undefined });
+    const focused: string[] = [];
+    for (const c of controls) c.focus = (): void => void focused.push(c.name);
+    let t = 0;
+    const step = (button: number): string | undefined => {
+      nav.frame(pad([button]), (t += 0.05));
+      nav.frame(pad([]), (t += 0.05));
+      return focused.at(-1);
+    };
+    const [A, DOWN, RIGHT] = [0, 13, 15];
+    nav.frame(pad([]), 0);
+    expect(focused.at(-1)).toBe("1v1");
+    expect(step(RIGHT), "along the boxes' row").toBe("2v2");
+    expect(controls[1]?.clicks, "moving ticks nothing").toBe(0);
+    step(A);
+    expect(controls[1]?.clicks, "A ticks it").toBe(1);
+    expect(step(RIGHT)).toBe("3v3");
+    expect(step(DOWN), "a lone box: its own row").toBe("alone");
+    expect(step(RIGHT), "a lone box: right changes nothing, moves nowhere").toBe("alone");
+    expect(controls[3]?.clicks).toBe(0);
   });
 });

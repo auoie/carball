@@ -1,7 +1,7 @@
 // The regions' pings against a stand-in server, and this browser's key
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeTransport, type FakeTransportRecord } from "../testing/fakeTransport";
-import { decodeControl } from "./protocol";
+import { decodeControl, encodeControl } from "./protocol";
 import { browserKey, pingServer } from "./search";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
@@ -52,6 +52,28 @@ describe("the pings and the browser's key", () => {
     vi.stubGlobal("WebTransport", fakeTransport([], unanswered));
     expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBeNull();
     expect(unanswered.sessions.length).toBe(1);
+    // (the first message read alone, the rest of its chunk left: a Pong and more bytes in one read, RV-913's K11)
+    const pong = encodeControl({ type: "pong", server: "b.example:4433" });
+    const more = encodeControl({ type: "refused", reason: 1 });
+    class OneChunk {
+      readonly ready = Promise.resolve();
+      readonly closed = new Promise<void>(() => undefined);
+      createBidirectionalStream(): Promise<{ readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> }> {
+        return Promise.resolve({
+          readable: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(Uint8Array.of(...pong, ...more));
+            },
+          }),
+          writable: new WritableStream<Uint8Array>(),
+        });
+      }
+      close(): void {
+        // (nothing held)
+      }
+    }
+    vi.stubGlobal("WebTransport", OneChunk);
+    expect((await pingServer({ url: "https://b.example:4433/play", certHash: null }, 1))?.server).toBe("b.example:4433");
     // (the first message read alone: a Pong followed by more bytes still answers, RV-887's K11)
     vi.stubGlobal(
       "WebTransport",

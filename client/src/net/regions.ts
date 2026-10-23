@@ -110,6 +110,14 @@ export function searchPlan(
   return { chosen: regions, automatic, request: searchRequest(listed, regions, measured, playlists) };
 }
 
+/** A region's ping from its server's answer (pingServer's): its ms and the name its Pong gives (the search sends it); a
+ *  server naming itself outside the matchmaker's pattern counted as unanswered (no search can go there, RV-893), one
+ *  naming none (from before the name) known by its URL: no name */
+export function pingAnswer(answer: { readonly ms: number; readonly server: string } | null): { ms: number; name: string | null } | null {
+  if (answer === null || (answer.server !== "" && !serverNameOk(answer.server))) return null;
+  return { ms: answer.ms, name: answer.server === "" ? null : answer.server };
+}
+
 /** A server's name as the matchmaker takes it: host:port (the API's pattern) */
 export function serverNameOk(name: string): boolean {
   return /^[A-Za-z0-9.-]{1,58}:[0-9]{1,5}$/.test(name);

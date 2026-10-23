@@ -141,8 +141,13 @@ played, and reported. There's one server per region.
   lets the start finish and deletes what it returns (RV-867).
 - Each start, a restart's after a `404` too, measures the pings again, and the automatic region pick comes from those
   pings alone, never one kept from before (RV-879, RV-880). A start answered 502/503/504 (the API restarting) is tried
-  again with the polls' pauses (RV-881). A poll or a `DELETE` never renews the session's cookie (RV-889). A server whose
-  Pong names it outside the pattern counts as unanswered there (RV-893).
+  again with the polls' pauses (RV-881); a Cancel Search during a pause sends no start after it (RV-903). The retry keeps
+  the wait the lost start took, a cancelled match's included (RV-904). A poll or a `DELETE` never renews the session's
+  cookie (RV-889, RV-905). A server whose Pong names it outside the pattern counts as unanswered there (RV-893).
+- Accepted edges (RV-906..908): another call that renews the cookie in flight as the page goes (a start during unload,
+  or one answered 502 though the API took it) can still lose the renewed cookie, a sub-second window; a lost start's
+  search holds the account's place for up to 10 s, a rejoin refused meanwhile; after a sign-out, a search can still be
+  matched in the up to ~35 s before it goes (its poll may bring a seat, or the account becomes a no-show).
 - A server name the API can't take (not host:port, too long) or given twice is dropped from the request, by the page
   and by the API, never failing the search (RV-868); such a name stops a queue server's start.
 - A `404` (the API restarted) makes the page search again once; a `502`/`503` is retried with a backoff.

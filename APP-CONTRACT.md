@@ -45,8 +45,9 @@ builds `--target checks` (the names check over the game and API images' files to
 then `--target web`, `game` and `api` as `carball-web:TAG`, `carball-game:TAG` and `carball-api:TAG`. Each stage is
 cached by its inputs, so a release that doesn't touch the engine builds no C++; cargo's registry and target, npm's and
 Go's caches are BuildKit cache mounts (the server's own crate always built again). The first build downloads the
-toolchain images and the crates, npm packages and Go modules (`--locked`, `npm ci`, the Go checksum database); later
-builds only what changed. Every base is pinned by digest (update a tag and its digest together). Then:
+toolchain images and the crates, npm packages and Go modules (`--locked`, `npm ci`, the Go checksum database), CMake for
+the server's engine from Debian (its version pinned) and Rust's wasm32-unknown-emscripten target from static.rust-lang.org
+(the toolchain's own, checked against its manifest: RV-916); later builds only what changed. Every base is pinned by digest (update a tag and its digest together). Then:
 ```sh
 docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz       # on the host: docker load < carball-web-TAG.tar.gz
 docker save carball-game:TAG | gzip > carball-game-TAG.tar.gz

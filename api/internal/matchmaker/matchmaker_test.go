@@ -505,6 +505,35 @@ func TestCancelledKeepsTheWait(t *testing.T) {
 	}
 }
 
+// A start whose answer was lost (never polled) and the page's retry (RV-881): the retry keeps the wait the lost start
+// took, here a cancelled match's kept one (RV-904)
+func TestRetriedStartKeepsTheWait(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("came", 1500), []byte{1}, near)
+	h.at(40 * time.Second)
+	h.search(t, player("gone", 1500), []byte{1}, near)
+	h.m.Tick(h.now)
+	m := h.found(t, "came")
+	gone := int(h.issued[slices.IndexFunc(h.issued, func(s ticket.Seat) bool { return s.Match == m.ID && s.Seat != h.issued[0].Seat })].Seat)
+	h.m.Cancelled("eu:4433", m.ID, []int{gone}, h.now)
+	h.now = t0.Add(41 * time.Second)
+	h.search(t, player("x", 1500), []byte{1}, near)
+	h.now = t0.Add(42 * time.Second)
+	h.search(t, player("y", 1500), []byte{1}, near)
+	// (the start whose answer is lost: never polled; the retry half a second on)
+	h.now = t0.Add(45 * time.Second)
+	if _, _, err := h.m.Start(player("came", 1500), req([]byte{1}, near), h.now); err != nil {
+		t.Fatal(err)
+	}
+	h.now = t0.Add(45500 * time.Millisecond)
+	h.search(t, player("came", 1500), []byte{1}, near)
+	h.at(46 * time.Second)
+	// (the one who came, its wait since 0 s, first: matched with x; with the retry's own 45.5 s, x and y would be)
+	if h.found(t, "came") == nil || h.found(t, "x") == nil || h.found(t, "y") != nil {
+		t.Fatal("the retried start lost the kept wait")
+	}
+}
+
 // StartWait: a match with no word that it started is forgotten (a late Started finds nothing); one started holds its
 // players, but not one who searched again before the start (RV-876's G6, G9)
 func TestStartWaitAndSearchBeforeTheStart(t *testing.T) {

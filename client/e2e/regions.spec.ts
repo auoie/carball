@@ -8,7 +8,7 @@ import { expect, hideGamepads, test, tickPlaylists } from "./fixtures";
 
 const A = "127.0.0.1:14446";
 const B = "127.0.0.1:14448";
-const MATCHMAKER = "matchmaker=127.0.0.1:14452";
+const MATCHMAKER = "matchmaker=/dev-matchmaker/14452"; // (the preview's same-origin path: RV-911)
 
 /** Each test's browser contexts, closed at its end (a search left running would meet the next test's) */
 const opened: BrowserContext[] = [];

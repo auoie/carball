@@ -6,7 +6,7 @@
 //! rebuilt whenever the engine's files change, CARBALL_ENGINE_NATIVE.) The CMake files are read as CMake reads them (RV-899): commands in any
 //! case, a space before the parenthesis, arguments over several lines, `#` comments, `set` variables.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 fn read(path: &Path) -> String {
@@ -28,10 +28,38 @@ fn without_comment(line: &str) -> &str {
     line
 }
 
+/// A Rust text with its `/* */` comments cut (nested ones too; one inside a string kept)
+fn without_block_comments(text: &str) -> String {
+    let (mut out, mut depth, mut quoted) = (String::new(), 0, false);
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (c, next) = (chars[i], chars.get(i + 1).copied());
+        if depth == 0 && c == '"' && (i == 0 || chars[i - 1] != '\\') {
+            quoted = !quoted;
+        }
+        if !quoted && c == '/' && next == Some('*') {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if depth > 0 && c == '*' && next == Some('/') {
+            depth -= 1;
+            i += 2;
+            continue;
+        }
+        if depth == 0 {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
 /// The rerun list's paths in a build script's text, relative to the engine directory (a commented-out entry isn't one:
 /// cargo doesn't watch it)
 fn rerun_list(build: &str) -> Vec<PathBuf> {
-    let code: String = build.lines().map(|l| format!("{}\n", without_comment(l))).collect();
+    let code: String = without_block_comments(build).lines().map(|l| format!("{}\n", without_comment(l))).collect();
     let list = code.split("for dir in [").nth(1).and_then(|rest| rest.split(']').next()).expect("the rerun list");
     list.split('"').filter_map(|s| s.strip_prefix("../engine/")).map(PathBuf::from).collect()
 }
@@ -112,15 +140,38 @@ fn commands(text: &str) -> Vec<(String, Vec<String>)> {
     out
 }
 
+/// An argument with its variables put in: a lone list variable gives each of its values, a glob's list none (its files
+/// read where it's made); one in a longer argument its single value
+fn expand(vars: &HashMap<String, Vec<String>>, globbed: &HashSet<String>, arg: &str) -> Vec<String> {
+    if let Some(var) = arg.strip_prefix("${").and_then(|a| a.strip_suffix('}')).filter(|v| !v.contains("${")) {
+        if let Some(values) = vars.get(var) {
+            return values.clone();
+        }
+        if globbed.contains(var) {
+            return Vec::new();
+        }
+    }
+    let mut out = arg.to_string();
+    for (k, v) in vars {
+        if v.len() == 1 {
+            out = out.replace(&format!("${{{k}}}"), &v[0]);
+        }
+    }
+    vec![out]
+}
+
 /// What one CMakeLists.txt (in `dir`, relative to the engine directory) builds from: the directories its libraries'
 /// sources, globs and include directories name, the files it include()s and the directories it add_subdirectory's
 fn inputs_of(dir: &Path, text: &str) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let (mut dirs, mut files, mut subdirs) = (Vec::new(), Vec::new(), Vec::new());
-    let mut vars: HashMap<String, String> =
-        [("CMAKE_CURRENT_SOURCE_DIR", "."), ("PROJECT_SOURCE_DIR", "."), ("CMAKE_CURRENT_LIST_DIR", ".")]
+    // (each variable's values: `set`'s, `list(APPEND)`'s; the source directory's own names "."; a file(GLOB) or
+    // aux_source_directory list: its files read where it's made, RV-910)
+    let mut vars: HashMap<String, Vec<String>> =
+        ["CMAKE_CURRENT_SOURCE_DIR", "PROJECT_SOURCE_DIR", "CMAKE_CURRENT_LIST_DIR"]
             .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .map(|k| (k.to_string(), vec![".".to_string()]))
             .collect();
+    let mut globbed: HashSet<String> = HashSet::new();
     let keywords = [
         "STATIC",
         "SHARED",
@@ -140,27 +191,46 @@ fn inputs_of(dir: &Path, text: &str) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf
         "false",
     ];
     for (name, args) in commands(text) {
-        let resolve = |arg: &str| -> String {
-            let mut out = arg.to_string();
-            for (k, v) in &vars {
-                out = out.replace(&format!("${{{k}}}"), v);
-            }
-            out
-        };
         // (the arguments before the paths: file's mode and variable, a library's or a target's name)
         let skip = match name.as_str() {
             "set" => {
-                if let [var, value] = args.as_slice() {
-                    let value = resolve(value);
-                    vars.insert(var.clone(), value);
+                if let Some((var, rest)) = args.split_first() {
+                    let end = rest.iter().position(|a| a == "CACHE" || a == "PARENT_SCOPE").unwrap_or(rest.len());
+                    let values = rest[..end].iter().flat_map(|a| expand(&vars, &globbed, a)).collect();
+                    vars.insert(var.clone(), values);
+                }
+                continue;
+            }
+            "list" => {
+                if let [mode, var, items @ ..] = args.as_slice()
+                    && mode == "APPEND"
+                {
+                    let added: Vec<String> = items.iter().flat_map(|a| expand(&vars, &globbed, a)).collect();
+                    vars.entry(var.clone()).or_default().extend(added);
                 }
                 continue;
             }
             "add_subdirectory" => {
-                subdirs.push(dir.join(resolve(&args[0])));
+                subdirs.push(dir.join(&expand(&vars, &globbed, &args[0])[0]));
                 continue;
             }
-            "file" => 2,
+            "file" => {
+                if let Some(var) = args.get(1) {
+                    globbed.insert(var.clone());
+                }
+                2
+            }
+            "aux_source_directory" => {
+                if let Some(var) = args.get(1) {
+                    globbed.insert(var.clone());
+                }
+                dirs.push(dir.join(expand(&vars, &globbed, &args[0])[0].trim_start_matches("./")));
+                continue;
+            }
+            "configure_file" => {
+                files.push(dir.join(expand(&vars, &globbed, &args[0])[0].trim_start_matches("./")));
+                continue;
+            }
             "add_library" | "target_sources" | "target_include_directories" => 1,
             "include_directories" | "include" => 0,
             _ => continue,
@@ -169,29 +239,30 @@ fn inputs_of(dir: &Path, text: &str) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf
             if keywords.contains(&arg.as_str()) || arg.starts_with("$<") {
                 continue;
             }
-            // (a list variable of sources, globbed above: those are read there)
-            if arg.starts_with("${") && arg.ends_with('}') && !arg.contains('/') {
-                continue;
-            }
-            let path = resolve(arg);
-            assert!(
-                !path.contains("${"),
-                "{}: can't resolve {arg} in {name}(): teach this guard its variable",
-                dir.display()
-            );
-            if name == "include" {
-                // (a module of CMake's own, by name: no file of ours)
-                if path.contains('/') || path.contains('.') {
-                    files.push(dir.join(path));
+            for path in expand(&vars, &globbed, arg) {
+                assert!(
+                    !path.contains("${"),
+                    "{}: can't resolve {arg} in {name}(): teach this guard its variable",
+                    dir.display()
+                );
+                if name == "include" {
+                    // (a module of CMake's own, by name: no file of ours)
+                    if path.contains('/') || path.contains('.') {
+                        files.push(dir.join(path));
+                    }
+                    continue;
                 }
-                continue;
-            }
-            let path = dir.join(path.trim_start_matches("./"));
-            // (a source or a glob: its directory; an include directory as named)
-            let named =
-                if arg.contains('.') || arg.contains('*') { path.parent().map(Path::to_path_buf) } else { Some(path) };
-            if let Some(d) = named.filter(|d| !d.as_os_str().is_empty()) {
-                dirs.push(d);
+                let named = dir.join(path.trim_start_matches("./"));
+                // (a source or a glob, by its last part: its directory; an include directory as named)
+                let leaf = named.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                let named = if leaf.contains('.') || leaf.contains('*') {
+                    named.parent().map(Path::to_path_buf)
+                } else {
+                    Some(named)
+                };
+                if let Some(d) = named.filter(|d| !d.as_os_str().is_empty()) {
+                    dirs.push(d);
+                }
             }
         }
     }
@@ -259,6 +330,24 @@ fn the_guard_reads_cmake_and_the_build_script_as_they_are_read() {
     assert_eq!(names(&dirs), ["e/one", "e/two", "e/gen", "e/inc", "e/api", "e/deep"]);
     assert_eq!(names(&files), ["e/cmake/flags.cmake"]);
     assert_eq!(names(&subdirs), ["e/sub"]);
+    // (RV-910: a block comment in the build script; list variables, a cached one, an appended one, a source
+    // directory's list, a configured file)
+    let build =
+        "for dir in [\n    \"../engine/a\",\n    /* \"../engine/b\",\n    /* nested */ */ \"../engine/c\",\n] {";
+    assert_eq!(rerun_list(build), [PathBuf::from("a"), PathBuf::from("c")]);
+    let text = r#"
+        set(LIST "x/a.cpp" y/b.cpp)
+        set(INC "${CMAKE_CURRENT_SOURCE_DIR}/inc2" CACHE PATH "the includes")
+        list(APPEND LIST z/c.cpp)
+        add_library(three ${LIST})
+        include_directories(${INC})
+        aux_source_directory(aux AUX_SRC)
+        add_library(four ${AUX_SRC})
+        configure_file(conf/version.h.in version.h)
+    "#;
+    let (dirs, files, _) = inputs_of(Path::new("e"), text);
+    assert_eq!(names(&dirs), ["e/x", "e/y", "e/z", "e/inc2", "e/aux"]);
+    assert_eq!(names(&files), ["e/conf/version.h.in"]);
 }
 
 #[test]

@@ -36,10 +36,17 @@ import {
 import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, searchPlan, serverNameOk, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
+import { chooseRegions, pingAnswer, searchPlan, storedPings, storedRegions, storePings, storeRegions, toggleRegion } from "./net/regions";
 import { browserKey, pingServer } from "./net/search";
 import { REFUSED_VERSION } from "./net/protocol";
-import { MATCHMAKER_TEXT, type MatchmakerEndpoint, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
+import {
+  MATCHMAKER_TEXT,
+  type MatchmakerEndpoint,
+  type MatchmakerSearch,
+  MatchmakerSearchSession,
+  type SearchRequest,
+  devMatchmakerBase,
+} from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, readGamepad } from "./input/devices";
@@ -502,12 +509,11 @@ async function main(): Promise<void> {
     /** Each region's server's name as its Pong said it (the matchmaker's: RV-863); none, its URL's host:port */
     const serverNames = new Map<string, string>();
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
-    /** A region's ping from its answer, its name kept: a server naming itself outside the matchmaker's pattern counted
-     *  as no answer (no search can go there, RV-893); one naming none, from before the name, known by its URL */
+    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer) */
     const answered = (r: Region, answer: Awaited<ReturnType<typeof pingServer>>): number | null => {
-      if (answer === null || (answer.server !== "" && !serverNameOk(answer.server))) return null;
-      if (answer.server !== "") serverNames.set(r.id, answer.server);
-      return answer.ms;
+      const ping = pingAnswer(answer);
+      if (ping?.name) serverNames.set(r.id, ping.name);
+      return ping?.ms ?? null;
     };
     let pinging: Promise<void> = Promise.resolve();
     let chosen: string[] = [];
@@ -586,10 +592,10 @@ async function main(): Promise<void> {
     /** Where the matchmaker is: the deployment's (this page's origin); a development page's `?matchmaker=host:port`, its
      *  player named by this browser's key and the settings' name; none for a development page without one */
     const matchmakerEndpoint = async (): Promise<MatchmakerEndpoint | null> => {
-      const dev = params.get("matchmaker");
-      if (dev !== null && /^[A-Za-z0-9.[\]:-]{1,64}$/.test(dev)) {
+      const dev = devMatchmakerBase(params.get("matchmaker"));
+      if (dev !== null) {
         const key = browserKey().toString(16).padStart(16, "0");
-        return { base: `http://${dev}`, dev: { name: settings.chat.name.trim() || `Dev ${key.slice(0, 4)}`, key } };
+        return { base: dev, dev: { name: settings.chat.name.trim() || `Dev ${key.slice(0, 4)}`, key } };
       }
       return params.get("queue") === null && (await deployedGameServer()).kind === "deployed" ? { base: "" } : null;
     };
