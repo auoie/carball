@@ -57,11 +57,16 @@ RUN --mount=type=cache,id=carball-cargo-registry-host,target=/usr/local/cargo/re
     && CARGO_BUILD_JOBS="$JOBS" CARGO_OFFLINE=0 CARGO_TARGET_DIR=/target CARBALL_ENGINE_WASM=/src/engine/build-wasm-host bash scripts/build_host.sh host \
     && mkdir /out && cp engine/build-wasm-host/carball_host.mjs engine/build-wasm-host/carball_host.wasm /out/
 
-# The engine's libraries for the server, as cargo's CMake build makes them (its flags; server/build.rs). CMake from the
-# image's Debian, its version pinned (RV-915: a new one fails the install loudly, then update it here)
+# The engine's libraries for the server, as cargo's CMake build makes them (its flags; server/build.rs). CMake from
+# Debian's archive as it was on a fixed day (snapshot.debian.org: that one install alone, the image's own sources not
+# read), its version pinned too: the same CMake and libraries every build, whatever Debian has moved on to (RV-915;
+# update the date and the version together)
 FROM rust AS server-engine
 ARG JOBS
-RUN apt-get update && apt-get install -y --no-install-recommends cmake=3.31.6-2 cmake-data=3.31.6-2 && rm -rf /var/lib/apt/lists/*
+RUN echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261023T000000Z trixie main" > /etc/apt/snapshot.list \
+    && apt="apt-get -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
+    && $apt update && $apt install -y --no-install-recommends cmake=3.31.6-2 cmake-data=3.31.6-2 \
+    && rm -rf /var/lib/apt/lists/* /etc/apt/snapshot.list
 WORKDIR /src
 COPY engine/ engine/
 RUN flags="-ffunction-sections -fdata-sections -fPIC -m64 -w" \
