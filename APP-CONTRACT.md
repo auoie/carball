@@ -245,7 +245,9 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   `carball-admin`, a statement 15 s and a lock 2 s at most; the reports', `accounts`' and `bans`' are read-only. A ban
   on an identity no account has signed in with is refused (a Steam subject is 17 digits; no spaces or control
   characters), and so is a ban in force on any of its identities unless `--replace`, which prints each ban it replaced
-  (RV-781, RV-787).
+  (RV-781, RV-787). `--no-account` bans such an identity on purpose (a deleted account's, a throwaway's; one with an
+  account refused), its line saying "no account" (RV-788). `unban --identity` shares the checks, but a subject an older
+  version stored without them is lifted exactly as given (RV-790).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,

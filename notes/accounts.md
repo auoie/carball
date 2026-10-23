@@ -246,7 +246,10 @@ With no ranked gate, it rests on:
   - leavers and forfeits by question 14.
 - **Bans:**
   - on every identity of the account (AC-9), with an expiry or none;
-  - issued with an admin command on the box against the database, nothing exposed (question 13).
+  - issued with an admin command on the box against the database, nothing exposed (question 13);
+  - an identity's ban needs an account that signed in with it, unless `--no-account` (a deleted account's identity, a
+    throwaway's: it can't make an account while banned); a ban in force is replaced only with `--replace`, and the
+    replaced ban is printed (RV-781, RV-787, RV-788).
 - **The delete/re-create rule** (`deletions`: 30 days, question 10).
 - **The leavers' queue ban** (§3), and the no-show search ban (2 minutes, the queue's own: MM, RV-367), now by account.
 

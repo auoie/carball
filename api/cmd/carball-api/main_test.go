@@ -233,7 +233,10 @@ func TestArgumentsRefusedBeforeAnythingRuns(t *testing.T) {
 		{[]string{"ban", "--identity", "steam:7656119000000001", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
 		{[]string{"ban", "--identity", "steam:7656119000000000x", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
 		{[]string{"ban", "--identity", "google:" + strings.Repeat("1", 256), "--by", "admin", "--reason", "x"}, "longer than any provider's"},
-		{[]string{"unban", "--identity", "steam:123"}, "a Steam subject is a SteamID64, 17 digits"},
+		{[]string{"ban", "--identity", "steam:7656119000000001", "--no-account", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
+		{[]string{"ban", "--account", id, "--no-account", "--by", "admin", "--reason", "x"}, "--no-account goes with --identity"},
+		{[]string{"unban", "--identity", "github:x"}, "--identity is PROVIDER:SUBJECT"},
+		{[]string{"unban", "--identity", "steam:"}, "--identity is PROVIDER:SUBJECT"},
 		{[]string{"matches", "--recent", "1001"}, "N a count from 1 to 1000"},
 		{[]string{"ratings", "--top", "1001"}, "N a count from 1 to 1000"},
 		{[]string{"accounts", "--recent", "1001"}, "N a count from 1 to 1000"},
@@ -248,6 +251,13 @@ func TestArgumentsRefusedBeforeAnythingRuns(t *testing.T) {
 		var out, errs bytes.Buffer
 		if code := run([]string{"ban", "--account", id, "--by", "admin", "--reason=-spam", "--for", "72h"}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
 			t.Errorf("--reason=-spam: exit %d, %q; want on to the database", code, errs.String())
+		}
+	}
+	// (unban with a malformed subject: on to the database, for a ban an older version stored on it as given, RV-790)
+	{
+		var out, errs bytes.Buffer
+		if code := run([]string{"unban", "--identity", "steam:123"}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
+			t.Errorf("unban steam:123: exit %d, %q; want on to the database", code, errs.String())
 		}
 	}
 	// (the flags described in a command's usage)

@@ -23,8 +23,12 @@ test("Stat Graphs: None by default and no strip; F10 cycles the levels unsaved; 
   await page.keyboard.press("F10");
   await expect.poll(async () => (await stats(page)).level).toBe("performanceSummary");
   await expect(page.locator("canvas.stat-graphs")).toBeVisible();
-  expect((await stats(page)).rows.map((r) => r.title)).toEqual(["FPS", "Frame", "Game", "Render", "GPU"]);
+  expect((await stats(page)).rows.map((r) => r.title)).toEqual(["FPS", "Frame", "Game", "Render", "GPU", "Audio Base", "Audio Out"]);
   await expect.poll(async () => (await stats(page)).rows[0]?.summaries[0]?.value ?? 0, { timeout: 10_000 }).toBeGreaterThan(0);
+  // (the browser's audio base latency read: a few ms, never 0 or nonsense)
+  const base = (await stats(page)).rows.find((r) => r.title === "Audio Base")?.summaries[0]?.value ?? 0;
+  expect(base).toBeGreaterThan(0);
+  expect(base).toBeLessThan(100);
   // (three more: Network Summary, offline its rows 0, the input buffer's after them)
   for (let i = 0; i < 3; i++) await page.keyboard.press("F10");
   await expect.poll(async () => (await stats(page)).level).toBe("networkSummary");

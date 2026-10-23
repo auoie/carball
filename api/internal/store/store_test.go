@@ -128,18 +128,21 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestCreateAccountRefusals(t *testing.T) {
-	s, owner, _ := open(t)
+	s, _, _ := open(t)
 	ctx := context.Background()
-	// (a banned identity with no account (its account deleted: its bans stay; a ban can't be made on one now, RV-781):
-	// refused, the ban carried)
-	conn, err := pgx.Connect(ctx, owner)
-	if err != nil {
-		t.Fatal(err)
+	// (a banned identity with no account (the admin's --no-account, RV-788): its sign-up refused, the ban carried)
+	b, err := s.BanNoAccount(ctx, store.Identity{Provider: store.Steam, Subject: "76561190000000002"}, "cheating", "admin", store.Permanent{}, false, t0)
+	if err != nil || b.Account != "" || len(b.Identities) != 1 {
+		t.Fatalf("BanNoAccount = %+v, %v", b, err)
 	}
-	defer func() { _ = conn.Close(ctx) }()
-	if _, err := conn.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
-		VALUES ('steam', '76561190000000002', 'cheating', NULL, 'admin', $1)`, t0); err != nil {
-		t.Fatal(err)
+	// (banned already: refused unasked, replaced when asked)
+	var held store.AlreadyBannedError
+	if _, err := s.BanNoAccount(ctx, store.Identity{Provider: store.Steam, Subject: "76561190000000002"}, "again", "mod", store.Permanent{}, false, t0); !errors.As(err, &held) {
+		t.Errorf("a re-ban with no account unasked: %v", err)
+	}
+	if b, err := s.BanNoAccount(ctx, store.Identity{Provider: store.Steam, Subject: "76561190000000002"}, "cheating", "admin", store.Permanent{}, true, t0); err != nil ||
+		len(b.Replaced) != 1 || b.Replaced[0].Reason != "cheating" {
+		t.Errorf("a re-ban with no account replacing = %+v, %v", b, err)
 	}
 	var banned store.BannedError
 	_, err = s.CreateAccount(ctx, pending(t, s, "steam", "76561190000000002", t0), "B", []byte("h"), t0, t0)
@@ -303,6 +306,14 @@ func TestBans(t *testing.T) {
 	}
 	if b, _, _ := s.BanOn(ctx, "google", "sub-b", t0); b.Reason != "again" {
 		t.Errorf("the replacing ban: %+v", b)
+	}
+	// (one with an account asked for as having none: refused, its account named, nothing changed (RV-788))
+	var has store.HasAccountError
+	if _, err := s.BanNoAccount(ctx, store.Identity{Provider: store.Google, Subject: "sub-b"}, "x", "admin", store.Permanent{}, true, t0); !errors.As(err, &has) || has.Account != id {
+		t.Errorf("a ban with no account on an account's identity: %v", err)
+	}
+	if b, _, _ := s.BanOn(ctx, "google", "sub-b", t0); b.Reason != "again" {
+		t.Errorf("a refused ban with no account changed the ban: %+v", b)
 	}
 	// (an identity no account has: refused, nothing stored (RV-781))
 	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-nobody"}, "x", "admin", store.Permanent{}, false, t0); !errors.Is(err, store.ErrNoIdentity) {

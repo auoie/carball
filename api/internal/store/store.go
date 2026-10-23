@@ -551,6 +551,11 @@ func identitiesOf(ctx context.Context, tx pgx.Tx, accountID string, lock bool) (
 // one: RV-781)
 var ErrNoIdentity = errors.New("no account has signed in with that identity")
 
+// HasAccountError: a ban asked for an identity with no account (BanNoAccount) refused, an account has signed in with it
+type HasAccountError struct{ Account string }
+
+func (e HasAccountError) Error() string { return "an account has signed in with that identity" }
+
 // AlreadyBannedError: a ban refused, nothing changed, because some of its identities are banned already and it wasn't
 // asked to replace their bans (RV-787): those bans
 type AlreadyBannedError struct{ Bans []Ban }
@@ -605,7 +610,28 @@ func (s *Store) BanIdentity(ctx context.Context, i Identity, reason, by string, 
 	return b, err
 }
 
-// banIdentities: the identities banned and their account's sessions ended; the bans in force it replaced, none
+// BanNoAccount bans an identity no account has signed in with: the admin's deliberate choice (a deleted account's, a
+// known throwaway's: RV-788), which keeps it from making one; refused if an account has it (HasAccountError), and a ban
+// in force on it replaced only with `replace` (else AlreadyBannedError)
+func (s *Store) BanNoAccount(ctx context.Context, i Identity, reason, by string, end BanEnd, replace bool, now time.Time) (Banned, error) {
+	b := Banned{Identities: []Identity{i}}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var account string
+		err := tx.QueryRow(ctx, `SELECT account_id::text FROM identities WHERE provider = $1 AND subject = $2`,
+			i.Provider, i.Subject).Scan(&account)
+		if err == nil {
+			return HasAccountError{Account: account}
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		b.Replaced, err = banIdentities(ctx, tx, b.Identities, "", reason, by, end, replace, now)
+		return err
+	})
+	return b, err
+}
+
+// banIdentities: the identities banned and their account's sessions ended (none: no account); the bans in force it replaced, none
 // replaced without `replace`
 func banIdentities(ctx context.Context, tx pgx.Tx, ids []Identity, accountID, reason, by string, end BanEnd, replace bool, now time.Time) ([]Ban, error) {
 	var held []Ban
@@ -629,6 +655,9 @@ func banIdentities(ctx context.Context, tx pgx.Tx, ids []Identity, accountID, re
 			created_at = excluded.created_at`, i.Provider, i.Subject, reason, until, by, now); err != nil {
 			return nil, err
 		}
+	}
+	if accountID == "" {
+		return held, nil
 	}
 	_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)
 	return held, err

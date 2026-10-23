@@ -72,7 +72,7 @@ describe("a row's history (SampleHistory_TA)", () => {
 
 describe("the rows and levels (HUD-21)", () => {
   it("the game's titles, verbatim, in each group's order", () => {
-    expect(STAT_GROUPS.perf.map((r) => r.title)).toEqual(["FPS", "Frame", "Game", "Render", "GPU"]);
+    expect(STAT_GROUPS.perf.map((r) => r.title)).toEqual(["FPS", "Frame", "Game", "Render", "GPU", "Audio Base", "Audio Out"]);
     expect(STAT_GROUPS.net.map((r) => r.title)).toEqual(["Out Pkt", "In Pkt", "Out Loss", "In Loss", "Out Bytes", "In Bytes", "Latency"]);
     expect(STAT_GROUPS.inputBuffer.map((r) => r.title)).toEqual(["IBuf", "IBuf Target", "IBuf Miss", "Phys Rate"]);
     expect(STAT_GROUPS.speed.map((r) => r.title)).toEqual(["Car Speed", "Car Speed (XY)", "Car Speed (Z)", "Ball Speed", "Ball Speed (XY)", "Ball Speed (Z)"]);
@@ -110,7 +110,7 @@ describe("the rows and levels (HUD-21)", () => {
     data.set("FPS", 60);
     for (let i = 0; i < 60; i++) data.sample(i / 60);
     const summary = data.view("performanceSummary", 59 / 60, CONTEXT);
-    expect(summary.map((r) => r.title)).toEqual(["FPS", "Frame", "Game", "Render", "GPU"]);
+    expect(summary.map((r) => r.title)).toEqual(["FPS", "Frame", "Game", "Render", "GPU", "Audio Base", "Audio Out"]);
     expect(summary[0]?.summaries).toEqual([
       { type: "avg", value: 60, standing: "good" },
       { type: "min", value: 60, standing: "good" },
@@ -138,6 +138,8 @@ describe("every row's summaries as SG1's table (RV-515)", () => {
       Game: ms,
       Render: ms,
       GPU: ms,
+      "Audio Base": "latest", // (ours: the browser's audio latencies)
+      "Audio Out": "latest",
       "Out Pkt": "latest max min",
       "In Pkt": "latest max min",
       "Out Loss": "latest max",

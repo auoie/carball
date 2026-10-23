@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"carball/api/internal/ranked"
 	"carball/api/internal/store"
 	"carball/api/internal/testdb"
@@ -247,6 +249,40 @@ func TestReports(t *testing.T) {
 	refused("no account has signed in with steam:76561190000000009", "ban", "--identity", "steam:76561190000000009", "--by", "admin", "--reason", "x")
 	if got := report("bans"); strings.Contains(got, "sub-Nobody") || strings.Contains(got, "76561190000000009") {
 		t.Errorf("a refused identity's ban stored:\n%s", got)
+	}
+	// (RV-788: --no-account bans an identity no account has, on purpose; one with an account refused; a re-ban as any:
+	// --replace, which can extend it)
+	if got := report("ban", "--identity", "google:sub-Nobody", "--no-account", "--by", "admin", "--reason", "x", "--for", "1h"); !strings.HasPrefix(got,
+		"banned google:sub-Nobody (no account): until ") || !strings.HasSuffix(got, `, reason "x", by "admin"`+"\n") || strings.Count(got, "\n") != 1 {
+		t.Errorf("a ban with no account: %q", got)
+	}
+	refused("google:sub-Nobody's ban: until ", "ban", "--identity", "google:sub-Nobody", "--no-account", "--by", "admin", "--reason", "x")
+	if got := report("ban", "--identity", "google:sub-Nobody", "--no-account", "--by", "admin", "--reason", "x", "--replace"); !strings.HasPrefix(got,
+		`replaced google:sub-Nobody's ban: until `) || !strings.HasSuffix(got, "\nbanned google:sub-Nobody (no account): permanent, reason \"x\", by \"admin\"\n") {
+		t.Errorf("a ban with no account extended: %q", got)
+	}
+	refused("account "+ids["Di"]+" has signed in with google:sub-Di: nothing banned (ban it without --no-account)",
+		"ban", "--identity", "google:sub-Di", "--no-account", "--by", "admin", "--reason", "x")
+	if got := report("account", ids["Di"]); !strings.Contains(got, "BAN") || strings.Contains(got, "google:sub-Di permanent") {
+		t.Errorf("a refused --no-account ban stored:\n%s", got)
+	}
+	// (RV-790: a ban an older version stored on a malformed subject (a trailing space, 16 digits) lifted as given; then
+	// nothing to lift, refused with the format's reason)
+	conn, err := pgx.Connect(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+		VALUES ('steam', '7656119000000001 ', 'old', NULL, 'admin', now())`); err != nil {
+		t.Fatal(err)
+	}
+	if got := report("unban", "--identity", "steam:7656119000000001 "); got != "1 ban(s) lifted\n" {
+		t.Errorf("unban of a malformed stored subject: %q", got)
+	}
+	refused("has a space or control character (and no ban is stored on it as given)", "unban", "--identity", "steam:7656119000000001 ")
+	if got := report("bans"); strings.Contains(got, "7656119000000001") {
+		t.Errorf("the malformed ban still listed:\n%s", got)
 	}
 	if got := report("unban", "--account", ids["Ada"]); got != "1 ban(s) lifted\n" {
 		t.Errorf("unban: %q", got)

@@ -167,6 +167,10 @@ export const STAT_GROUPS = {
     ms("Game"),
     ms("Render"),
     ms("GPU"),
+    // (ours, the game has none: the browser's audio latencies, its own processing's and the output's (the OS's and the
+    // device's: a Bluetooth headset's alone is 150 ms or more), so a delay heard can be read; none of it the game's code)
+    { title: "Audio Base", summaries: [LATEST], good: () => 12, bad: () => 25, range: () => [0, 50] },
+    { title: "Audio Out", summaries: [LATEST], good: () => 40, bad: () => 100, range: () => [0, 300] },
   ],
   net: [
     {

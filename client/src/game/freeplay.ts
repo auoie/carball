@@ -1068,9 +1068,8 @@ export class Freeplay {
         ? this.editorCamera
         : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds));
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
-    this.#renderer.render(view);
-    this.#effects.camera = view.position; // (the husks collide near it)
-    // (its sounds kept for a goal replay to hear again: RA1 §1)
+    // The sounds before the render: started as soon as the frame knows them, not after drawing it (its sounds kept for a
+    // goal replay to hear again: RA1 §1)
     const played = this.#audio.frame({
       world: { cars: new Map([[this.#playerId, car]]), ball: this.#ball.current, pads },
       localCar: this.#playerId,
@@ -1080,6 +1079,8 @@ export class Freeplay {
       triggered: triggerSounds(triggers),
     });
     this.#recorder.sounds(played);
+    this.#renderer.render(view);
+    this.#effects.camera = view.position; // (the husks collide near it)
 
     this.#updateHud(car, realSeconds);
   }

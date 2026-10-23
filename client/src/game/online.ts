@@ -961,9 +961,6 @@ export class Online {
       const carView = this.#camera.update(frameSeconds, drawnCar, drawnBall, controls, respawn, realSeconds);
       if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
       view = this.#matchView(carView);
-      this.#renderer.render(view);
-      this.#effects.camera = view.position; // (the husks collide near it)
-      this.#drawNameplates(alpha);
       this.#listener = view;
     }
     // The sounds every frame, through the match's end too (the user's finding 24: they stuck at the cars' last state):
@@ -995,6 +992,12 @@ export class Online {
         triggered: triggerSounds(triggers),
       });
       this.#recorder.sounds(played);
+    }
+    // (drawn after the sounds: they start as soon as the frame knows them, not after drawing it)
+    if (view) {
+      this.#renderer.render(view);
+      this.#effects.camera = view.position; // (the husks collide near it)
+      this.#drawNameplates(alpha);
     }
 
     this.#updateHud(realSeconds);

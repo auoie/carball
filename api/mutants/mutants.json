@@ -1830,6 +1830,80 @@
    "packages": [
     "./cmd/carball-api/"
    ]
+  },
+  {
+   "id": "RV788-no-account-ignored",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tcase *noAccount:\n",
+   "new": "\tcase false && *noAccount:\n",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV788-has-account-banned",
+   "file": "internal/store/store.go",
+   "old": "\t\tif err == nil {\n\t\t\treturn HasAccountError{Account: account}\n\t\t}",
+   "new": "\t\tif false && err == nil {\n\t\t\treturn HasAccountError{Account: account}\n\t\t}",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV788-sessions-of-none",
+   "file": "internal/store/store.go",
+   "old": "\tif accountID == \"\" {\n\t\treturn held, nil\n\t}\n",
+   "new": "",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV788-with-account-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif *noAccount && t.account != \"\" {",
+   "new": "\tif false && *noAccount && t.account != \"\" {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV788-line-says-account",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\tif banned.Account == \"\" {\n",
+   "new": "\t\tif false && banned.Account == \"\" {\n",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV790-not-as-given",
+   "file": "cmd/carball-api/main.go",
+   "old": "\treturn store.Identity{Provider: provider, Subject: subject}, true\n}",
+   "new": "\treturn store.Identity{Provider: provider, Subject: subject}, false\n}",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV790-none-lifted-silent",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif malformed != nil && n == 0 {",
+   "new": "\tif false && malformed != nil && n == 0 {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV790-provider-unchecked",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tname, subject, ok := strings.Cut(t.identity, \":\")\n\tprovider, known := store.ParseProvider(name)\n\tif !ok || !known || subject == \"\" {\n\t\treturn store.Identity{}, false\n\t}",
+   "new": "\tname, subject, ok := strings.Cut(t.identity, \":\")\n\tprovider, _ := store.ParseProvider(name)\n\tif !ok || subject == \"\" {\n\t\treturn store.Identity{}, false\n\t}",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
   }
  ]
 }

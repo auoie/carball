@@ -68,11 +68,13 @@ func commands() []command {
 		{"accounts", "NAME | --recent [N]", "the accounts whose name contains NAME, or the N newest (20 by default), newest " +
 			"first, with their identities and when last seen: the latest session's sign-in or daily renewal (so to within " +
 			"a day; none once its sessions have ended, after 90 days)", accounts},
-		{"ban", "(--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE] [--replace]",
+		{"ban", "(--account ID | --identity PROVIDER:SUBJECT [--no-account]) --reason TEXT --by NAME [--for DURATION | --until DATE] [--replace]",
 			"a ban: an account's every identity, or one identity's account; signed out everywhere. An identity no account " +
-				"has signed in with is refused, and so is a ban in force on any of them unless --replace (the bans it " +
+				"has signed in with is refused unless --no-account (then it bans that identity alone, and an identity " +
+				"with an account is refused), and so is a ban in force on any of them unless --replace (the bans it " +
 				"replaced printed)", ban},
-		{"unban", "(--account ID | --identity PROVIDER:SUBJECT)", "the bans lifted", unban},
+		{"unban", "(--account ID | --identity PROVIDER:SUBJECT)", "the bans lifted (a subject stored by an older version " +
+			"without its checks lifted as given)", unban},
 		{"bans", "", "the bans in force", bans},
 		{"stats", "", "the live app at a glance: accounts (new today, in the last 7 days, in all), ranked matches today and in " +
 			"the week by playlist, the bans and leave bans in force", stats},
@@ -558,6 +560,20 @@ func (t *target) parse() (store.Identity, error) {
 	return store.Identity{Provider: provider, Subject: subject}, nil
 }
 
+// asGiven: --identity's provider and subject exactly as given, unchecked but for the provider's name and a subject
+// (unban's: a ban stored by an older version without the checks)
+func (t *target) asGiven() (store.Identity, bool) {
+	if t.account != "" {
+		return store.Identity{}, false
+	}
+	name, subject, ok := strings.Cut(t.identity, ":")
+	provider, known := store.ParseProvider(name)
+	if !ok || !known || subject == "" {
+		return store.Identity{}, false
+	}
+	return store.Identity{Provider: provider, Subject: subject}, true
+}
+
 // steamID: a SteamID64, the Steam subject
 var steamID = regexp.MustCompile(`^[0-9]{17}$`)
 
@@ -570,6 +586,7 @@ func ban(args []string, out io.Writer) error {
 	length := fs.Duration("for", 0, "how long (e.g. 72h); none: no end")
 	untilDate := fs.String("until", "", "the end, a date (YYYY-MM-DD, UTC) or RFC 3339 time")
 	replace := fs.Bool("replace", false, "replace a ban in force on any of its identities (each one replaced printed)")
+	noAccount := fs.Bool("no-account", false, "with --identity: ban an identity no account has signed in with (a deleted account's, a throwaway's)")
 	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
@@ -579,6 +596,9 @@ func ban(args []string, out io.Writer) error {
 	}
 	if *reason == "" || *by == "" {
 		return errors.New("--reason and --by are required")
+	}
+	if *noAccount && t.account != "" {
+		return errors.New("--no-account goes with --identity (an account's ban has its identities)")
 	}
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
@@ -592,13 +612,19 @@ func ban(args []string, out io.Writer) error {
 	}
 	defer db.Close()
 	var banned store.Banned
-	if t.account != "" {
+	switch {
+	case t.account != "":
 		banned, err = db.BanAccount(context.Background(), t.account, *reason, *by, end, *replace, time.Now())
-	} else {
+	case *noAccount:
+		banned, err = db.BanNoAccount(context.Background(), identity, *reason, *by, end, *replace, time.Now())
+	default:
 		banned, err = db.BanIdentity(context.Background(), identity, *reason, *by, end, *replace, time.Now())
 	}
 	var held store.AlreadyBannedError
+	var has store.HasAccountError
 	switch {
+	case errors.As(err, &has):
+		return fmt.Errorf("account %s has signed in with %s: nothing banned (ban it without --no-account)", has.Account, t.identity)
 	case errors.As(err, &held):
 		lines := make([]string, len(held.Bans))
 		for k, b := range held.Bans {
@@ -614,6 +640,10 @@ func ban(args []string, out io.Writer) error {
 		_, _ = fmt.Fprintf(out, "replaced %s\n", banLine(b))
 	}
 	for _, i := range banned.Identities {
+		if banned.Account == "" {
+			_, _ = fmt.Fprintf(out, "banned %s:%s (no account): %s, reason %q, by %q\n", i.Provider, i.Subject, describe(end), *reason, *by)
+			continue
+		}
 		_, _ = fmt.Fprintf(out, "banned %s:%s (account %s): %s, reason %q, by %q; its sessions ended\n", i.Provider, i.Subject, banned.Account, describe(end), *reason, *by)
 	}
 	return nil
@@ -673,9 +703,14 @@ func unban(args []string, out io.Writer) error {
 	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
-	identity, err := t.parse()
-	if err != nil {
-		return err
+	identity, malformed := t.parse()
+	if malformed != nil {
+		// (a subject an older version stored without today's checks (a trailing space, 16 digits) lifted exactly as
+		// given, if a ban has it: RV-790)
+		var ok bool
+		if identity, ok = t.asGiven(); !ok {
+			return malformed
+		}
 	}
 	db, err := openStore(false)
 	if err != nil {
@@ -690,6 +725,9 @@ func unban(args []string, out io.Writer) error {
 	}
 	if err != nil {
 		return err
+	}
+	if malformed != nil && n == 0 {
+		return fmt.Errorf("%w (and no ban is stored on it as given)", malformed)
 	}
 	_, _ = fmt.Fprintf(out, "%d ban(s) lifted\n", n)
 	return nil

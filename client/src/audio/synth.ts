@@ -334,13 +334,15 @@ export class CarVoice {
     const s = Math.min(1, speed / 2300);
     const f = 44 + 82 * s + 16 * throttle;
     const [a, b, sub] = this.#oscillators;
-    a?.frequency.setTargetAtTime(f, now, 0.06);
-    b?.frequency.setTargetAtTime(f * 1.006, now, 0.06);
-    sub?.frequency.setTargetAtTime(f / 2, now, 0.06);
-    this.#pulse.frequency.setTargetAtTime(f / 2, now, 0.06);
-    this.#engineFilter.frequency.setTargetAtTime(320 + 1700 * (0.35 * s + 0.65 * throttle), now, 0.08);
-    this.#engine.gain.setTargetAtTime((0.04 + 0.08 * throttle + 0.05 * s) * ENGINE_LEVEL * level, now, 0.08);
-    this.#boost.gain.setTargetAtTime(boosting ? 0.22 : 0, now, boosting ? 0.03 : 0.09);
+    // (quick to follow the throttle and boost: 90% of a change within 70 ms, a boost's start within 25 ms; they lagged
+    // 180 and 70 ms, 2026-10-22)
+    a?.frequency.setTargetAtTime(f, now, 0.03);
+    b?.frequency.setTargetAtTime(f * 1.006, now, 0.03);
+    sub?.frequency.setTargetAtTime(f / 2, now, 0.03);
+    this.#pulse.frequency.setTargetAtTime(f / 2, now, 0.03);
+    this.#engineFilter.frequency.setTargetAtTime(320 + 1700 * (0.35 * s + 0.65 * throttle), now, 0.03);
+    this.#engine.gain.setTargetAtTime((0.04 + 0.08 * throttle + 0.05 * s) * ENGINE_LEVEL * level, now, 0.03);
+    this.#boost.gain.setTargetAtTime(boosting ? 0.22 : 0, now, boosting ? 0.01 : 0.04);
     this.#wind.gain.setTargetAtTime(supersonic ? 0.09 : 0, now, 0.25);
   }
 

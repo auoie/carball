@@ -1182,6 +1182,9 @@ async function main(): Promise<void> {
     // (the GPU's time only while a level is shown: its timer query's cost not paid at None)
     renderer.gpuTiming = statLevel !== "none";
     if (renderer.lastGpuMs !== null) statData.set("GPU", renderer.lastGpuMs);
+    const { base, output } = audio.latency;
+    statData.set("Audio Base", base * 1000);
+    if (output !== null) statData.set("Audio Out", output * 1000);
     const { car, ball } = game.speeds();
     const unit = speedUnit(settings.interface.metric);
     for (const [body, v] of [

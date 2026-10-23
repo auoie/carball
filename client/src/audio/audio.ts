@@ -36,6 +36,13 @@ export interface AudioStats {
   readonly boosting: number;
 }
 
+/** The browser's audio latencies (s): its own processing's (`base`) and the output's, the OS's and the device's to the
+ *  ear (`output`: null where the browser doesn't say) */
+export interface AudioLatency {
+  readonly base: number;
+  readonly output: number | null;
+}
+
 /** A goal replay's frame for its sounds (src/game/replayPlayback.ts) */
 export interface ReplayAudio {
   /** The live sounds kept at the recorded frames it moved past: heard again, as they happened */
@@ -158,7 +165,7 @@ export class GameAudio {
   /** A goal: the explosion and fanfare, up close. */
   goal(): void {
     this.#count("goal");
-    this.#synth.goal(this.#effects, this.#ctx.currentTime + 0.01);
+    this.#synth.goal(this.#effects, this.#ctx.currentTime);
   }
 
   /** A car exploding that the world's demolitions don't show (a player who left): the demolition's sound at `at`. */
@@ -169,50 +176,56 @@ export class GameAudio {
   /** A chat line with a sender's name, one's own too (CHAT-17: the HUD's CHATMESSAGE event) */
   chatMessage(): void {
     this.#count("chat");
-    this.#synth.chatMessage(this.#effects, this.#ctx.currentTime + 0.005);
+    this.#synth.chatMessage(this.#effects, this.#ctx.currentTime);
   }
 
   /** A flip reset: live, the player's car's, a chime up close (2D); in a replay (`at`: the replayed car's place), heard
    *  from the replay's camera as the jumps and dodges are (3D, a remote car's: SND-9, the user's report 2026-10-18) */
   flipReset(at: Vec3 | null = null): void {
     this.#count("flipReset");
-    this.#synth.flipReset(at ? this.#panner(at, this.#effects) : this.#effects, this.#ctx.currentTime + 0.005);
+    this.#synth.flipReset(at ? this.#panner(at, this.#effects) : this.#effects, this.#ctx.currentTime);
   }
 
   /** The kickoff countdown: `secondsLeft` 3, 2, 1, then 0 for go. */
   countdown(secondsLeft: number): void {
     this.#count(secondsLeft === 0 ? "go" : "countdown");
-    this.#synth.beep(this.#effects, this.#ctx.currentTime + 0.01, secondsLeft === 0);
+    this.#synth.beep(this.#effects, this.#ctx.currentTime, secondsLeft === 0);
   }
 
   /** A search starts (START_MATCH_SEARCH's place, MM-12: our own sound) */
   searchStart(): void {
     this.#count("searchStart");
-    this.#synth.searchStart(this.#effects, this.#ctx.currentTime + 0.01);
+    this.#synth.searchStart(this.#effects, this.#ctx.currentTime);
   }
 
   /** The menus' cues (MENU-18: our own sounds) */
   menu(cue: MenuCue): void {
     this.#count(`menu-${cue}`);
-    this.#synth.menu(this.#effects, this.#ctx.currentTime + 0.005, cue);
+    this.#synth.menu(this.#effects, this.#ctx.currentTime, cue);
   }
 
   /** Cancel Search (the menus' CANCEL, MM-12: our own sound) */
   searchCancel(): void {
     this.#count("searchCancel");
-    this.#synth.searchCancel(this.#effects, this.#ctx.currentTime + 0.01);
+    this.#synth.searchCancel(this.#effects, this.#ctx.currentTime);
   }
 
   /** One of the clock's last ten seconds (HT-7: its own cue, not the kickoff's) */
   endCounter(): void {
     this.#count("endCounter");
-    this.#synth.endCounter(this.#effects, this.#ctx.currentTime + 0.01);
+    this.#synth.endCounter(this.#effects, this.#ctx.currentTime);
   }
 
   /** "Overtime!", "One Minute Remaining!", "30 Seconds Remaining!" (HT-7: each its own cue, whatever the setting) */
   announcement(kind: "overtime" | "oneMinute" | "thirtySeconds"): void {
     this.#count(kind);
-    this.#synth.announcement(this.#effects, this.#ctx.currentTime + 0.01, kind);
+    this.#synth.announcement(this.#effects, this.#ctx.currentTime, kind);
+  }
+
+  /** The latencies the browser reports (the stat graphs' Performance rows: none of it ours) */
+  get latency(): AudioLatency {
+    const output = (this.#ctx as { readonly outputLatency?: number }).outputLatency;
+    return { base: this.#ctx.baseLatency, output: output ?? null };
   }
 
   get stats(): AudioStats {
@@ -266,7 +279,9 @@ export class GameAudio {
 
   #play(event: SoundEvent): void {
     this.#count(event.kind);
-    const when = this.#ctx.currentTime + 0.005;
+    // (every sound at the context's time, as all of ours: it starts with the next block the browser renders; an offset
+    // only waited, 5 ms of the delay the user heard, 2026-10-22)
+    const when = this.#ctx.currentTime;
     const out = this.#panner(event.at, this.#effects);
     const s = this.#synth;
     switch (event.kind) {
