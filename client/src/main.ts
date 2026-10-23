@@ -38,7 +38,7 @@ import {
 import { QueueBannedError, SignedOutError, queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, regionsToSearch, shareSearchTickets, storeRegions, storedRegions, toggleRegion } from "./net/regions";
+import { chooseRegions, regionsToSearch, shareSearchTickets, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
 import { Search, declineSlot, pingServer } from "./net/search";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
@@ -491,8 +491,10 @@ async function main(): Promise<void> {
     // with no choice kept; the ones searched the player's choice, kept, else the lowest ping (kept once measured), else
     // the first
     let regions: readonly Region[] = [];
-    const pings = new Map<string, number | null>();
-    let pingedAt = -Infinity;
+    // (the pings kept from a page in the last minutes: shown at once, measured again a minute after them, RV-847)
+    const cachedPings = storedPings();
+    const pings = new Map<string, number | null>(cachedPings?.pings ?? []);
+    let pingedAt = cachedPings?.at ?? -Infinity;
     let pinging: Promise<void> = Promise.resolve();
     let chosen: string[] = [];
     /** The last search's regions (the browser tests') */
@@ -518,20 +520,22 @@ async function main(): Promise<void> {
         showRegions();
         return listed;
       });
-    /** The regions' pings, a minute apart at most (the same measuring shared meanwhile); until a choice is kept, the
-     *  lowest ticked as each comes, and once they're in, that pick kept (a later search that starts by itself, Play Again
-     *  or the way back from a cancelled match, then needn't wait: RX43C-1) */
+    /** The regions' pings, a minute apart at most across this browser's pages (the same measuring shared meanwhile);
+     *  unless the player ticked the regions themselves, the lowest ticked as each comes, and once they're in, that pick
+     *  kept (a later search that starts by itself, Play Again or the way back from a cancelled match, then needn't wait:
+     *  RX43C-1) and chosen again the next time they're measured (RV-862) */
     const measurePings = (listed: readonly Region[]): Promise<void> => {
-      if (listed.length < 2 || performance.now() - pingedAt < 60_000) return pinging;
-      pingedAt = performance.now();
+      if (listed.length < 2 || Date.now() - pingedAt < 60_000) return pinging;
+      pingedAt = Date.now();
       pinging = Promise.all(
         listed.map(async (r) => {
           pings.set(r.id, await pingServer(r.address));
-          if (storedRegions() === null) chosen = chooseRegions(listed, null, pings);
+          if (storedRegions()?.manual !== true) chosen = chooseRegions(listed, storedRegions(), pings);
           showRegions();
         }),
       ).then(() => {
-        if (storedRegions() === null && [...pings.values()].some((ms) => typeof ms === "number")) storeRegions(chosen);
+        storePings(pings);
+        if (storedRegions()?.manual !== true && [...pings.values()].some((ms) => typeof ms === "number")) storeRegions(chosen, false);
       });
       return pinging;
     };
@@ -581,7 +585,7 @@ async function main(): Promise<void> {
           .then(async (listed) => {
             // (no choice kept: the regions' pings first, a few seconds at most, so a search the page starts by itself goes
             // to the lowest, not the first: RX43C-1)
-            if (listed.length > 1 && storedRegions() === null) {
+            if (listed.length > 1 && storedRegions() === null && pings.size === 0) {
               await Promise.race([measurePings(listed), new Promise((waited) => setTimeout(waited, PING_WAIT_MS))]);
             }
             return listed.length > 0 ? listed : queueRegions(params, location.hostname);
@@ -794,7 +798,7 @@ async function main(): Promise<void> {
           id,
           regions.map((r) => r.id),
         );
-        storeRegions(chosen);
+        storeRegions(chosen, true);
         showRegions();
       },
       garageShown: (shown) => {

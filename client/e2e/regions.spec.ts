@@ -39,6 +39,15 @@ async function findMatch(page: Page, regions: readonly string[] | null): Promise
       if ((await box.getAttribute("aria-checked")) !== "true") await box.click();
       await expect(box).toHaveAttribute("aria-checked", "true");
     }
+    // (Space on a focused box ticks it, as a click does: RV-858)
+    const first = menu.locator(`.main-menu-region[data-region="${regions[0] ?? ""}"]`);
+    if (regions.length > 1) {
+      await first.focus();
+      await page.keyboard.press("Space");
+      await expect(first).toHaveAttribute("aria-checked", "false");
+      await page.keyboard.press("Space");
+      await expect(first).toHaveAttribute("aria-checked", "true");
+    }
   } else {
     await expect(menu.locator(".main-menu-regions")).toBeHidden();
   }
@@ -66,8 +75,8 @@ test("the picker shows each region's ping; a search of both is matched in one, t
   await findMatch(a, [A, B]);
   await a.screenshot({ path: "test-results/regions-picker.png" });
   await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
-  // (the choice kept in this browser)
-  expect(await a.evaluate(() => localStorage.getItem("carball.regions"))).toBe(JSON.stringify([A, B]));
+  // (the choice kept in this browser, the player's)
+  expect(await a.evaluate(() => localStorage.getItem("carball.regions"))).toBe(JSON.stringify({ ids: [A, B], manual: true }));
   // A player searching region B alone: matched with a there
   const b = await menuPage(browser, B, errors);
   await findMatch(b, null);
@@ -153,7 +162,8 @@ test("a search the page starts by itself (Play Again) waits for the pings and go
   const [pa, pb] = [pings[A], pings[B]];
   expect(typeof pa === "number" && typeof pb === "number").toBe(true);
   expect(searched).toEqual([(pb ?? 0) < (pa ?? 0) ? B : A]);
-  expect(await page.evaluate(() => localStorage.getItem("carball.regions"))).toBe(JSON.stringify(searched));
+  // (kept as the lowest ping's pick, not the player's: chosen again as the pings change, RV-862)
+  expect(await page.evaluate(() => localStorage.getItem("carball.regions"))).toBe(JSON.stringify({ ids: searched, manual: false }));
   await expect.poll(async () => status(page), { timeout: 15_000 }).toBe("searching");
   await cancelSearch(page);
   expect(errors).toEqual([]);

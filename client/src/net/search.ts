@@ -79,7 +79,9 @@ export async function pingServer(address: ServerAddress, tries = 2): Promise<num
   let best: number | null = null;
   for (let i = 0; i < tries; i++) {
     const ms = await pingOnce(address).catch(() => null);
-    if (ms !== null && (best === null || ms < best)) best = ms;
+    // (unreached: not tried again, its dash shown in one try's time, not two: RV-842)
+    if (ms === null) break;
+    if (best === null || ms < best) best = ms;
   }
   return best === null ? null : Math.round(best);
 }

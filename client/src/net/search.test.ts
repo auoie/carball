@@ -143,9 +143,11 @@ describe("a search", () => {
       expect(hello).toMatchObject({ type: "hello", intent: "ping", token: 0n, ticket: "", key: 0n });
       expect(session.closed).toBe(true);
     }
-    // (no answer: the stream ended without one)
-    vi.stubGlobal("WebTransport", fakeTransport([]));
+    // (no answer: the stream ended without one; not tried again, RV-842)
+    const unanswered: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([], unanswered));
     expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBeNull();
+    expect(unanswered.sessions.length).toBe(1);
   });
 
   it("gives up a slot found in another region: a hello with intent decline, its token and a ticket; the session closed (Regions)", async () => {

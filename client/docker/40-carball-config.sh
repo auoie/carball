@@ -24,7 +24,9 @@ url_ok() {
 # GAME_SERVER_URL alone (its default the image's ENV alone, RV-441): one server, id "default", no name (no picker)
 servers=""
 if [ "${GAME_SERVERS+set}" = set ]; then
-    if [ -z "$GAME_SERVERS" ] || ! one_line "$GAME_SERVERS"; then
+    # (an empty entry, a comma at either end or two in a row, refused: not dropped quietly, RV-854)
+    case ",$GAME_SERVERS," in *,,*) empty_entry=1 ;; *) empty_entry=0 ;; esac
+    if [ -z "$GAME_SERVERS" ] || ! one_line "$GAME_SERVERS" || [ "$empty_entry" = 1 ]; then
         echo "40-carball-config: GAME_SERVERS must be one line of ID|Name|URL entries, comma-separated" >&2
         exit 1
     fi

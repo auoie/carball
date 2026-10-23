@@ -29,12 +29,12 @@ naming the folder (RV-421).
 
 ```sh
 scripts/build_images.sh [TAG]              # from the commit (HEAD); TAG defaults to scripts/image_tag.sh's
-scripts/image_tag.sh [COMMIT]              # the commit's tag: its UTC date and short hash, e.g. 20261023-1412-619e7e8
+scripts/image_tag.sh [COMMIT]              # the commit's tag: its UTC date and hash's first 7, e.g. 20261023-1412-619e7e8
 scripts/build_images.sh --worktree TAG     # testing a change before its commit
 ```
-The default tag is the commit's own date in UTC and its short hash, `YYYYMMDD-HHMM-shorthash` (the committer date: the
-same commit always gets the same tag, a rebuild changes nothing; a later commit's sorts after); the build prints it last
-(`tag: …`), and `TAG=$(scripts/image_tag.sh)` gives it beforehand. It builds from the commit only: `git archive` stages its sources under `out/images/<TAG>-<time>/src` (nothing uncommitted
+The default tag is the commit's own date in UTC and the first 7 characters of its hash, `YYYYMMDD-HHMM-hash` (the
+committer date and a fixed-length hash: the same commit always gets the same tag, a rebuild changes nothing; tags sort
+by that date); the build prints it last (`tag: …`), and `TAG=$(scripts/image_tag.sh)` gives it beforehand. It builds from the commit only: `git archive` stages its sources under `out/images/<TAG>-<time>/src` (nothing uncommitted
 or git-ignored gets in; with `--worktree`, the working tree's files that are committed or would be, never ignored ones).
 There it builds the engine's WebAssembly (Emscripten), the client (`npm run build`, then the shipped-data check on what it
 built) and the server (`cargo build --release --offline` in `out/images/target`, whatever `CARGO_TARGET_DIR` says: a

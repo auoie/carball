@@ -39,7 +39,9 @@ export class InputDevices {
       (e) => {
         // (typing in a text field, the settings' name: its keys the field's, not the game's: RV-482)
         if (editable(e.target)) return;
-        if (e.code === "Space" || e.code === "Backspace") e.preventDefault(); // no page scroll/back
+        // (no page scroll or back; but Space ticks a focused box in a menu, the regions' on Play's page: RV-858)
+        const box = e.target instanceof Element && e.target.getAttribute("role") === "checkbox" && this.menuOpen();
+        if ((e.code === "Space" && !box) || e.code === "Backspace") e.preventDefault();
         // (Tab the scoreboard's, not focus, in play; with a menu up it moves the focus, the menus' keyboard path: RV-482)
         if (e.code === "Tab" && !this.menuOpen() && (e.target === document.body || e.target === surface)) e.preventDefault();
         this.#usingGamepad = false;
