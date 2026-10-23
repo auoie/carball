@@ -95,9 +95,15 @@ export function toggleRegion(chosen: readonly string[], id: string, order: reado
   return order.filter((o) => next.includes(o));
 }
 
+/** A server's name as the matchmaker takes it: host:port (the API's pattern) */
+export function serverNameOk(name: string): boolean {
+  return /^[A-Za-z0-9.-]{1,58}:[0-9]{1,5}$/.test(name);
+}
+
 /** A search's request from the regions (each its server's name), the ticked ones (a page with one region: that one) and
- *  the pings just measured: every listed region's server that answered, and the ticked ones' servers (MX1R-19: the
- *  matchmaker reads a match's server's ping whether it's ticked or not) */
+ *  the pings just measured: every listed region's server that answered, and the ticked ones' servers, each once (MX1R-19:
+ *  the matchmaker reads a match's server's ping whether it's ticked or not); a server whose name isn't one left out, so
+ *  one region's odd name never fails the search (RV-868) */
 export function searchRequest(
   listed: readonly { readonly id: string; readonly server: string }[],
   chosen: readonly string[],
@@ -108,7 +114,7 @@ export function searchRequest(
   const answered: Record<string, number> = {};
   for (const r of listed) {
     const ms = pings.get(r.id);
-    if (typeof ms === "number") answered[r.server] = Math.round(ms);
+    if (typeof ms === "number" && serverNameOk(r.server)) answered[r.server] = Math.round(ms);
   }
-  return { playlists, pings: answered, regions: ticked.map((r) => r.server) };
+  return { playlists, pings: answered, regions: [...new Set(ticked.map((r) => r.server).filter(serverNameOk))] };
 }

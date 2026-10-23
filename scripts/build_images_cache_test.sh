@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# The image build's cache of its WebAssembly and the server's native binary (scripts/build_images.sh, RV-794..797): its
-# own functions, taken from the script, run on a temporary directory with a fake build. The key follows the build's
-# commands, the compilers' environment and the sources (not a comment); a hit builds nothing and prints the hashes; a
-# corrupted entry is caught, put aside and built again; two builds at once build once; the native key reads its own
-# tools and the server's sources, not the page's.
-#   scripts/build_images_cache_test.sh      (needs what the image build does: Emscripten, cmake, rustc, node, cc, c++)
+# The image build's WebAssembly cache (scripts/build_images.sh, RV-794..797): its own functions, taken from the script,
+# run on a temporary directory with a fake build. The key follows the build's commands, the compilers' environment and
+# the sources (not a comment); a hit builds nothing and prints the hashes; a corrupted entry is caught, put aside and
+# built again; two builds at once build once.
+#   scripts/build_images_cache_test.sh      (needs what the image build does: Emscripten, cmake, rustc, node)
 set -euo pipefail
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/build_images.sh"
 H=$(mktemp -d "${TMPDIR:-/tmp}/build-cache-test.XXXXXX")
 echo "(in $H)"
-eval "$(awk '/^(build_env|cargo_config|toolchain|native_toolchain|inputs_key|cached)\(\) \{/,/^}/' "$SCRIPT")"
+eval "$(awk '/^(build_env|cargo_config|toolchain|inputs_key|cached)\(\) \{/,/^}/' "$SCRIPT")"
 EM=${EMSCRIPTEN_ROOT:-/usr/lib/emscripten}
 run=$(date +%s%N)
 SRC="$H/src-$run"; CACHE="$H/cache-$run"; OUT="$H/out-$run"
@@ -69,25 +68,9 @@ wait $p1; wait $p2
 check "$(wc -l < "$builds")" 3 "two builds at once: built once"
 check "$(cat "$H/race1-$run" "$H/race2-$run" | grep -c '(cached')" 1 "two builds at once: the other a hit"
 check "$(find "$CACHE" -name '*.partial' | wc -l)" 0 "no partial entry left, none nested"
-# (the native key: its own tools (the C and C++ compilers', not Emscripten's), the server's sources, engine and protocol,
-# not the page's: a page-only release skips Rust)
-mkdir -p "$SRC/server" "$SRC/protocol" "$SRC/client"
-echo "fn main() {}" > "$SRC/server/main.rs"; echo "{}" > "$SRC/protocol/vectors.json"; echo "page" > "$SRC/client/page.ts"
-native() { TOOLS=native_toolchain inputs_key fake server engine protocol; }
-n1=$(native)
-check "$([ "$n1" != "$(inputs_key fake server engine protocol)" ] && echo own)" own "the native key reads its own tools"
-check "$([ "$(env CXX=g++-not-default bash -c "$(declare -f build_env cargo_config toolchain native_toolchain inputs_key fake native); SRC='$SRC' EM='$EM' native" 2>/dev/null)" != "$n1" ] && echo changed)" changed "another C++ compiler: a new native key"
-echo "page 2" > "$SRC/client/page.ts"
-check "$(native)" "$n1" "a page-only change: the same native key"
-echo '{"v":2}' > "$SRC/protocol/vectors.json"
-check "$([ "$(native)" != "$n1" ] && echo changed)" changed "a protocol change: a new native key"
-echo "fn main() { }" > "$SRC/server/main.rs"
-check "$([ "$(native)" != "$n1" ] && echo changed)" changed "a server change: a new native key"
-# (the script's keys taken before any build: a build writes inside the paths a later key reads; the server's binary
-# through the cache)
-keys=$(grep -n '^SERVER_KEY=$(TOOLS=native_toolchain inputs_key build_server server engine protocol)' "$SCRIPT" | cut -d: -f1)
+# (the script's keys taken before either build: a build writes inside the paths a later key reads)
+keys=$(grep -n '^HOST_KEY=$(inputs_key' "$SCRIPT" | cut -d: -f1)
 first=$(grep -n '^cached engine' "$SCRIPT" | cut -d: -f1)
 check "$([ -n "$keys" ] && [ -n "$first" ] && [ "$keys" -lt "$first" ] && echo before)" before "the keys taken before the first build"
-check "$(grep -c '^cached server "$SERVER_KEY" "$STAGE/game" carball-server -- build_server' "$SCRIPT")" 1 "the server's binary built through the cache"
 echo "passed $pass, failed $fail"
 [ $fail = 0 ]

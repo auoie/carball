@@ -29,10 +29,10 @@ func (e *env) searchAs(b *http.Client, playlists []int, pings map[string]int) re
 	return e.write(b, http.MethodPost, "/api/search", map[string]any{"playlists": playlists, "pings": pings, "regions": regions})
 }
 
-// poll: a search's state past version `after` (no wait: the change already made)
-func (e *env) poll(id string, after int) (int, map[string]any) {
+// poll: a search's state past version `after` as the browser `b` asks it (no wait: the change already made)
+func (e *env) poll(b *http.Client, id string, after int) (int, map[string]any) {
 	e.t.Helper()
-	resp := e.get(e.browser(), fmt.Sprintf("/api/search/%s?after=%d", id, after))
+	resp := e.get(b, fmt.Sprintf("/api/search/%s?after=%d", id, after))
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, nil
 	}
@@ -53,8 +53,6 @@ func TestSearch(t *testing.T) {
 		{"playlists": []int{}, "pings": pings},
 		{"playlists": []int{4}, "pings": pings},
 		{"playlists": []int{1, 1}, "pings": pings},
-		{"playlists": []int{1}, "pings": map[string]int{"no port": 30}},
-		{"playlists": []int{1}, "pings": map[string]int{euServer: -1}},
 	} {
 		if resp := e.write(ba, http.MethodPost, "/api/search", bad); resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("%v: %d", bad, resp.StatusCode)
@@ -63,6 +61,23 @@ func TestSearch(t *testing.T) {
 	if resp := e.searchAs(ba, []int{1}, map[string]int{}); resp.StatusCode != http.StatusServiceUnavailable || decode(t, resp)["error"] != "no-server" {
 		t.Errorf("no server answered: %d", resp.StatusCode)
 	}
+	// (only odd names or pings: dropped, so no server answered)
+	for _, pings := range []map[string]int{{"no port": 30}, {euServer: -1}} {
+		if resp := e.searchAs(ba, []int{1}, pings); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("%v: %d", pings, resp.StatusCode)
+		}
+	}
+	// (an odd server name, one given twice, an IPv6 literal or a ping out of range: dropped, not the search; the good
+	// ones searched, RV-868)
+	odd := e.write(ba, http.MethodPost, "/api/search", map[string]any{
+		"playlists": []int{1},
+		"pings":     map[string]int{"bad_name:4433": 20, "[::1]:4433": 5, euServer: 30, "game-asia.example:4433": 99999},
+		"regions":   []string{"bad_name:4433", euServer, euServer},
+	})
+	if odd.StatusCode != http.StatusOK {
+		t.Fatalf("a search with an odd name among good ones: %d %s", odd.StatusCode, odd.Body)
+	}
+	e.write(ba, http.MethodDelete, "/api/search/"+decode(t, odd)["search"].(string), nil)
 	ra := decode(t, e.searchAs(ba, []int{1, 2}, map[string]int{euServer: 30, "game-us.example:4433": 90}))
 	rb := decode(t, e.searchAs(bb, []int{1}, map[string]int{euServer: 80}))
 	if ra["state"] != "searching" || ra["version"].(float64) != 1 {
@@ -70,8 +85,8 @@ func TestSearch(t *testing.T) {
 	}
 	idA, idB := ra["search"].(string), rb["search"].(string)
 	e.s.Matchmaker.Tick(e.clock.Now())
-	_, fa := e.poll(idA, 1)
-	_, fb := e.poll(idB, 1)
+	_, fa := e.poll(ba, idA, 1)
+	_, fb := e.poll(bb, idB, 1)
 	ma, _ := fa["match"].(map[string]any)
 	mb, _ := fb["match"].(map[string]any)
 	if fa["state"] != "found" || ma == nil || mb == nil || ma["id"] != mb["id"] || ma["server"] != euServer || ma["playlist"].(float64) != 1 {
@@ -138,22 +153,30 @@ func seatOf(t *testing.T, e *env, m map[string]any) byte {
 func TestSearchPolls(t *testing.T) {
 	e := setup(t, nil)
 	b, _, _ := e.player("sub-sp")
-	if code, _ := e.poll(strings.Repeat("ab", 16), 0); code != http.StatusNotFound {
+	if code, _ := e.poll(b, strings.Repeat("ab", 16), 0); code != http.StatusNotFound {
 		t.Errorf("an unknown search: %d", code)
 	}
-	if code, _ := e.poll("short", 0); code != http.StatusBadRequest {
+	if code, _ := e.poll(b, "short", 0); code != http.StatusBadRequest {
 		t.Errorf("a malformed id: %d", code)
 	}
 	first := decode(t, e.searchAs(b, []int{2}, map[string]int{euServer: 40}))["search"].(string)
 	second := decode(t, e.searchAs(b, []int{2}, map[string]int{euServer: 40}))["search"].(string)
-	if _, st := e.poll(first, 1); st["state"] != "ended" || st["reason"] != "replaced" {
+	if _, st := e.poll(b, first, 1); st["state"] != "ended" || st["reason"] != "replaced" {
 		t.Errorf("the replaced search: %v", st)
 	}
 	if resp := e.write(b, http.MethodDelete, "/api/search/"+second, nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("Cancel Search: %d", resp.StatusCode)
 	}
-	if _, st := e.poll(second, 1); st["reason"] != "cancelled" {
+	if _, st := e.poll(b, second, 1); st["reason"] != "cancelled" {
 		t.Errorf("a cancelled search: %v", st)
+	}
+	// (the session's account's own search alone: no session, 401; another account's, as unknown, RV-871)
+	if code, _ := e.poll(e.browser(), second, 0); code != http.StatusUnauthorized {
+		t.Errorf("a poll with no session: %d", code)
+	}
+	other, _, _ := e.player("sub-other")
+	if code, _ := e.poll(other, second, 0); code != http.StatusNotFound {
+		t.Errorf("another account's poll: %d", code)
 	}
 	// (a poll waiting: answered when the match forms)
 	bc, _, _ := e.player("sub-sc")
@@ -162,7 +185,7 @@ func TestSearchPolls(t *testing.T) {
 	answered := make(chan map[string]any, 1)
 	go func() {
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.srv.URL+"/api/search/"+c+"?after=1", nil)
-		resp, err := e.browser().Do(req)
+		resp, err := bc.Do(req)
 		if err != nil {
 			answered <- nil
 			return
@@ -196,8 +219,8 @@ func TestFleetEvents(t *testing.T) {
 		s1 := decode(t, e.searchAs(b1, []int{1}, pings))["search"].(string)
 		s2 := decode(t, e.searchAs(b2, []int{1}, pings))["search"].(string)
 		e.s.Matchmaker.Tick(e.clock.Now())
-		_, f1 := e.poll(s1, 1)
-		_, f2 := e.poll(s2, 1)
+		_, f1 := e.poll(b1, s1, 1)
+		_, f2 := e.poll(b2, s2, 1)
 		m1, _ := f1["match"].(map[string]any)
 		m2, _ := f2["match"].(map[string]any)
 		if m1 == nil || m2 == nil {
@@ -287,6 +310,8 @@ func TestFleetEvents(t *testing.T) {
 		{"event": "left", "match": m1["id"], "seat": 9},
 		{"event": "started", "match": m1["id"], "server": "no port"},
 		{"event": "restarted"},
+		{"event": "started", "match": "0000000000000000"},
+		{"event": "started", "match": "abc"},
 	} {
 		if code := event(bad); code != http.StatusBadRequest {
 			t.Errorf("%v: %d", bad, code)
@@ -302,7 +327,7 @@ func TestQuitterEndsSearch(t *testing.T) {
 	if resp := e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]any{"match": "00000000000000ab", "ticket": encoded}); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("the report: %d", resp.StatusCode)
 	}
-	_, st := e.poll(id, 1)
+	_, st := e.poll(b, id, 1)
 	if st["state"] != "ended" || st["reason"] != "queue-banned" || st["until"] == nil {
 		t.Errorf("the quitter's search: %v", st)
 	}
@@ -408,7 +433,7 @@ func TestDevMatchmaker(t *testing.T) {
 	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", search2); resp.StatusCode != http.StatusOK {
 		t.Errorf("after the refill: %d", resp.StatusCode)
 	}
-	if _, ok := s.Matchmaker.Poll(t.Context(), b, 0, 0); !ok {
+	if _, ok := s.Matchmaker.Poll(t.Context(), b, "", 0, 0); !ok {
 		t.Error("the other search gone")
 	}
 }

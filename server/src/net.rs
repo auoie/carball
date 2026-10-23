@@ -289,6 +289,14 @@ impl Admission {
         true
     }
 
+    /// A session from `address` that turned out a region's ping: its start not counted (each search pings every region,
+    /// so players behind one NAT would otherwise run its starts out and a claim be refused, a no-show: RV-870)
+    pub fn refund(&mut self, address: IpAddr) {
+        if let Some(starts) = self.starts.get_mut(&address) {
+            starts.pop_back();
+        }
+    }
+
     pub fn release(&mut self, address: IpAddr) {
         if let Some(n) = self.active.get_mut(&address) {
             *n -= 1;
@@ -329,7 +337,8 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         let limits = limits.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let lost = match session(incoming, id, &to_game, &limits).await {
+            let refund = || admission.lock().unwrap().refund(address);
+            let lost = match session(incoming, id, &to_game, &limits, &refund).await {
                 Ok(lost) => lost,
                 Err(e) => {
                     eprintln!("player {id}: {e:#}");
@@ -400,6 +409,7 @@ async fn session(
     id: PlayerId,
     to_game: &Sender<ToGame>,
     limits: &NetLimits,
+    ping: &(dyn Fn() + Sync),
 ) -> anyhow::Result<bool> {
     // (the whole handshake within its deadline: a session that never opens its control stream is gone, SEC-2)
     let Some((connection, mut send, mut recv, hello)) =
@@ -420,6 +430,7 @@ async fn session(
     // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip; its
     // session closed after a moment's flush, its slot free at once, not after the page's close: RV-856)
     if matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING) {
+        ping(); // (its start given back: RV-870)
         let server = limits.server_name.clone().unwrap_or_default();
         let _ = send.write_all(&Control::Pong { server }.encode()).await;
         let _ = send.finish().await;
@@ -837,6 +848,21 @@ mod tests {
         admission.release(a);
         admission.release(b);
         assert!(admission.active.is_empty());
+    }
+
+    /// RV-870: a ping's start given back: an address's pings never run out its starts, a claim after 30 still admitted
+    #[test]
+    fn a_pings_start_is_given_back() {
+        let limits = NetLimits::default();
+        let a: IpAddr = [10, 0, 0, 1].into();
+        let t0 = Instant::now();
+        let mut admission = Admission::default();
+        for _ in 0..limits.per_address_per_minute + 10 {
+            assert!(admission.admit(a, t0, &limits), "a ping admitted");
+            admission.refund(a);
+            admission.release(a);
+        }
+        assert!(admission.admit(a, t0, &limits), "a claim after the pings");
     }
 
     #[test]

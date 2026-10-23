@@ -1588,6 +1588,13 @@ mod tests {
         host.leave(6, false);
         let all = events(&mut host);
         assert!(matches!(all.as_slice(), [Report::Cancelled { no_shows, .. }] if no_shows == &[1]), "{all:?}");
+        // (a match that never started, its last player gone: cancelled, never "over": RV-876's R11)
+        let tokens = host.create_match(ONES, &[7, 8], 20.0).tokens;
+        host.observe(20.0);
+        assert!(host.claim(tokens[0], 7, seat(7), tx.clone()));
+        host.leave(7, false);
+        let all = events(&mut host);
+        assert!(matches!(all.as_slice(), [Report::Cancelled { no_shows, .. }] if no_shows == &[0]), "{all:?}");
     }
 
     /// A claim opens its match at the first, in the ticket's playlist; a claim that doesn't fit the match (another

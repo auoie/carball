@@ -149,7 +149,7 @@ type Matchmaker struct {
 	open      map[string]*search // each account's search in the lists
 	matches   map[uint64]*match
 	active    map[string]uint64 // each account's match
-	latest    map[string]uint64 // each account's latest match, its rejoin's, till a later search
+	latest    map[string]uint64 // each account's latest match, its rejoin's; 0 once a later search gave it up
 	cooldowns map[string]time.Time
 	waits     map[string]kept // a cancelled match's players' waits, for their next search
 	arrivals  uint64
@@ -208,7 +208,8 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 		}
 		delete(m.active, p.Account)
 	}
-	delete(m.latest, p.Account)
+	// (given up: no rejoin of it, even once this search ends unmatched, RV-869)
+	m.latest[p.Account] = 0
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", State{}, err
@@ -231,11 +232,12 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 }
 
 // Poll answers a search's state once it's past `after` (its version), waiting up to `wait` for a change; false for a
-// search it doesn't know (never, gone, or before a restart). An open poll keeps its search alive
-func (m *Matchmaker) Poll(ctx context.Context, id string, after int, wait time.Duration) (State, bool) {
+// search it doesn't know (never, gone, before a restart, or another account's: `account`, none for any). An open poll
+// keeps its search alive
+func (m *Matchmaker) Poll(ctx context.Context, id, account string, after int, wait time.Duration) (State, bool) {
 	m.mu.Lock()
 	s := m.searches[id]
-	if s == nil {
+	if s == nil || (account != "" && s.player.Account != account) {
 		m.mu.Unlock()
 		return State{}, false
 	}
@@ -545,11 +547,12 @@ func (m *Matchmaker) Quitter(account string, until, now time.Time) {
 	}
 }
 
-// RejoinAllowed reports whether the account may have a rejoin ticket for the match: its latest match alone, till a
-// later search of its is accepted, and not while it searches (MX1R-5); not known (a restart since), the ban's rule alone
+// RejoinAllowed reports whether the account may have a rejoin ticket for the match: its latest match alone, none once a
+// later search of its was accepted (whether or not that search found a match: RV-869), and not while it searches
+// (MX1R-5); not known (a restart since), the ban's rule alone
 func (m *Matchmaker) RejoinAllowed(account string, id uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	latest, ok := m.latest[account]
-	return m.open[account] == nil && (!ok || latest == id)
+	return m.open[account] == nil && (!ok || (latest != 0 && latest == id))
 }

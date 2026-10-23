@@ -232,6 +232,19 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     if args.meshes.as_os_str().is_empty() {
         args.meshes = default_meshes();
     }
+    // (a name the matchmaker takes, host:port: one it would drop never matches anyone here, RV-868)
+    let name = args.server_name();
+    let (host, port) = name.rsplit_once(':').unwrap_or(("", ""));
+    anyhow::ensure!(
+        !args.queue
+            || (!host.is_empty()
+                && host.len() <= 58
+                && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+                && !port.is_empty()
+                && port.len() <= 5),
+        "PUBLIC_HOST {host:?}: this server's name for the matchmaker is PUBLIC_HOST:port, a host of letters, digits, dots \
+         and hyphens (58 at most)"
+    );
     // (a development matchmaker's: plain http on this machine, a development server's alone)
     if let Some(url) = &args.dev_api {
         let host = url.strip_prefix("http://").and_then(|h| h.rsplit_once(':')).map(|(h, _)| h);
@@ -601,6 +614,21 @@ mod tests {
 
     /// This server's name for the matchmaker: PUBLIC_HOST and its port (PUBLIC_PORT, else --port; 127.0.0.1 for a
     /// development server); a development matchmaker's URL (--api-url) loopback http, with --dev alone
+    /// RV-868: a queue server whose name the matchmaker wouldn't take refuses to start
+    #[test]
+    fn a_queue_server_with_a_name_the_matchmaker_wont_take_refuses_to_start() {
+        let named = |host: &str| {
+            let host = host.to_string();
+            parse_args(["--mode", "queue", "--dev"].iter().map(|a| (*a).to_string()), move |name: &str| {
+                (name == "PUBLIC_HOST").then(|| host.clone())
+            })
+        };
+        assert!(named("game-eu.example").is_ok());
+        for bad in ["bad_name", "ünïcode.example", &"h".repeat(59), "::1"] {
+            assert!(named(bad).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn the_servers_name_and_a_development_matchmakers_url() {
         let env = |name: &str| match name {

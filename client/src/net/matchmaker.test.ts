@@ -8,6 +8,8 @@ import { REFUSED_IN_MATCH } from "./protocol";
 interface Reply {
   readonly status: number;
   readonly body?: unknown;
+  /** Answered once this settles (a slow call) */
+  readonly after?: Promise<void>;
 }
 
 /** A stand-in matchmaker: each call's method, path and body kept; answered in turn from `replies` (by path's start); a
@@ -28,7 +30,8 @@ function service(replies: Record<string, Reply[]>): { http: typeof fetch; calls:
         });
       });
     }
-    return Promise.resolve(new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status }));
+    const response = (): Response => new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status });
+    return reply.after ? reply.after.then(response) : Promise.resolve(response());
   }) as typeof fetch;
   return { http, calls };
 }
@@ -193,6 +196,35 @@ describe("the search with the matchmaker", () => {
     replies["GET /api/search/"]?.push({ status: 200, body: { version: 2, state: "found", match } });
     await page.finish();
     expect(last.got.at(-1)?.startsWith("found ab")).toBe(true);
+  });
+
+  it("Cancel Search while the start is under way: the start finishes and the search it returned is deleted (RV-867)", async () => {
+    let answer = (): void => undefined;
+    const slow = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const { http, calls } = service({ "POST /api/search": [{ ...started, after: slow }], "DELETE /api/search/": [{ status: 204 }] });
+    const { handlers, got } = answers();
+    const search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    await vi.waitFor(() => {
+      expect(calls.length).toBe(1);
+    });
+    search.cancel();
+    answer();
+    await vi.waitFor(() => {
+      expect(calls.some((c) => c.method === "DELETE" && c.path === `/api/search/${"a".repeat(32)}`)).toBe(true);
+    });
+    expect(got).toEqual([]);
+  });
+
+  it("a poll answered 401 (the session ended: signed out, banned, deleted): the search over, the sign-in said (RV-872)", async () => {
+    const { http } = service({ "POST /api/search": [started], "GET /api/search/": [{ status: 401, body: { error: "signed-out" } }] });
+    const { handlers, got, done } = answers();
+    const notes: string[] = [];
+    MatchmakerSearchSession.start({ base: "" }, request, handlers, { signedOut: () => notes.push("signedOut") }, http, noWait);
+    await done;
+    expect(got).toEqual(["searching", "failed sign in to play online"]);
+    expect(notes).toEqual(["signedOut"]);
   });
 
   it("reads a found match's fields, nothing else", () => {

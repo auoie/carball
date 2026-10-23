@@ -591,7 +591,8 @@ func TestSignOutEverywhere(t *testing.T) {
 	}
 }
 
-// AC-15: the access log has neither the query (a callback's code) nor the address
+// AC-15: the access log has neither the query (a callback's code) nor the address; RV-871: nor a path's values (a
+// search's id), its route's pattern instead
 func TestLogsKeepNoQueryOrAddress(t *testing.T) {
 	e := setup(t, nil)
 	b := e.browser()
@@ -599,8 +600,14 @@ func TestLogsKeepNoQueryOrAddress(t *testing.T) {
 	q := e.google.Authorize(t, start.Header.Get("Location"), "sub-l")
 	e.get(b, "/api/auth/google/callback?"+q.Encode(), "CF-Connecting-IP", "198.51.100.23")
 	logs := e.logs.String()
-	if !strings.Contains(logs, "path=/api/auth/google/callback") {
+	if !strings.Contains(logs, `route="GET /api/auth/google/callback"`) {
 		t.Fatalf("no request logged: %s", logs)
+	}
+	searchID := strings.Repeat("cd", 16)
+	e.get(e.browser(), "/api/search/"+searchID+"?after=0")
+	logs = e.logs.String()
+	if !strings.Contains(logs, `route="GET /api/search/{id}"`) || strings.Contains(logs, searchID) {
+		t.Errorf("a search's poll logged by its id, or not at all:\n%s", logs)
 	}
 	for _, secret := range []string{q.Get("code"), q.Get("state"), "198.51.100.23", "127.0.0.1"} {
 		if strings.Contains(logs, secret) {

@@ -108,8 +108,13 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
       credentials: this.endpoint.dev ? "omit" : "same-origin",
       cache: "no-store",
       keepalive,
-      // (a poll's own wait is the service's 25 s: a hung one given up past that, as a failed poll)
-      signal: keepalive ? null : AbortSignal.any([this.#abort.signal, AbortSignal.timeout(method === "GET" ? 40_000 : REQUEST_TIMEOUT_MS)]),
+      // (a poll's own wait is the service's 25 s: a hung one given up past that, as a failed poll; a cancel stops the polls,
+      // never the start, whose search is then deleted: RV-867)
+      signal: keepalive
+        ? null
+        : method === "POST"
+          ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+          : AbortSignal.any([this.#abort.signal, AbortSignal.timeout(method === "GET" ? 40_000 : REQUEST_TIMEOUT_MS)]),
     });
     const json = (await response.json().catch(() => null)) as unknown;
     return { status: response.status, body: typeof json === "object" && json !== null ? (json as Record<string, unknown>) : null };
@@ -225,6 +230,14 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
       }
       if (this.#isOver()) return "over";
       if (answer.status === 404) return "unknown";
+      // (the session ended meanwhile: signed out, the account banned or deleted, RV-872)
+      if (answer.status === 401) {
+        this.#end(() => {
+          this.notes.signedOut?.();
+          this.handlers.failed("sign in to play online");
+        });
+        return "over";
+      }
       if (answer.status === 0 || answer.status === 502 || answer.status === 503 || answer.status === 504) {
         if (++failures > POLL_RETRIES) {
           this.#end(() => {

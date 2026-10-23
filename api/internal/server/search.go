@@ -30,18 +30,18 @@ type searchBody struct {
 	Regions   []string       `json:"regions"`
 }
 
-// request checks a search's body: one to three playlists, each once; up to 16 servers by address, each ping 0-10000
-// ms; up to 16 ticked servers, each once
+// request checks a search's body: one to three playlists, each once; up to 16 servers with their pings and 16 ticked
+// servers. A server whose name isn't one (no host:port, too long), a ping out of 0-10000 ms or a name given twice is
+// dropped, not the search: one region's odd name never stops every page's searches (RV-868)
 func (b searchBody) request() (matchmaker.Request, bool) {
 	req := matchmaker.Request{Pings: map[string]int{}}
 	if len(b.Playlists) == 0 || len(b.Playlists) > 3 || len(b.Pings) > 16 || len(b.Regions) > 16 {
 		return req, false
 	}
 	for _, server := range b.Regions {
-		if !serverName.MatchString(server) || slices.Contains(req.Ticked, server) {
-			return req, false
+		if serverName.MatchString(server) && !slices.Contains(req.Ticked, server) {
+			req.Ticked = append(req.Ticked, server)
 		}
-		req.Ticked = append(req.Ticked, server)
 	}
 	for _, p := range b.Playlists {
 		if p < 1 || p > 3 || slices.Contains(req.Playlists, byte(p)) {
@@ -50,10 +50,9 @@ func (b searchBody) request() (matchmaker.Request, bool) {
 		req.Playlists = append(req.Playlists, byte(p))
 	}
 	for server, ms := range b.Pings {
-		if !serverName.MatchString(server) || ms < 0 || ms > 10_000 {
-			return req, false
+		if serverName.MatchString(server) && ms >= 0 && ms <= 10_000 {
+			req.Pings[server] = ms
 		}
-		req.Pings[server] = ms
 	}
 	return req, true
 }
@@ -154,7 +153,9 @@ func stateJSON(id string, st matchmaker.State, now time.Time) map[string]any {
 }
 
 // pollSearch: GET /api/search/{id}?after=N, its state once past version N (at a change, or after PollWait); 404 for a
-// search it doesn't know (the page searches again once). Its id is its page's alone: no session read
+// search it doesn't know (the page searches again once). The session's account's own search alone (its id isn't the
+// only key to its match ticket: RV-871); a session ended (signed out, the account banned or deleted) polls no more, so
+// its search goes within SearchLife (RV-872)
 func (s *Server) pollSearch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	after, err := strconv.Atoi(r.URL.Query().Get("after"))
@@ -162,7 +163,16 @@ func (s *Server) pollSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
-	state, ok := s.Matchmaker.Poll(r.Context(), id, after, PollWait)
+	ss, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	s.poll(w, r, id, ss.AccountID, after)
+}
+
+// poll answers a search's poll, the account's own (none: any, a development matchmaker's)
+func (s *Server) poll(w http.ResponseWriter, r *http.Request, id, account string, after int) {
+	state, ok := s.Matchmaker.Poll(r.Context(), id, account, after, PollWait)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no-search")
 		return
@@ -234,12 +244,7 @@ func (s *Server) fleetEvent(w http.ResponseWriter, r *http.Request) {
 	case body.Event == "cancelled" && matchOK:
 		s.Matchmaker.Cancelled(body.Server, id, body.NoShows, now)
 	case body.Event == "restarted" && body.At > 0:
-		// (its start by its clock, never ahead of ours: a match assigned after now isn't before its restart)
-		at := time.Unix(body.At, 0)
-		if at.After(now) {
-			at = now
-		}
-		s.Matchmaker.Restarted(body.Server, at)
+		s.Matchmaker.Restarted(body.Server, time.Unix(body.At, 0))
 	default:
 		bad = true
 	}

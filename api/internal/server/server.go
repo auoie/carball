@@ -275,15 +275,19 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// logged: one line a request, its method, path (never the query: a callback's holds its code and assertion), status and
-// time; never the address (AC-15)
+// logged: one line a request, its method, route (its pattern, never its path: a search's holds its id, RV-871; never
+// the query: a callback's holds its code and assertion), status and time; never the address (AC-15)
 func (s *Server) logged(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		s.noteForward(r)
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		s.Log.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status,
+		route := r.Pattern
+		if route == "" {
+			route = "(no route)"
+		}
+		s.Log.Info("request", "method", r.Method, "route", route, "status", sw.status,
 			"ms", time.Since(start).Milliseconds())
 	})
 }

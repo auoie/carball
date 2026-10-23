@@ -297,3 +297,23 @@ test("a no-show: the player who came is told and searches again, the no-show can
   await a.context().close();
   await bContext.close();
 });
+
+test("a page closed while it searches: its search cancelled at once, another player's search not matched with it (RV-866)", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  const a = await menuPage(browser, errors);
+  await findMatch(a);
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  await a.close();
+  const b = await menuPage(browser, errors);
+  await findMatch(b);
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  // (still searching after the closed page's search would have gone stale: no match was made with it)
+  await b.waitForTimeout(4000);
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching");
+  expect(b.url()).not.toMatch(/[?&]match(&|$)/);
+  await b.locator("#search-banner .search-cancel").click();
+  expect(errors).toEqual([]);
+  await a.context().close();
+  await b.context().close();
+});

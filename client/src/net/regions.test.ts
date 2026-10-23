@@ -87,6 +87,24 @@ describe("the regions searched", () => {
       pings: { "game-us.example:4433": 90, "game-eu.example:4433": 31 },
       regions: ["game-eu.example:4433", "game-asia.example:4433"],
     });
+    // (a server whose name isn't one left out, a name given twice once, RV-868)
+    const odd = [
+      { id: "us-east", server: "bad_name:4433" },
+      { id: "eu", server: "game-eu.example:4433" },
+      { id: "eu2", server: "game-eu.example:4433" },
+    ];
+    expect(
+      searchRequest(
+        odd,
+        ["us-east", "eu", "eu2"],
+        new Map([
+          ["us-east", 10],
+          ["eu", 30],
+          ["eu2", 31],
+        ]),
+        [1],
+      ),
+    ).toEqual({ playlists: [1], pings: { "game-eu.example:4433": 31 }, regions: ["game-eu.example:4433"] });
     // (a page of one region: that one, ticked or not)
     expect(searchRequest([{ id: "default", server: "localhost:4433" }], [], new Map([["default", 5]]), [2]).regions).toEqual(["localhost:4433"]);
   });

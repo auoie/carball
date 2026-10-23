@@ -36,7 +36,7 @@ import {
 import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
+import { chooseRegions, searchRequest, serverNameOk, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
 import { browserKey, pingServer } from "./net/search";
 import { REFUSED_VERSION } from "./net/protocol";
 import { MATCHMAKER_TEXT, type MatchmakerEndpoint, type MatchmakerSearch, MatchmakerSearchSession } from "./net/matchmaker";
@@ -538,7 +538,7 @@ async function main(): Promise<void> {
         listed.map(async (r) => {
           const answer = await pingServer(r.address);
           pings.set(r.id, answer?.ms ?? null);
-          if (answer?.server) serverNames.set(r.id, answer.server);
+          if (answer?.server && serverNameOk(answer.server)) serverNames.set(r.id, answer.server);
           if (storedRegions()?.manual !== true) chosen = chooseRegions(listed, storedRegions(), pings);
           showRegions();
         }),
@@ -563,7 +563,7 @@ async function main(): Promise<void> {
             const answer = await pingServer(r.address, 1);
             fresh.set(r.id, answer?.ms ?? null);
             pings.set(r.id, answer?.ms ?? null);
-            if (answer?.server) serverNames.set(r.id, answer.server);
+            if (answer?.server && serverNameOk(answer.server)) serverNames.set(r.id, answer.server);
             showRegions();
           }),
         ),
@@ -674,6 +674,13 @@ async function main(): Promise<void> {
     });
     const view = new SearchView(document.body, () => {
       matchmaking.cancel();
+    });
+    // (a page closed or reloaded while it searches: the search cancelled at the matchmaker (its keepalive delete), not
+    // left matchable for its last seconds and its account a no-show: RV-866; a match found stands, a no-show if not
+    // claimed)
+    window.addEventListener("pagehide", () => {
+      const status = matchmaking.state?.status;
+      if (status === "connecting" || status === "searching") matchmaking.cancel();
     });
     // (the banner's cancel, the pad's Y too, where MM-10 has it: over the main or pause menu, nothing over them; never
     // while driving, Y the ball cam's)
