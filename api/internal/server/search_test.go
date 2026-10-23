@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,14 @@ func (e *env) searchAs(b *http.Client, playlists []int, pings map[string]int) re
 	for server := range pings {
 		regions = append(regions, server)
 	}
-	return e.write(b, http.MethodPost, "/api/search", map[string]any{"playlists": playlists, "pings": pings, "regions": regions})
+	resp := e.write(b, http.MethodPost, "/api/search", map[string]any{"playlists": playlists, "pings": pings, "regions": regions})
+	// (its page's first poll, at once: only a polled search is matched, RV-892)
+	if resp.StatusCode == http.StatusOK {
+		if id, _ := decode(e.t, resp)["search"].(string); id != "" {
+			e.poll(b, id, 0)
+		}
+	}
+	return resp
 }
 
 // poll: a search's state past version `after` as the browser `b` asks it (no wait: the change already made)
@@ -164,6 +172,17 @@ func TestSearchPolls(t *testing.T) {
 	if _, st := e.poll(b, first, 1); st["state"] != "ended" || st["reason"] != "replaced" {
 		t.Errorf("the replaced search: %v", st)
 	}
+	// (another account's delete, or one with no session, ends nothing: RV-896)
+	other, _, _ := e.player("sub-other")
+	if resp := e.write(other, http.MethodDelete, "/api/search/"+second, nil); resp.StatusCode != http.StatusNoContent {
+		t.Errorf("another account's Cancel Search: %d", resp.StatusCode)
+	}
+	if resp := e.write(e.browser(), http.MethodDelete, "/api/search/"+second, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a Cancel Search with no session: %d", resp.StatusCode)
+	}
+	if _, st := e.poll(b, second, 0); st["state"] != "searching" {
+		t.Errorf("a search another account cancelled: %v", st)
+	}
 	if resp := e.write(b, http.MethodDelete, "/api/search/"+second, nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("Cancel Search: %d", resp.StatusCode)
 	}
@@ -174,7 +193,6 @@ func TestSearchPolls(t *testing.T) {
 	if code, _ := e.poll(e.browser(), second, 0); code != http.StatusUnauthorized {
 		t.Errorf("a poll with no session: %d", code)
 	}
-	other, _, _ := e.player("sub-other")
 	if code, _ := e.poll(other, second, 0); code != http.StatusNotFound {
 		t.Errorf("another account's poll: %d", code)
 	}
@@ -388,7 +406,9 @@ func TestDevMatchmaker(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("a development search: %d", resp.StatusCode)
 		}
-		return decode(t, resp)["search"].(string)
+		id := decode(t, resp)["search"].(string)
+		call(http.MethodGet, "/api/search/"+id+"?after=0", "http://localhost:4173", "") // (its first poll: RV-892)
+		return id
 	}
 	a, b := search("0123456789abcdef"), search("fedcba9876543210")
 	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", `{"playlists":[1],"pings":{},"name":"N","key":"short"}`); resp.StatusCode != http.StatusBadRequest {
@@ -435,5 +455,31 @@ func TestDevMatchmaker(t *testing.T) {
 	}
 	if _, ok := s.Matchmaker.Poll(t.Context(), b, "", 0, 0); !ok {
 		t.Error("the other search gone")
+	}
+}
+
+// A search's poll never rotates the session (its answer, and a new cookie with it, may never reach the page: a poll
+// aborted by Cancel Search or the page going): a day on, a poll leaves the token as it was, and the next ordinary call
+// rotates it (RV-889)
+func TestPollDoesNotRotateTheSession(t *testing.T) {
+	e := setup(t, nil)
+	b, _, _ := e.player("sub-rot")
+	u, _ := url.Parse(e.srv.URL)
+	first := sessionToken(b, u)
+	id := decode(t, e.searchAs(b, []int{1}, map[string]int{euServer: 30}))["search"].(string)
+	e.clock.Add(25 * time.Hour)
+	// (the poll as an aborted one would have left it: its reply's cookies not kept)
+	bare := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second}
+	resp := e.get(bare, "/api/search/"+id+"?after=0", "Cookie", "__Host-cb_session="+first)
+	if resp.StatusCode != http.StatusOK || len(resp.Header.Values("Set-Cookie")) != 0 {
+		t.Fatalf("a poll a day on: %d, cookies %v", resp.StatusCode, resp.Header.Values("Set-Cookie"))
+	}
+	// (past the grace a rotation would have started, the original token still good; the next call rotates it)
+	e.clock.Add(11 * time.Minute)
+	if code := e.get(bare, "/api/search/"+id+"?after=0", "Cookie", "__Host-cb_session="+first).StatusCode; code == http.StatusUnauthorized {
+		t.Fatalf("the original token past a rotation's grace, after a poll a day on: %d", code)
+	}
+	if e.meStatus(b) != http.StatusOK || sessionToken(b, u) == first {
+		t.Error("the next ordinary call didn't rotate it")
 	}
 }

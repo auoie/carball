@@ -110,13 +110,20 @@ test("a search of two playlists is matched in one, out of the other's list", asy
     await page.waitForURL(/[?&]match(&|$)/, { timeout: 20_000 });
     await expect(page.locator("#net")).toContainText("2 cars", { timeout: 60_000 });
   }
-  // (a 2v2 search now finds nobody: the one who searched both is in the 1v1)
-  const twos = await menuPage(browser, B, errors);
-  await findMatch(twos, null, ["2v2"]);
-  await expect.poll(async () => status(twos), { timeout: 15_000 }).toBe("searching");
-  await twos.waitForTimeout(3000);
-  expect(await status(twos)).toBe("searching");
-  await cancelSearch(twos);
+  // (three 2v2 searches now: still waiting, the one who searched both out of the 2v2 list with its 1v1; with it still
+  // there, they'd make four, a match: RV-885)
+  const twos = [];
+  for (let i = 0; i < 3; i++) {
+    const page = await menuPage(browser, B, errors);
+    await findMatch(page, null, ["2v2"]);
+    twos.push(page);
+  }
+  for (const page of twos) await expect.poll(async () => status(page), { timeout: 15_000 }).toBe("searching");
+  await twos[0]?.waitForTimeout(3000);
+  for (const page of twos) {
+    expect(await status(page)).toBe("searching");
+    await cancelSearch(page);
+  }
   expect(errors).toEqual([]);
 });
 

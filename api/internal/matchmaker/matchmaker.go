@@ -118,8 +118,11 @@ type search struct {
 	polls      int
 	lastPoll   time.Time
 	superseded chan struct{}
-	state      State
-	changed    chan struct{}
+	// a poll came: only then is it matched (its start's answer may never have reached its page, which then can't cancel
+	// it: a search no page polls was never there, RV-892)
+	polled  bool
+	state   State
+	changed chan struct{}
 	// a found or ended search's record goes then
 	gone time.Time
 }
@@ -241,6 +244,7 @@ func (m *Matchmaker) Poll(ctx context.Context, id, account string, after int, wa
 		m.mu.Unlock()
 		return State{}, false
 	}
+	s.polled = true
 	if s.state.Version > after {
 		s.lastPoll = m.now()
 		state := s.state
@@ -273,11 +277,11 @@ func (m *Matchmaker) Poll(ctx context.Context, id, account string, after int, wa
 	return s.state, true
 }
 
-// Cancel ends a search (Cancel Search); a match it found stands (the page claims or stalls it)
-func (m *Matchmaker) Cancel(id string) {
+// Cancel ends a search (Cancel Search) of `account`'s (none: any); a match it found stands (the page claims or stalls it)
+func (m *Matchmaker) Cancel(id, account string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if s := m.searches[id]; s != nil && s.state.Kind == Searching {
+	if s := m.searches[id]; s != nil && s.state.Kind == Searching && (account == "" || s.player.Account == account) {
 		m.end(s, ReasonCancelled, time.Time{}, m.now())
 	}
 }
@@ -362,6 +366,9 @@ func (m *Matchmaker) Tick(now time.Time) {
 	}
 	lists := map[byte][]*search{}
 	for _, s := range m.open {
+		if !s.polled {
+			continue
+		}
 		for _, p := range s.playlists {
 			lists[p] = append(lists[p], s)
 		}

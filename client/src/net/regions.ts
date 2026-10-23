@@ -95,6 +95,21 @@ export function toggleRegion(chosen: readonly string[], id: string, order: reado
   return order.filter((o) => next.includes(o));
 }
 
+/** A search's plan from the pings measured for it alone (RV-879: a kept ping from before is no answer now): the regions
+ *  searched (the player's ticked ones; else, `automatic`, the lowest of these pings, kept as the automatic pick) and the
+ *  request */
+export function searchPlan(
+  listed: readonly { readonly id: string; readonly server: string }[],
+  stored: KeptRegions | null,
+  chosen: readonly string[],
+  measured: ReadonlyMap<string, number | null>,
+  playlists: readonly number[],
+): { chosen: string[]; automatic: boolean; request: ReturnType<typeof searchRequest> } {
+  const automatic = listed.length > 1 && stored?.manual !== true;
+  const regions = automatic ? chooseRegions(listed, stored, measured) : [...chosen];
+  return { chosen: regions, automatic, request: searchRequest(listed, regions, measured, playlists) };
+}
+
 /** A server's name as the matchmaker takes it: host:port (the API's pattern) */
 export function serverNameOk(name: string): boolean {
   return /^[A-Za-z0-9.-]{1,58}:[0-9]{1,5}$/.test(name);

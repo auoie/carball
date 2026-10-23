@@ -36,10 +36,10 @@ import {
 import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, searchRequest, serverNameOk, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
+import { chooseRegions, searchPlan, serverNameOk, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
 import { browserKey, pingServer } from "./net/search";
 import { REFUSED_VERSION } from "./net/protocol";
-import { MATCHMAKER_TEXT, type MatchmakerEndpoint, type MatchmakerSearch, MatchmakerSearchSession } from "./net/matchmaker";
+import { MATCHMAKER_TEXT, type MatchmakerEndpoint, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, readGamepad } from "./input/devices";
@@ -83,7 +83,7 @@ import { type StatContext, StatGraphData, levelView, speedUnit } from "./game/st
 import { RefreshMeter } from "./game/refreshRate";
 import { EXPECTED_PACKETS, NetGraphFeed } from "./net/netStats";
 import { MainMenu } from "./ui/mainMenu";
-import { MODAL_TEXT, Modal, REJOIN_TEXT } from "./ui/modal";
+import { MODAL_TEXT, Modal, REJOIN_TEXT, RELOAD_TEXT } from "./ui/modal";
 import { SearchView, cancelShown } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
 import { PauseMenu, TRAINING_PAUSE_TEXT } from "./ui/pauseMenu";
@@ -502,6 +502,13 @@ async function main(): Promise<void> {
     /** Each region's server's name as its Pong said it (the matchmaker's: RV-863); none, its URL's host:port */
     const serverNames = new Map<string, string>();
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
+    /** A region's ping from its answer, its name kept: a server naming itself outside the matchmaker's pattern counted
+     *  as no answer (no search can go there, RV-893); one naming none, from before the name, known by its URL */
+    const answered = (r: Region, answer: Awaited<ReturnType<typeof pingServer>>): number | null => {
+      if (answer === null || (answer.server !== "" && !serverNameOk(answer.server))) return null;
+      if (answer.server !== "") serverNames.set(r.id, answer.server);
+      return answer.ms;
+    };
     let pinging: Promise<void> = Promise.resolve();
     let chosen: string[] = [];
     /** The last search's regions (the browser tests') */
@@ -536,9 +543,7 @@ async function main(): Promise<void> {
       pingedAt = Date.now();
       pinging = Promise.all(
         listed.map(async (r) => {
-          const answer = await pingServer(r.address);
-          pings.set(r.id, answer?.ms ?? null);
-          if (answer?.server && serverNameOk(answer.server)) serverNames.set(r.id, answer.server);
+          pings.set(r.id, answered(r, await pingServer(r.address)));
           if (storedRegions()?.manual !== true) chosen = chooseRegions(listed, storedRegions(), pings);
           showRegions();
         }),
@@ -560,10 +565,9 @@ async function main(): Promise<void> {
         timer,
         Promise.all(
           listed.map(async (r) => {
-            const answer = await pingServer(r.address, 1);
-            fresh.set(r.id, answer?.ms ?? null);
-            pings.set(r.id, answer?.ms ?? null);
-            if (answer?.server && serverNameOk(answer.server)) serverNames.set(r.id, answer.server);
+            const ms = answered(r, await pingServer(r.address, 1));
+            fresh.set(r.id, ms);
+            pings.set(r.id, ms);
             showRegions();
           }),
         ),
@@ -610,23 +614,28 @@ async function main(): Promise<void> {
         regionsListed
           .then(async (listed) => {
             const all = listed.length > 0 ? listed : await queueRegions(params, location.hostname);
-            const measured = await freshPings(all, PING_WAIT_MS);
-            // (no choice of the player's: the lowest ping's, chosen now from these pings and kept: RX43C-1, RV-862)
-            if (all.length > 1 && storedRegions()?.manual !== true) {
-              chosen = chooseRegions(all, storedRegions(), pings);
-              storeRegions(chosen, false);
-              storePings(pings);
-              showRegions();
-            }
             const endpoint = await matchmakerEndpoint();
             if (cancelled) return;
             if (endpoint === null) {
               handlers.failed(MATCHMAKER_TEXT.noMatchmaker);
               return;
             }
-            searchable = named(all);
-            searchedRegions = all.length > 1 ? chosen : all.map((r) => r.id);
-            running = MatchmakerSearchSession.start(endpoint, searchRequest(searchable, chosen, measured, playlists), accepted, searchNotes);
+            // (each start's request from pings measured for it: the first's, and a restart's again, RV-880; no choice of
+            // the player's: the lowest of these pings, kept as the automatic pick, RX43C-1, RV-862, RV-879)
+            const request = async (): Promise<SearchRequest> => {
+              const measured = await freshPings(all, PING_WAIT_MS);
+              searchable = named(all);
+              const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists);
+              if (plan.automatic) {
+                chosen = plan.chosen;
+                storeRegions(chosen, false);
+                storePings(pings);
+                showRegions();
+              }
+              searchedRegions = all.length > 1 ? chosen : all.map((r) => r.id);
+              return plan.request;
+            };
+            running = MatchmakerSearchSession.start(endpoint, request, accepted, searchNotes);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -1011,7 +1020,9 @@ async function main(): Promise<void> {
     } else if (notice?.modal === "reload") {
       // (a claim or rejoin refused on version: the server updated since this page loaded, RV-865)
       const text = refusalText(REFUSED_VERSION);
-      modal.show(MODAL_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+      modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+    } else if (notice?.modal === "rejoinGone") {
+      modal.show(REJOIN_TEXT.title, REJOIN_TEXT.gone);
     } else if (notice?.modal === "banned" && notice.until !== undefined) {
       // (a rejoin refused for a ban from another match: the ban as a search says it, its seat gone, RX31)
       const text = queueBanText(notice.until, Date.now());

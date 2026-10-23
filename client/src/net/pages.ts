@@ -2,9 +2,9 @@
 // claim (the seat's match ticket, the matchmaker's); the match page hands the menu page back a notice when it ends (a
 // modal to show, a search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
-import { QueueBannedError, SignedOutError, accountTicket, devTicket } from "./tickets";
+import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
 const CLAIM_KEY = "carball.claim";
 const NOTICE_KEY = "carball.menuNotice";
@@ -56,7 +56,7 @@ const keptServer = (value: unknown): { server: string } | Record<string, never> 
 export interface MenuNotice {
   /** The error modal: kicked for being idle, the connection lost, a rejoin too late (the match over), the sign-in gone, a
    *  rejoin's ticket refused for a ban from another match (until `until`) */
-  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned" | "reload";
+  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned" | "reload" | "rejoinGone";
   /** The ban's end ("banned": ms, wall clock) */
   readonly until?: number;
   /** A search of these playlists to start */
@@ -162,7 +162,8 @@ export function takeNotice(storage = session()): MenuNotice | null {
       value.modal === "concluded" ||
       value.modal === "signedOut" ||
       value.modal === "elsewhere" ||
-      value.modal === "reload"
+      value.modal === "reload" ||
+      value.modal === "rejoinGone"
         ? { modal: value.modal }
         : {}),
       ...(value.modal === "banned" && typeof value.until === "number" && Number.isFinite(value.until) ? { modal: "banned" as const, until: value.until } : {}),
@@ -295,7 +296,7 @@ export async function queueRegions(params: URLSearchParams, host: string, deploy
       return config.servers.map((s) => ({
         id: s.id,
         name: s.name,
-        address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) },
+        address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(rejoin) },
         server: serverOfUrl(s.url),
       }));
     }
@@ -354,7 +355,7 @@ export async function claimAddress(
   if (matchTicket !== undefined) return { ...address, ticket: async () => Promise.resolve(matchTicket) };
   const ticket = address.ticket;
   if (!ticket) return address;
-  const answer = (e: unknown): boolean => e instanceof SignedOutError || e instanceof QueueBannedError;
+  const answer = (e: unknown): boolean => e instanceof SignedOutError || e instanceof QueueBannedError || e instanceof RejoinGoneError;
   return {
     ...address,
     ticket: async (rejoin) =>
@@ -390,6 +391,8 @@ export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNo
   if (refused === REFUSED_IN_MATCH && claim.rejoin) return { modal: "elsewhere" };
   // (the server updated since this page loaded: reload, as a search refused so is told, RV-865)
   if (refused === REFUSED_VERSION) return { modal: "reload" };
+  // (the matchmaker refused the rejoin's ticket: said as such, RV-882)
+  if (e instanceof RejoinGoneError) return { modal: "rejoinGone" };
   if (refused === REFUSED_CONCLUDED) return { modal: "concluded" };
   if (e instanceof QueueBannedError && claim.rejoin) return { modal: "banned", until: e.until };
   if (e instanceof SignedOutError) return { modal: "signedOut" };
@@ -498,23 +501,12 @@ export async function searchGaveUpSeat(account: string | null, storage = local()
   return seat;
 }
 
-/** A search's hold on the saved seat: given up as its hello is sent (searchGaveUpSeat), back if the server refused the
- *  search before taking it, for any reason but REFUSED_MODE (which comes after it gave the seat up): a reported quitter's
- *  Refused 7 leaves the seat to rejoin (RX32) */
-export function seatSearch(
-  account: string | null,
-  storage = local(),
-  locks: LockManager | undefined = webLocks(),
-): { sent(): void; refused(reason: number): void } {
-  let given: Promise<RankedSeat | null> = Promise.resolve(null);
+/** A search's hold on the saved seat: given up once the matchmaker accepts the search (searchGaveUpSeat: the API then
+ *  refuses that match's rejoin, RV-846); a refused search never held it */
+export function seatSearch(account: string | null, storage = local(), locks: LockManager | undefined = webLocks()): { sent(): void } {
   return {
     sent: () => {
-      given = searchGaveUpSeat(account, storage, locks);
-    },
-    refused: (reason) => {
-      void given.then((seat) => {
-        if (seat && reason !== REFUSED_MODE && rankedSeat(Date.now(), storage) === null) storeRankedSeat(seat, storage);
-      });
+      void searchGaveUpSeat(account, storage, locks);
     },
   };
 }

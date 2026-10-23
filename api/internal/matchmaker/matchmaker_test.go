@@ -57,6 +57,10 @@ func (h *harness) search(t *testing.T, p Player, playlists []byte, pings map[str
 		t.Fatalf("%s's search: %+v, %v", p.Account, state, err)
 	}
 	h.ids[p.Account] = id
+	// (its page's first poll, at once: only a polled search is matched, RV-892)
+	if _, ok := h.m.Poll(context.Background(), id, "", 0, 0); !ok {
+		t.Fatalf("%s's search unknown", p.Account)
+	}
 }
 
 func (h *harness) state(t *testing.T, account string) State {
@@ -254,7 +258,7 @@ func TestMatchesFreed(t *testing.T) {
 	busy := func(a string) bool {
 		_, _, err := h.m.Start(player(a, 1500), req([]byte{3}, near), h.now)
 		if err == nil {
-			h.m.Cancel(h.ids[a])
+			h.m.Cancel(h.ids[a], "")
 		}
 		return errors.Is(err, ErrInMatch)
 	}
@@ -340,7 +344,7 @@ func TestSearchLife(t *testing.T) {
 	if s, _ := h.m.Poll(context.Background(), first, "", 1, 0); s.Kind != Ended || s.Reason != ReasonReplaced || s.Version != 2 {
 		t.Errorf("the replaced search: %+v", s)
 	}
-	h.m.Cancel(h.ids["tab"])
+	h.m.Cancel(h.ids["tab"], "")
 	if s := h.state(t, "tab"); s.Reason != ReasonCancelled {
 		t.Errorf("a cancelled search: %+v", s)
 	}
@@ -458,7 +462,7 @@ func TestRejoinStaysGivenUp(t *testing.T) {
 	h.m.Left("eu:4433", m.ID, 0)
 	h.m.Left("eu:4433", m.ID, 1)
 	h.search(t, player("p1", 1500), []byte{1}, near)
-	h.m.Cancel(h.ids["p1"])
+	h.m.Cancel(h.ids["p1"], "p1")
 	if h.m.RejoinAllowed("p1", m.ID) || h.m.RejoinAllowed("p1", m.ID+1) {
 		t.Error("a rejoin after a cancelled search")
 	}
@@ -484,16 +488,19 @@ func TestCancelledKeepsTheWait(t *testing.T) {
 	h.m.Tick(h.now)
 	m := h.found(t, "came")
 	gone := int(h.issued[slices.IndexFunc(h.issued, func(s ticket.Seat) bool { return s.Match == m.ID && s.Seat != h.issued[0].Seat })].Seat)
+	// (two others searching since 41 s and 42 s, no round between)
+	h.now = t0.Add(41 * time.Second)
+	h.search(t, player("x", 1500), []byte{1}, near)
+	h.now = t0.Add(42 * time.Second)
+	h.search(t, player("y", 1500), []byte{1}, near)
 	// (already back before the cancel: its search moved up to the first one's wait)
-	h.at(45 * time.Second)
+	h.now = t0.Add(45 * time.Second)
 	h.search(t, player("came", 1500), []byte{1}, near)
 	h.m.Cancelled("eu:4433", m.ID, []int{gone}, h.now)
 	h.at(46 * time.Second)
-	h.search(t, player("waiting", 1500), []byte{1}, near) // (since 46 s)
-	h.search(t, player("third", 1500), []byte{1}, near)
-	h.m.Tick(h.now)
-	// (the one who came, since 0 s, first: matched with the next-oldest)
-	if f := h.found(t, "came"); f == nil || h.found(t, "waiting") == nil || h.found(t, "third") != nil {
+	// (the one who came, since 0 s, first: matched with the next-oldest, x; with its own 45 s, x and y would be: RV-876's
+	// G5)
+	if h.found(t, "came") == nil || h.found(t, "x") == nil || h.found(t, "y") != nil {
 		t.Fatal("the earlier wait not kept for a search already back")
 	}
 }
@@ -524,6 +531,9 @@ func TestStartWaitAndSearchBeforeTheStart(t *testing.T) {
 	if s := h.state(t, "d"); s.Kind != Searching {
 		t.Errorf("a player who searched before the start held: %+v", s)
 	}
+	if _, _, err := h.m.Start(player("d", 1500), req([]byte{3}, near), h.now); err != nil {
+		t.Errorf("a player who searched before the start refused a search after it: %v", err)
+	}
 }
 
 // MX1R-11: the playlist whose oldest searcher waited longest forms first: a search of 1v1 and 3v3 joins the fuller 3v3
@@ -533,12 +543,33 @@ func TestThePlaylistWaitingLongestFirst(t *testing.T) {
 	for _, a := range []string{"t1", "t2", "t3", "t4", "t5"} {
 		h.search(t, player(a, 1500), []byte{3}, near)
 	}
-	h.at(time.Second)
+	// (both and ones in before the one round that decides: RV-876's G7)
+	h.now = t0.Add(time.Second)
 	h.search(t, player("both", 1500), []byte{1, 3}, near)
-	h.at(2 * time.Second)
+	h.now = t0.Add(1500 * time.Millisecond)
 	h.search(t, player("ones", 1500), []byte{1}, near)
 	h.at(2 * time.Second)
 	if m := h.found(t, "both"); m == nil || m.Playlist != 3 || h.found(t, "ones") != nil {
 		t.Fatalf("the 3v3 not first: %+v", m)
+	}
+}
+
+// A search no page ever polled (its start's answer lost on the way, so its page can't cancel it) is never matched: it
+// goes after SearchLife, and the others wait on (RV-892)
+func TestUnpolledSearchNotMatched(t *testing.T) {
+	h := newHarness()
+	if _, _, err := h.m.Start(player("lost", 1500), req([]byte{1}, near), h.now); err != nil {
+		t.Fatal(err)
+	}
+	h.search(t, player("b", 1500), []byte{1}, near)
+	h.at(0)
+	if h.state(t, "b").Kind != Searching {
+		t.Fatal("matched with a search no page polled")
+	}
+	h.at(SearchLife)
+	h.search(t, player("c", 1500), []byte{1}, near)
+	h.at(SearchLife + time.Second)
+	if h.state(t, "b").Kind != Found || h.state(t, "c").Kind != Found {
+		t.Error("the polled searches not matched together")
 	}
 }

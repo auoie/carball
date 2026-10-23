@@ -197,6 +197,7 @@ export class MainMenu {
     playlists.className = "main-menu-playlists";
     playlists.setAttribute("role", "group");
     playlists.setAttribute("aria-label", CHOICE_NAMES.playlist);
+    playlists.dataset["padBoxes"] = ""; // (one row: the pad's left and right move along it, A ticks: RV-883)
     for (const p of PLAYLISTS) {
       const b = button(playlists, p.name, () => {
         this.#toggle(p.teamSize);

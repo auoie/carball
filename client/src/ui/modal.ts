@@ -19,6 +19,13 @@ export const REJOIN_TEXT = {
   body: "It appears you accidentally left a ranked match. Would you like to rejoin?",
   concluded: "Match has concluded.",
   elsewhere: "You're playing that match in another tab or window.",
+  /** The matchmaker refused it (ours: the account searched or played another match since, RV-882) */
+  gone: "That match can't be rejoined: you've searched or played another match since.",
+} as const;
+
+/** A page older than the servers (ours: a claim or a rejoin refused on version, RV-865, RV-884) */
+export const RELOAD_TEXT = {
+  title: "New Version",
 } as const;
 
 export class Modal {

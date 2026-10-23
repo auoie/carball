@@ -32,7 +32,8 @@ type searchBody struct {
 
 // request checks a search's body: one to three playlists, each once; up to 16 servers with their pings and 16 ticked
 // servers. A server whose name isn't one (no host:port, too long), a ping out of 0-10000 ms or a name given twice is
-// dropped, not the search: one region's odd name never stops every page's searches (RV-868)
+// dropped, not the search: one region's odd name never stops every page's searches (RV-868). (The 16 count each key
+// sent, dropped ones too: the page sends none it would drop, RV-898)
 func (b searchBody) request() (matchmaker.Request, bool) {
 	req := matchmaker.Request{Pings: map[string]int{}}
 	if len(b.Playlists) == 0 || len(b.Playlists) > 3 || len(b.Pings) > 16 || len(b.Regions) > 16 {
@@ -163,7 +164,7 @@ func (s *Server) pollSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
-	ss, ok := s.session(w, r)
+	ss, ok := s.sessionOf(w, r, false) // (never rotated by a poll: RV-889)
 	if !ok {
 		return
 	}
@@ -180,9 +181,15 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request, id, account string
 	writeJSON(w, http.StatusOK, stateJSON(id, state, s.Now()))
 }
 
-// cancelSearch: DELETE /api/search/{id}, Cancel Search
+// cancelSearch: DELETE /api/search/{id}, Cancel Search, of the session's own account's search (as a poll's, RV-871,
+// RV-896; read with no rotation, as a poll's: the delete often goes as its page does, its answer never read, RV-889);
+// 204 whether or not there was one
 func (s *Server) cancelSearch(w http.ResponseWriter, r *http.Request) {
-	s.Matchmaker.Cancel(r.PathValue("id"))
+	ss, ok := s.sessionOf(w, r, false)
+	if !ok {
+		return
+	}
+	s.Matchmaker.Cancel(r.PathValue("id"), ss.AccountID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -138,6 +138,15 @@ describe("protocol", () => {
     expect(quantizeAxis(-0.001)).toBe(0);
   });
 
+  it("reads a Pong's server name; one from a server from before the name, none; a name past 64 bytes, an error (RV-887's K02-K04)", () => {
+    expect(decodeControl(Uint8Array.of(0x93))).toEqual({ type: "pong", server: "" });
+    const named = encodeControl({ type: "pong", server: "game-eu.example:4433" });
+    expect(decodeControl(named.subarray(2))).toEqual({ type: "pong", server: "game-eu.example:4433" });
+    expect(() => decodeControl(Uint8Array.of(0x93, 65, ...new Uint8Array(65)))).toThrow();
+    // (a name past the cap sent empty)
+    expect(decodeControl(encodeControl({ type: "pong", server: "h".repeat(65) }).subarray(2))).toEqual({ type: "pong", server: "" });
+  });
+
   it("rejects malformed messages", () => {
     expect(() => decodeDatagram(new Uint8Array([]))).toThrow(DecodeError);
     expect(() => decodeDatagram(new Uint8Array([0x01, 1, 2]))).toThrow(DecodeError);

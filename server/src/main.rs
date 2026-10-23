@@ -612,8 +612,6 @@ mod tests {
         parse_args(args.iter().map(|a| (*a).to_string()), |_| None)
     }
 
-    /// This server's name for the matchmaker: PUBLIC_HOST and its port (PUBLIC_PORT, else --port; 127.0.0.1 for a
-    /// development server); a development matchmaker's URL (--api-url) loopback http, with --dev alone
     /// RV-868: a queue server whose name the matchmaker wouldn't take refuses to start
     #[test]
     fn a_queue_server_with_a_name_the_matchmaker_wont_take_refuses_to_start() {
@@ -629,6 +627,8 @@ mod tests {
         }
     }
 
+    /// This server's name for the matchmaker: PUBLIC_HOST and its port (PUBLIC_PORT, else --port; 127.0.0.1 for a
+    /// development server); a development matchmaker's URL (--api-url) loopback http, with --dev alone
     #[test]
     fn the_servers_name_and_a_development_matchmakers_url() {
         let env = |name: &str| match name {

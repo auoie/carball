@@ -1,6 +1,6 @@
 // The regions a search goes to (notes/matchmaking.md, Regions), with made-up regions and pings
 import { describe, expect, it } from "vitest";
-import { PINGS_KEPT_MS, chooseRegions, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./regions";
+import { PINGS_KEPT_MS, chooseRegions, searchPlan, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./regions";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -107,5 +107,20 @@ describe("the regions searched", () => {
     ).toEqual({ playlists: [1], pings: { "game-eu.example:4433": 31 }, regions: ["game-eu.example:4433"] });
     // (a page of one region: that one, ticked or not)
     expect(searchRequest([{ id: "default", server: "localhost:4433" }], [], new Map([["default", 5]]), [2]).regions).toEqual(["localhost:4433"]);
+  });
+
+  it("plans a search from its own pings: an automatic pick from them alone, never a kept ping's; the player's ticks kept (RV-879)", () => {
+    const listed = [
+      { id: "a", server: "a.example:4433" },
+      { id: "c", server: "c.example:4433" },
+    ];
+    // (C the kept automatic pick, its kept ping 0 ms, silent now; A answered: A searched)
+    const measured = new Map<string, number | null>([["a", 40]]);
+    const plan = searchPlan(listed, { ids: ["c"], manual: false }, ["c"], measured, [1]);
+    expect(plan).toEqual({ chosen: ["a"], automatic: true, request: { playlists: [1], pings: { "a.example:4433": 40 }, regions: ["a.example:4433"] } });
+    // (the player's ticks kept, whatever answered)
+    expect(searchPlan(listed, { ids: ["c"], manual: true }, ["c"], measured, [1])).toMatchObject({ chosen: ["c"], automatic: false });
+    // (one region: that one, no pick)
+    expect(searchPlan([{ id: "a", server: "a.example:4433" }], null, [], measured, [2]).automatic).toBe(false);
   });
 });

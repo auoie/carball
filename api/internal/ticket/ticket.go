@@ -20,14 +20,6 @@
 //	server length (1) | server (its address, host:port) | playlist (1, the team size) | seat (1) | roster (1, its seats)
 //
 // Search and rejoin tickets stay version 3 (the game servers from before read them).
-//
-// A match ticket (version 4, purpose 2: a seat; notes/matchmaking.md, the central matchmaker) is the matchmaker's for
-// one seat of one match at one game server, SeatLifetime long, taken once (RV-850): version 3's fields, its match the
-// matchmaker's id, then
-//
-//	server length (1) | server (its address, host:port) | playlist (1, the team size) | seat (1) | roster (1, its seats)
-//
-// Search and rejoin tickets stay version 3 (the game servers from before read them).
 package ticket
 
 import (

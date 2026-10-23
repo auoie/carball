@@ -130,12 +130,19 @@ played, and reported. There's one server per region.
   - `GET /api/search/{id}?after=N` answers at a change or after 25 s, under Cloudflare's 100 s limit. The answer is
     one of: `searching`; `found` (with the match id, server, ticket and playlist); `ended` (replaced by a newer search
     of the account, a quitter ban, a no-show cooldown).
-  - `DELETE` is Cancel Search.
+  - `DELETE` is Cancel Search, of the session's own account's search (RV-896).
+- A search is matched only once its page has polled it: a start whose answer never reached its page (which then can't
+  cancel it) is never matched, and goes 10 s on (RV-892).
 - Each poll is sent when the last one returns, not on a timer (a hidden tab's timers are throttled).
 - A search with no poll open and none in the last 10 s is dropped. A poll needs the searcher's own session (RV-871),
-  so a search whose session ended (signed out, banned, deleted) goes within those 10 s (RV-872).
+  so a search whose session ended (signed out, banned, deleted) goes 10 s after its last poll returns: up to about
+  35 s, a 25 s poll's wait and the 10 s (RV-872, RV-897).
 - A page closed or reloaded while it searches sends the `DELETE` as it goes (RV-866); Cancel Search during the start
   lets the start finish and deletes what it returns (RV-867).
+- Each start, a restart's after a `404` too, measures the pings again, and the automatic region pick comes from those
+  pings alone, never one kept from before (RV-879, RV-880). A start answered 502/503/504 (the API restarting) is tried
+  again with the polls' pauses (RV-881). A poll or a `DELETE` never renews the session's cookie (RV-889). A server whose
+  Pong names it outside the pattern counts as unanswered there (RV-893).
 - A server name the API can't take (not host:port, too long) or given twice is dropped from the request, by the page
   and by the API, never failing the search (RV-868); such a name stops a queue server's start.
 - A `404` (the API restarted) makes the page search again once; a `502`/`503` is retried with a backoff.
@@ -189,7 +196,7 @@ seat, noShows, at}`, carries:
 - `left` and `back` (a seat's player leaving the started match, or rejoining it);
 - `cancelled` (the seats that stalled it: unclaimed, or left before the start);
 - `over` (ended with no result);
-- `restarted` (this server's earlier matches are gone; `at` is never taken as later than now).
+- `restarted` (this server's earlier matches are gone, whatever its `at`: RV-873's clamp removed, RV-901).
 
 Every event names its server. With one game server token shared by all, that name is the server's own word: it stops
 accidents and cross-wired settings, not a leaked token, and a leaked token can now send events about matches whose ids

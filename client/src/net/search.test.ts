@@ -52,6 +52,15 @@ describe("the pings and the browser's key", () => {
     vi.stubGlobal("WebTransport", fakeTransport([], unanswered));
     expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBeNull();
     expect(unanswered.sessions.length).toBe(1);
+    // (the first message read alone: a Pong followed by more bytes still answers, RV-887's K11)
+    vi.stubGlobal(
+      "WebTransport",
+      fakeTransport([
+        { type: "pong", server: "a.example:4433" },
+        { type: "refused", reason: 1 },
+      ]),
+    );
+    expect((await pingServer({ url: "https://a.example:4433/play", certHash: null }, 1))?.server).toBe("a.example:4433");
     // (anything but a Pong: a server of another protocol version refusing the hello is unreached, RV-864)
     vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: 1 }]));
     expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBeNull();

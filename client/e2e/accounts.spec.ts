@@ -325,3 +325,47 @@ test("the ban line under Find Match counts down, and goes when the ban's over (R
   await short.close();
   expect(errors).toEqual([]);
 });
+
+test("a deployment's page going while it searches deletes its search, with the write's header and the session's cookie (RV-866, RV-894)", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(context);
+  await context.addCookies([{ name: "cb_made_up", value: "session", url: "http://localhost:4173" }]);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await fakeDeployment(page, { name: "Ziggy", writes: [] });
+  // (the search's calls, over the fake's (routes tried newest first): the start answered, its poll held, the delete seen)
+  const deletes: { guarded: boolean; cookie: string }[] = [];
+  let started = false;
+  await page.route("**/api/search**", async (route) => {
+    const r = route.request();
+    const headers = await r.allHeaders();
+    if (r.method() === "POST") {
+      started = true;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ search: "ab".repeat(16), version: 1, state: "searching" }) });
+    }
+    if (r.method() === "DELETE") {
+      deletes.push({ guarded: headers["x-carball"] === "1", cookie: headers.cookie ?? "" });
+      return route.fulfill({ status: 204 });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, state: "searching" }) }).catch(() => undefined);
+  });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const menu = page.locator("#main-menu");
+  await expect(menu.locator(".main-menu-account")).toHaveText("Ziggy");
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  await menu.getByRole("button", { name: /^find match$/i }).click();
+  await expect.poll(() => started, { timeout: 15_000 }).toBe(true);
+  await expect(page.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  // (the page's pagehide as a reload or a close fires it: a real unload's keepalive delete goes, but Playwright doesn't
+  // see a request of a page that's gone; the reload itself is e2e/queueEdges.spec.ts's, at a development matchmaker)
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+  await expect.poll(() => deletes.length, { timeout: 10_000 }).toBe(1);
+  expect(deletes[0]).toEqual({ guarded: true, cookie: "cb_made_up=session" });
+  expect(errors).toEqual([]);
+  await context.close();
+});

@@ -170,12 +170,12 @@ describe("a match session's hello", () => {
     vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
     vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     vi.stubGlobal("sessionStorage", memory()); // (the welcome's key kept for the next join)
-    const asked: (bigint | undefined)[] = [];
+    const asked: bigint[] = [];
     const address = {
       url: "https://game.example:4433/play",
       certHash: null,
-      ticket: (rejoin?: bigint) => {
-        asked.push(rejoin);
+      ticket: (match: bigint) => {
+        asked.push(match);
         return Promise.resolve(`AbC${String(asked.length)}`);
       },
     };
@@ -190,7 +190,7 @@ describe("a match session's hello", () => {
       ["rejoin", "AbC2", 0n],
       ["join", "", 5n],
     ]);
-    expect(asked).toEqual([undefined, 3n]); // (the claim's a search's ticket, the rejoin's for its match)
+    expect(asked).toEqual([9n, 3n]); // (each asked for its match: a claim's the match ticket, a rejoin's fetched for it)
   });
 });
 

@@ -132,9 +132,11 @@ function shown(el: HTMLElement): boolean {
 }
 
 /** A control that holds a value (a row of its own; left and right change it): our slider, list cycler or checkbox
- *  (src/ui/controls.ts), a text field */
+ *  (src/ui/controls.ts), a text field. A box in a row of boxes (`data-pad-boxes`: the Play page's playlists) isn't: left
+ *  and right move along its row, A ticks it (RV-883) */
 function isValue(el: Element): boolean {
   const role = el.getAttribute("role");
+  if (role === "checkbox" && el.closest("[data-pad-boxes]") !== null) return false;
   return role === "slider" || role === "spinbutton" || role === "checkbox" || (el instanceof HTMLInputElement && el.type === "text");
 }
 
@@ -476,7 +478,7 @@ export class PadMenuNav {
       if (stepControl(current, role === "slider" ? by * step : by)) this.#actions.sound?.(role === "slider" ? "move" : "select");
       return;
     }
-    if (role === "checkbox") return;
+    if (role === "checkbox" && isValue(current)) return;
     // Along a row of buttons: a choosing group's choice taken as it goes, else the next one; stopping at either end, as
     // the game's (RV-477)
     if (row.length > 1) {

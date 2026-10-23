@@ -253,3 +253,25 @@ test("online with a pad: Leave Match's question opens on NO, so a second A keeps
   await expect(page).toHaveURL(/server=127\.0\.0\.1:14444/);
   expect(errors).toEqual([]);
 });
+
+test("the Play page's playlists with a pad: one row, left and right along it, A ticks a box (RV-883)", async ({ page, context }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await fakeGamepad(context);
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const focused = (): Promise<string | null> => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.playlist ?? null);
+  // (Play, then down to the playlists' row)
+  await tap(page, [A]);
+  for (let i = 0; i < 8 && (await focused()) === null; i++) await tap(page, [DOWN]);
+  expect(await focused()).toBe("1");
+  await tap(page, [RIGHT]);
+  expect(await focused()).toBe("2");
+  const twos = page.locator('.main-menu-playlist[data-playlist="2"]');
+  const before = await twos.getAttribute("aria-checked");
+  await tap(page, [A]);
+  await expect(twos).toHaveAttribute("aria-checked", before === "true" ? "false" : "true");
+  await tap(page, [RIGHT]);
+  expect(await focused()).toBe("3");
+  expect(errors).toEqual([]);
+});

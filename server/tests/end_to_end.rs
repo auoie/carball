@@ -375,6 +375,11 @@ fn ticketed_hello(intent: u8, playlist: u8, token: u64, ticket: String) -> Vec<u
 /// A queue server (the matchmaker's matches) with the development key's tickets, its name `localhost:PORT`; its port
 /// and certificate hash, its tickets (for the tests' match tickets), and the short idle timeout's server when `quick`
 async fn ticketed_server(quick: bool) -> (u16, [u8; 32], Arc<Tickets>) {
+    ticketed_server_limited(quick, open_limits()).await
+}
+
+/// `ticketed_server` with these limits (its tickets and name added)
+async fn ticketed_server_limited(quick: bool, limits: NetLimits) -> (u16, [u8; 32], Arc<Tickets>) {
     engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = if quick {
@@ -403,8 +408,7 @@ async fn ticketed_server(quick: bool) -> (u16, [u8; 32], Arc<Tickets>) {
         game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
     });
     let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
-    let limits =
-        NetLimits { tickets: Some(tickets.clone()), server_name: Some(format!("localhost:{port}")), ..open_limits() };
+    let limits = NetLimits { tickets: Some(tickets.clone()), server_name: Some(format!("localhost:{port}")), ..limits };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
     (port, cert_hash, tickets)
 }
@@ -441,6 +445,21 @@ async fn a_ping_is_answered_and_closed_at_once_and_a_search_or_a_decline_is_refu
         let (reply, ..) = first_reply(port, cert_hash, queue_hello(intent, 1, 0)).await;
         assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_MODE }, "intent {intent}");
     }
+}
+
+/// A ping's start given back by its session (RV-870): more pings than the address's starts a minute, then a claim still
+/// admitted (refused for its ticket, not turned away); the pings' own budget past that (RV-900)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pings_session_gives_its_start_back_within_the_pings_budget() {
+    let limits = NetLimits { per_address_per_minute: 3, pings_per_address_per_minute: 6, ..open_limits() };
+    let (port, cert_hash, _tickets) = ticketed_server_limited(false, limits).await;
+    for i in 0..6 {
+        let (pong, connection, _recv) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
+        assert!(matches!(pong, Control::Pong { .. }), "ping {i}: {pong:?}");
+        let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+    }
+    let (claim, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
+    assert_eq!(claim, Control::Refused { reason: protocol::REFUSED_TICKET }, "a claim after the pings, heard");
 }
 
 /// Match tickets (notes/matchmaking.md, the central matchmaker; RV-850): a claim needs one, for this server, used once;

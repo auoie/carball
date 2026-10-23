@@ -19,6 +19,13 @@ import (
 // None: answered here (401 signed out, the cookie cleared if it opened none; 503 when the database doesn't answer, never
 // taken for signed out: AP-22)
 func (s *Server) session(w http.ResponseWriter, r *http.Request) (store.Session, bool) {
+	return s.sessionOf(w, r, true)
+}
+
+// sessionOf: the request's session, rotated when due if `rotate` (not for a search's long poll: its answer, and the new
+// cookie with it, may never reach the page, a poll aborted by Cancel Search or the page going, and the old token would
+// then lapse with its grace: RV-889)
+func (s *Server) sessionOf(w http.ResponseWriter, r *http.Request, rotate bool) (store.Session, bool) {
 	tok := cookie(r, sessionCookie)
 	if tok == "" {
 		signedOut(w)
@@ -36,7 +43,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) (store.Session,
 		signedOut(w)
 		return store.Session{}, false
 	}
-	if !ss.Previous && now.Sub(ss.RotatedAt) >= RotateEvery {
+	if rotate && !ss.Previous && now.Sub(ss.RotatedAt) >= RotateEvery {
 		next := token()
 		rotated, err := s.Store.RotateSession(r.Context(), ss.TokenHash, digest(next), now, now.Add(RotateGrace))
 		if err != nil {

@@ -175,7 +175,7 @@ asks (`/dev-ticket`), with no sign-in.
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once; the matches in progress end with it.
 - **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; 512 sessions at once; per
-  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a region's ping gives its start back, RV-870) (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
+  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a region's ping gives its start back, RV-870, up to 120 a minute, RV-900) (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
   hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
   flooding either is closed); QUIC: 4 streams each way, small receive windows.
 - **No-shows:** a match waits 10 s from its first claim for the rest (about the user's 12 s from the match found, after
@@ -271,10 +271,13 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   403 `queue-banned` (until when) or `in-match`, 429 `cooldown` (seconds) or `busy`, 503 `no-server` (no ticked region
   answered the page's ping; a server name that isn't host:port, one given twice or a ping out of range is dropped, not
   the search: RV-868); else `{search, version, state}`. `GET /api/search/{id}?after=N` (the searcher's own session:
-  401 without, 404 for another account's, RV-871) answers at its next change or after 25 s (a newer poll answers the
-  one before at once): `searching`, `found` (the match's id, its server, the player's match ticket, the playlist), or
-  `ended` (`replaced`, `queue-banned`, `cooldown`); 404 for one it doesn't know (a restart: the page searches again
-  once). `DELETE /api/search/{id}` is Cancel Search (the page sends it too as it closes, RV-866). The access log names
+  401 without, 404 for another account's, RV-871; read with no rotation, so a poll aborted before it answers never
+  loses a renewed cookie, RV-889; each poll reads the database, so a database blip answers 503, which the page retries
+  for about 23 s, RV-890) answers at its next change or after 25 s (a newer poll answers the one before at once):
+  `searching`, `found` (the match's id, its server, the player's match ticket, the playlist), or `ended` (`replaced`,
+  `queue-banned`, `cooldown`); 404 for one it doesn't know (a restart: the page searches again once). A search is
+  matched only after its first poll (RV-892). `DELETE /api/search/{id}` is Cancel Search (the page sends it too as it
+  closes, RV-866; the searcher's own session, read with no rotation: RV-896, RV-889). The access log names
   each request's route pattern, never its path (a search's id: RV-871). A match ticket (format 4)
   is one seat of one match at one server, 30 s, taken once there (RV-850).
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,

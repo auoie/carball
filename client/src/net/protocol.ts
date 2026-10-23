@@ -136,7 +136,7 @@ export type ControlMessage =
       readonly intent: Intent;
       /** A search's playlist: its team size (1, 2, 3); 0 otherwise */
       readonly playlist: number;
-      /** A rejoin's match id; 0 otherwise (a claim's match ticket says its match) */
+      /** A rejoin's match id; a claim's too (unused: its match ticket names the match); 0 otherwise */
       readonly token: bigint;
       /** A search's and a claim's signed ticket: who the player is (notes/accounts.md §3: the accounts service's, or a
        *  development server's own); empty for a join and the local host */
@@ -206,9 +206,8 @@ export type ControlMessage =
    *  was added within version 28); the session ends (notes/matchmaking.md, Regions) */
   | { readonly type: "pong"; readonly server: string };
 
-/** Hello's intents (the wire's byte is the index; "search" and "decline" no longer served: the matchmaker's, notes/
- *  matchmaking.md): "ping" a region's (no ticket), "decline" the unclaimed slot its token
- *  names for a match found in another region at the same moment (notes/matchmaking.md, Regions) */
+/** Hello's intents (the wire's byte is the index): "ping" a region's (no ticket); "search" and "decline" no longer served
+ *  (Refused 3: the search is the accounts service's matchmaker's, notes/matchmaking.md) */
 const INTENTS = ["join", "search", "claim", "rejoin", "ping", "decline"] as const;
 export type Intent = (typeof INTENTS)[number];
 

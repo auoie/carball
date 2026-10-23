@@ -158,6 +158,9 @@ pub struct NetLimits {
     pub max_sessions: usize,
     pub per_address: usize,
     pub per_address_per_minute: usize,
+    /// The starts a minute an address's region pings may give back (RV-870); past them a ping counts as any start, so
+    /// one address can't open handshakes without end (RV-900)
+    pub pings_per_address_per_minute: usize,
     pub allowed_origins: Option<Vec<String>>,
     /// The handshake, from the first packet through the hello, must be done this soon
     pub handshake: Duration,
@@ -177,6 +180,7 @@ impl Default for NetLimits {
             max_sessions: 512,
             per_address: 8,
             per_address_per_minute: 30,
+            pings_per_address_per_minute: 120,
             allowed_origins: None,
             handshake: Duration::from_secs(10),
             quic_handshake: Duration::from_secs(4),
@@ -271,15 +275,22 @@ pub fn admit(
 pub struct Admission {
     active: HashMap<IpAddr, usize>,
     starts: HashMap<IpAddr, VecDeque<Instant>>,
+    /// The starts given back for pings, the last minute's
+    pings: HashMap<IpAddr, VecDeque<Instant>>,
+}
+
+/// Drops the times a minute or more before `now`
+fn last_minute(times: &mut VecDeque<Instant>, now: Instant) {
+    while times.front().is_some_and(|&t| now.saturating_duration_since(t) >= Duration::from_secs(60)) {
+        times.pop_front();
+    }
 }
 
 impl Admission {
     /// A new session from `address`, if its limits allow it (counted then: `release` when it ends)
     pub fn admit(&mut self, address: IpAddr, now: Instant, limits: &NetLimits) -> bool {
         let starts = self.starts.entry(address).or_default();
-        while starts.front().is_some_and(|&t| now.saturating_duration_since(t) >= Duration::from_secs(60)) {
-            starts.pop_front();
-        }
+        last_minute(starts, now);
         let active = self.active.get(&address).copied().unwrap_or(0);
         if active >= limits.per_address || starts.len() >= limits.per_address_per_minute {
             return false;
@@ -290,8 +301,15 @@ impl Admission {
     }
 
     /// A session from `address` that turned out a region's ping: its start not counted (each search pings every region,
-    /// so players behind one NAT would otherwise run its starts out and a claim be refused, a no-show: RV-870)
-    pub fn refund(&mut self, address: IpAddr) {
+    /// so players behind one NAT would otherwise run its starts out and a claim be refused, a no-show: RV-870), up to
+    /// the pings' own budget a minute (RV-900: past it, counted as any start)
+    pub fn refund(&mut self, address: IpAddr, now: Instant, limits: &NetLimits) {
+        let pings = self.pings.entry(address).or_default();
+        last_minute(pings, now);
+        if pings.len() >= limits.pings_per_address_per_minute {
+            return;
+        }
+        pings.push_back(now);
         if let Some(starts) = self.starts.get_mut(&address) {
             starts.pop_back();
         }
@@ -304,6 +322,9 @@ impl Admission {
                 self.active.remove(&address);
                 if self.starts.get(&address).is_some_and(VecDeque::is_empty) {
                     self.starts.remove(&address);
+                }
+                if self.pings.get(&address).is_some_and(VecDeque::is_empty) {
+                    self.pings.remove(&address);
                 }
             }
         }
@@ -337,7 +358,7 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         let limits = limits.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let refund = || admission.lock().unwrap().refund(address);
+            let refund = || admission.lock().unwrap().refund(address, Instant::now(), &limits);
             let lost = match session(incoming, id, &to_game, &limits, &refund).await {
                 Ok(lost) => lost,
                 Err(e) => {
@@ -850,19 +871,30 @@ mod tests {
         assert!(admission.active.is_empty());
     }
 
-    /// RV-870: a ping's start given back: an address's pings never run out its starts, a claim after 30 still admitted
+    /// RV-870: a ping's start given back: an address's pings never run out its starts, a claim after 30 still admitted;
+    /// RV-900: up to the pings' budget a minute, then counted as any start (refused once those run out), a minute on
+    /// given back again
     #[test]
-    fn a_pings_start_is_given_back() {
-        let limits = NetLimits::default();
+    fn a_pings_start_is_given_back_within_its_budget() {
+        let limits = NetLimits { per_address_per_minute: 3, pings_per_address_per_minute: 5, ..NetLimits::default() };
         let a: IpAddr = [10, 0, 0, 1].into();
         let t0 = Instant::now();
         let mut admission = Admission::default();
-        for _ in 0..limits.per_address_per_minute + 10 {
-            assert!(admission.admit(a, t0, &limits), "a ping admitted");
-            admission.refund(a);
-            admission.release(a);
-        }
-        assert!(admission.admit(a, t0, &limits), "a claim after the pings");
+        let ping = |admission: &mut Admission, at: Instant| -> bool {
+            let admitted = admission.admit(a, at, &limits);
+            if admitted {
+                admission.refund(a, at, &limits);
+                admission.release(a);
+            }
+            admitted
+        };
+        assert_eq!((0..5).filter(|_| ping(&mut admission, t0)).count(), 5, "the budget's pings, given back");
+        assert!(admission.admit(a, t0, &limits), "a claim after them");
+        admission.release(a);
+        assert_eq!((0..10).filter(|_| ping(&mut admission, t0)).count(), 2, "past the budget: as any start");
+        let t1 = t0 + Duration::from_secs(61);
+        assert_eq!((0..5).filter(|_| ping(&mut admission, t1)).count(), 5, "a minute on");
+        assert!(admission.admit(a, t1, &limits), "and a claim");
     }
 
     #[test]

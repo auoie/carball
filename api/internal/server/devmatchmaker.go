@@ -27,7 +27,7 @@ func (s *Server) DevHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/search", s.devStartSearch)
 	mux.HandleFunc("GET /api/search/{id}", s.devPollSearch)
-	mux.HandleFunc("DELETE /api/search/{id}", s.cancelSearch)
+	mux.HandleFunc("DELETE /api/search/{id}", s.devCancelSearch)
 	mux.HandleFunc("POST /api/fleet/events", s.fleetEvent)
 	// (a development server's outbox sends its results too: a match's end, its accounts free, no ratings; a quitter
 	// banned DevBan (the ladder's first step), a refill lifting it)
@@ -161,6 +161,12 @@ func (s *Server) devPollSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.poll(w, r, id, "", after)
+}
+
+// devCancelSearch: a development page's Cancel Search (no sessions: any search's, by its id)
+func (s *Server) devCancelSearch(w http.ResponseWriter, r *http.Request) {
+	s.Matchmaker.Cancel(r.PathValue("id"), "")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // devResult: a development match's result, taken as its end alone

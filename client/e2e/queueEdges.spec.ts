@@ -317,3 +317,24 @@ test("a page closed while it searches: its search cancelled at once, another pla
   await a.context().close();
   await b.context().close();
 });
+
+test("a page reloaded while it searches: its search cancelled as it goes, another player's search not matched with it (RV-894)", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  const a = await menuPage(browser, errors);
+  await findMatch(a);
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  await a.reload();
+  await expect(a.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const b = await menuPage(browser, errors);
+  await findMatch(b);
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  // (a's search polled, so matchable for 10 s had its delete not come: still searching 4 s on, no match made with it)
+  await b.waitForTimeout(4000);
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Searching");
+  expect(b.url()).not.toMatch(/[?&]match(&|$)/);
+  await b.locator("#search-banner .search-cancel").click();
+  expect(errors).toEqual([]);
+  await a.context().close();
+  await b.context().close();
+});

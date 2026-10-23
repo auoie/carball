@@ -142,7 +142,7 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     searches[0]?.handlers.searching();
     searches[0]?.handlers.found(match(4n, 0));
     searches[0]?.handlers.failed("the connection to the server was lost");
-    searches[0]?.handlers.cooldown(100, false);
+    searches[0]?.handlers.cooldown(100);
     expect(mm.state?.status).toBe("joining");
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
     expect(joined).toEqual([{ token: 4n, playlists: [1], map: 0 }]);
@@ -192,7 +192,7 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     const { mm, searches, sounds } = harness();
     mm.frame(0);
     mm.start([2]);
-    searches[0]?.handlers.cooldown(112, false);
+    searches[0]?.handlers.cooldown(112);
     expect(mm.state?.status).toBe("failed");
     expect(mm.state?.lines).toEqual([{ text: OWN_SEARCH_TEXT.cooldown(112), kind: "warning" }]);
     expect(OWN_SEARCH_TEXT.cooldown(112)).toBe(
@@ -204,10 +204,6 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     mm.cancel();
     expect(mm.state).toBeNull();
     expect(sounds).toEqual(["start"]);
-    // The address's block (maybe a neighbour's no-show): words that blame no one (RV-385)
-    mm.start([2]);
-    searches[1]?.handlers.cooldown(75, true);
-    expect(mm.state?.lines).toEqual([{ text: "Searches from your network are paused after a recent no-show. You can search again in 1:15.", kind: "warning" }]);
   });
 
   it("a search back from a cancelled match: its clock goes on from the first search (RV-367; its place the matchmaker's)", () => {

@@ -30,7 +30,7 @@ export interface ServerAddress {
   readonly open?: () => WebTransport;
   /** A search's and a claim's ticket, who the player is (src/net/tickets.ts: the accounts service's, a development
    *  server's own), or a rejoin's of the match `rejoin`; none for the local host and a development server's open match */
-  readonly ticket?: (rejoin?: bigint) => Promise<string>;
+  readonly ticket?: (match: bigint) => Promise<string>;
 }
 
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */
@@ -208,7 +208,7 @@ export class Connection {
     // (a claim's and a rejoin's ticket: the seat's account, notes/accounts.md §3, and no key of this browser's beside it
     // (the server keys the seat by the account: RX29C); a join's none. Fetched before the session opens: a refused ticket
     // leaves no session behind, RX30C)
-    const ticket = match.intent !== "join" && address.ticket ? await address.ticket(match.intent === "rejoin" ? match.token : undefined) : "";
+    const ticket = match.intent !== "join" && address.ticket ? await address.ticket(match.token) : "";
     const key = ticket === "" ? storedKey() : 0n;
     const transport =
       address.open?.() ??

@@ -6,7 +6,6 @@
 // (`?matchmaker=host:port`: `carball-api matchmaker --dev`), naming its player by its key and name.
 import { type FoundMatch, type SearchHandlers } from "../game/matchmaking";
 import { REFUSED_IN_MATCH, REFUSED_QUEUE_BANNED } from "./protocol";
-import { refusalText } from "./connection";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { queueBanText } from "./tickets";
 
@@ -41,6 +40,10 @@ export const MATCHMAKER_TEXT = {
   noServer: "no ticked region answered: check your connection, or tick another region",
   busy: "too many searches: wait a minute and try again",
   lost: "the connection to the matchmaker was lost",
+  unreachable: "the matchmaker isn't reachable right now: try again in a moment",
+  /** Refused while the account plays a match (connected to it: one left isn't counted), so in another tab or window or
+   *  on another device; the next step said (RV-886: the game has no words for it, ours) */
+  inMatch: "you're playing a match in another tab or window: finish it there, then search again",
   restarted: "the matchmaker restarted: search again",
   noMatchmaker: "no matchmaker to search with (a development page: ?matchmaker=host:port)",
 } as const;
@@ -75,7 +78,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
 
   private constructor(
     private readonly endpoint: MatchmakerEndpoint,
-    private readonly request: SearchRequest,
+    private readonly request: SearchRequest | (() => Promise<SearchRequest>),
     private readonly handlers: SearchHandlers,
     private readonly notes: SearchNotes,
     private readonly http: typeof fetch,
@@ -85,7 +88,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
   /** Starts the search; its answers to `handlers` */
   static start(
     endpoint: MatchmakerEndpoint,
-    request: SearchRequest,
+    request: SearchRequest | (() => Promise<SearchRequest>),
     handlers: SearchHandlers,
     notes: SearchNotes = {},
     // (the window's own fetch, called as itself: as a method of this object it throws "Illegal invocation")
@@ -143,23 +146,33 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
     }
   }
 
-  /** The search started (its id kept, Searching said the first time); false if refused (said) or cancelled */
+  /** The search started (its id kept, Searching said the first time); false if refused (said) or cancelled. Its
+   *  request built for this start (a restart's measured again: RV-880); no answer or a 502/503/504 (the service
+   *  restarting) tried again with the polls' pauses, then said (RV-881) */
   async #start(): Promise<boolean> {
     if (this.#over) return false;
-    const body = { playlists: this.request.playlists, pings: this.request.pings, regions: this.request.regions, ...this.endpoint.dev };
-    let answer: Answer;
-    try {
-      answer = await this.#call("POST", "/api/search", body);
-    } catch {
-      if (!this.#isOver())
+    const request = typeof this.request === "function" ? await this.request() : this.request;
+    if (this.#isOver()) return false;
+    const body = { playlists: request.playlists, pings: request.pings, regions: request.regions, ...this.endpoint.dev };
+    let answer: Answer = { status: 0, body: null };
+    for (let failures = 0; ; failures++) {
+      try {
+        answer = await this.#call("POST", "/api/search", body);
+      } catch {
+        answer = { status: 0, body: null };
+      }
+      if (this.#isOver()) {
+        this.#forget(answer);
+        return false;
+      }
+      if (![0, 502, 503, 504].includes(answer.status) || answer.body?.["error"] === "no-server") break;
+      if (failures >= POLL_RETRIES) {
         this.#end(() => {
-          this.handlers.failed(MATCHMAKER_TEXT.lost);
+          this.handlers.failed(MATCHMAKER_TEXT.unreachable);
         });
-      return false;
-    }
-    if (this.#isOver()) {
-      this.#forget(answer);
-      return false;
+        return false;
+      }
+      await this.pause(Math.min(1000 * 2 ** failures, POLL_PAUSE_MAX_MS));
     }
     const error = answer.body?.["error"];
     if (answer.status === 200 && typeof answer.body?.["search"] === "string") {
@@ -180,12 +193,12 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
     } else if (error === "in-match") {
       this.#end(() => {
         this.handlers.refused?.(REFUSED_IN_MATCH);
-        this.handlers.failed(refusalText(REFUSED_IN_MATCH));
+        this.handlers.failed(MATCHMAKER_TEXT.inMatch);
       });
     } else if (error === "cooldown") {
       const seconds = typeof answer.body?.["seconds"] === "number" ? answer.body["seconds"] : 120;
       this.#end(() => {
-        this.handlers.cooldown(seconds, false);
+        this.handlers.cooldown(seconds);
       });
     } else if (error === "no-server") {
       this.#end(() => {
@@ -284,7 +297,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
     } else if (reason === "cooldown") {
       const seconds = typeof body["seconds"] === "number" ? body["seconds"] : 120;
       this.#end(() => {
-        this.handlers.cooldown(seconds, false);
+        this.handlers.cooldown(seconds);
       });
     } else
       this.#end(() => {

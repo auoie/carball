@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RefusedError } from "./connection";
 import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_QUEUE_BANNED, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
-import { QueueBannedError, SignedOutError } from "./tickets";
+import { QueueBannedError, RejoinGoneError, SignedOutError } from "./tickets";
 import {
   type GameServerConfig,
   CLAIM_RETRY_MS,
   CLAIM_TRIES,
   SERVERS_UNREACHABLE,
   claimAddress,
+  playlistsOf,
+  serverOfUrl,
   claimNotice,
   configServers,
   deployedGameServer,
@@ -129,6 +131,8 @@ describe("the pages' handoffs", () => {
     expect(claimNotice(refused(REFUSED_TOKEN), rejoin, "gone")).toEqual({ modal: "lost" });
     // (a rejoin's seat live in another tab: said so; a claim's Refused 5 is no such thing)
     expect(claimNotice(refused(REFUSED_IN_MATCH), rejoin, "gone")).toEqual({ modal: "elsewhere" });
+    // (a rejoin's ticket the matchmaker refused: said as such, RV-882)
+    expect(claimNotice(new RejoinGoneError(), rejoin, "gone")).toEqual({ modal: "rejoinGone" });
     // (refused on version, a claim or a rejoin: reload, as a search is told, RV-865)
     expect(claimNotice(refused(REFUSED_VERSION), claim, "gone")).toEqual({ modal: "reload" });
     expect(claimNotice(refused(REFUSED_VERSION), rejoin, "gone")).toEqual({ modal: "reload" });
@@ -183,7 +187,7 @@ describe("the pages' handoffs", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }))
       .mockResolvedValue(new Response(JSON.stringify({ ticket: "VGlja2V0" })));
     vi.stubGlobal("fetch", post);
-    expect(await address.ticket?.()).toBe("VGlja2V0");
+    expect(await address.ticket?.(5n)).toBe("VGlja2V0");
     expect(post).toHaveBeenCalledTimes(2);
     // (a ban is an answer: asked once)
     post.mockReset();
@@ -238,35 +242,13 @@ describe("the pages' handoffs", () => {
     expect(rankedSeat(Date.now(), storage)).toBeNull();
   });
 
-  it("puts the seat back when the server refused the search before taking it, not after (RX32)", async () => {
+  it("gives the seat up once the matchmaker accepts the search (RV-846)", async () => {
     const storage = memory();
     const seat = { matchId: 5n, teamSize: 2, joinedAt: Date.now() - 60_000, account: "acct-1" };
-    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
-    for (const [reason, back] of [
-      [REFUSED_QUEUE_BANNED, true], // (a reported quitter: refused before; its seat still to rejoin)
-      [REFUSED_IN_MATCH, true],
-      [REFUSED_TICKET, true],
-      [REFUSED_MODE, false], // (refused after the server gave the seat up)
-    ] as const) {
-      storeRankedSeat(seat, storage);
-      const search = seatSearch("acct-1", storage, undefined);
-      search.sent();
-      await settle();
-      expect(rankedSeat(Date.now(), storage)).toBeNull();
-      search.refused(reason);
-      await settle();
-      expect(rankedSeat(Date.now(), storage)?.joinedAt ?? null, String(reason)).toBe(back ? seat.joinedAt : null);
-      clearRankedSeat(storage);
-    }
-    // (a newer record stored meanwhile, a join's: not overwritten by the put-back)
     storeRankedSeat(seat, storage);
-    const search = seatSearch("acct-1", storage, undefined);
-    search.sent();
-    await settle();
-    storeRankedSeat({ ...seat, matchId: 9n, joinedAt: Date.now() }, storage);
-    search.refused(REFUSED_QUEUE_BANNED);
-    await settle();
-    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(9n);
+    seatSearch("acct-1", storage, undefined).sent();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(rankedSeat(Date.now(), storage)).toBeNull();
   });
 
   it("reads the regions' servers from config.json: good entries in order, else the lone gameServer (notes/matchmaking.md, Regions)", () => {
@@ -308,6 +290,13 @@ describe("the pages' handoffs", () => {
     expect((await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed, "gone")).url).toBe(us.url);
     expect((await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed)).url).toBe(us.url);
     expect((await claimAddress(new URLSearchParams(""), "carball.zolt.top", deployed, () => Promise.resolve(), "eu")).url).toBe(eu.url);
+    // (a claim's ticket its match ticket, not one fetched: RV-887's P01)
+    const claiming = await claimAddress(new URLSearchParams(""), "carball.zolt.top", deployed, () => Promise.resolve(), "eu", "bWF0Y2g");
+    expect(await claiming.ticket?.(5n)).toBe("bWF0Y2g");
+    // (each region's server as the matchmaker names it, 443 when its URL has no port: P02)
+    expect(regions.map((r) => r.server)).toEqual(["game.example:4433", "game-eu.example:4433"]);
+    expect(serverOfUrl("https://Game.Example/play")).toBe("game.example:443");
+    expect(serverOfUrl("not a url")).toBe("");
     // (development servers: ?queue=a,b, each named by itself; one alone, no name)
     const info = vi.fn((url: string) =>
       Promise.resolve(new Response(JSON.stringify({ port: url.includes("14446") ? 14445 : 14447, certHash: "ab".repeat(32) }))),
@@ -433,14 +422,11 @@ describe("the pages' handoffs", () => {
       certHash: null,
       ticket: expect.any(Function) as unknown,
     });
-    // (its tickets the accounts service's: a search's, and a rejoin's for that match, which a ban from it doesn't stop:
-    // RV-702, RX31)
+    // (its tickets the accounts service's: a rejoin's for that match, which a ban from it doesn't stop: RV-702, RX31)
     const post = vi.fn<typeof fetch>(() => Promise.resolve(new Response(JSON.stringify({ ticket: "UmVq" }))));
     vi.stubGlobal("fetch", post);
     expect(await deployedAddress.ticket?.(0xabcn)).toBe("UmVq");
     expect(String((post.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=0000000000000abc");
-    expect(await deployedAddress.ticket?.()).toBe("UmVq");
-    expect(String((post.mock.calls[1] as unknown[])[0])).toBe("/api/ticket");
     // ?queue= wins: the development server's info, its certificate by hash, config.json not even read (RX13's C7)
     const info = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ port: 14439, certHash: "ab".repeat(32) }))));
     vi.stubGlobal("fetch", info);
@@ -452,13 +438,44 @@ describe("the pages' handoffs", () => {
     expect(notRead).not.toHaveBeenCalled();
     // (its tickets the development server's own: from its info server, for this browser's key and the settings' name)
     info.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ticket: "AbC-_9" }))));
-    expect(await address.ticket?.()).toBe("AbC-_9");
-    expect(info).toHaveBeenLastCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:14440\/dev-ticket\?name=[^&]*&id=[0-9a-f]{32}$/), {
-      cache: "no-store",
-    });
+    expect(await address.ticket?.(0xabcn)).toBe("AbC-_9");
+    expect(info).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^http:\/\/127\.0\.0\.1:14440\/dev-ticket\?name=[^&]*&id=[0-9a-f]{32}&rejoin=0000000000000abc$/),
+      {
+        cache: "no-store",
+      },
+    );
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("keeps a notice's playlists (1-3 team sizes, each once) and its reload and rejoin-refused modals (RV-887's P03, K09)", () => {
+    expect(playlistsOf([1, 3])).toEqual([1, 3]);
+    for (const bad of [[], [1, 1], [4], [1, 2, 3, 1], "1", null]) expect(playlistsOf(bad)).toBeNull();
+    const storage = memory();
+    for (const modal of ["reload", "rejoinGone"] as const) {
+      storeNotice({ modal }, storage);
+      expect(takeNotice(storage)).toEqual({ modal });
+    }
+  });
+
+  it("a rejoin's ticket the matchmaker refuses (409) is its answer, not tried again (RV-882)", async () => {
+    const post = vi.fn<typeof fetch>(() => Promise.resolve(new Response(JSON.stringify({ error: "in-match" }), { status: 409 })));
+    vi.stubGlobal("fetch", post);
+    const deployedConfig: GameServerConfig = {
+      kind: "deployed",
+      url: "https://game.example:4433/play",
+      servers: [{ id: "default", name: "", url: "https://game.example:4433/play" }],
+    };
+    const address = await claimAddress(
+      new URLSearchParams(""),
+      "carball.zolt.top",
+      () => Promise.resolve(deployedConfig),
+      () => Promise.resolve(),
+    );
+    await expect(address.ticket?.(5n)).rejects.toBeInstanceOf(RejoinGoneError);
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });
