@@ -39,6 +39,36 @@ const car = (over: Partial<CommandCar> = {}): CommandCar => ({
 const flight = (from: Vec3, v: Vec3, t: number): Vec3 => add(add(from, scale(v, t)), vec3(0, 0, -325 * t * t));
 
 describe("free play's ball commands (FP3)", () => {
+  it("the spec's numbers, pinned: the config's table and the ball's bounds radius (a change deliberate, RV-801)", () => {
+    expect(BALL_BOUNDS_RADIUS).toBe(103.22);
+    expect(FREEPLAY_COMMANDS).toEqual({
+      spinScale: 0.5,
+      inFrontDistance: 50,
+      onCarDistance: 10,
+      onCarForwardBase: 30,
+      onCarForwardFromTurn: -100,
+      onCarAccelerationEffect: 0.05,
+      onCarMaxRight: 350,
+      onCarSlowRight: 0.5,
+      onCarMinUp: 0.25,
+      airAlongVelocity: 40,
+      airForward: 25,
+      popUpSpeed: 750,
+      popUpMax: 6000,
+      launchSpeed: 2778,
+      maxVerticalRatio: 2,
+      passVelocityWeight: 0.9,
+      passVelocityZWeight: 0.5,
+      passGoalLead: 400,
+      passHeight: 100,
+      passDropoffRange: 3000,
+      passIterations: 5,
+      defendHalfWidth: 864.51,
+      defendHalfHeight: 280.51,
+      defendCentreZ: 320,
+    });
+  });
+
   it("Launch Ball: the upward speed held within 0..6000, then 750 more; the rest kept", () => {
     expect(poppedUp(vec3(10, -20, -500))).toEqual(vec3(10, -20, 750));
     expect(poppedUp(vec3(0, 0, 7000))).toEqual(vec3(0, 0, 6750));
@@ -101,6 +131,13 @@ describe("free play's ball commands (FP3)", () => {
     expect(pass.target.y).toBeLessThan(-400);
     const v = passVelocity(vec3(0, 2000, 93), driving);
     expect(Math.hypot(v.x, v.y)).toBeCloseTo(pass.speed, 6);
+    // (a moving car's exact target after the five iterations, worked out apart from this code; one iteration lands
+    // short, at (262, -1383): RV-801)
+    const moving = passTarget(vec3(300, 2000, 93), car({ pos: vec3(0, 0, 17), vel: vec3(400, -1500, 0) }));
+    expect(moving.speed).toBe(2778);
+    expect(moving.target.x).toBeCloseTo(587.3699516064954, 6);
+    expect(moving.target.y).toBeCloseTo(-2602.637318524358, 6);
+    expect(moving.target.z).toBeCloseTo(117, 9);
   });
 
   it("Take Possession: ahead of the hitbox by 50 past the ball's bounds radius, that radius over the surface", () => {
@@ -124,6 +161,11 @@ describe("free play's ball commands (FP3)", () => {
     expect(p.x).toBeLessThan(30 * (1 - 0.5));
     const onWall = car({ angVel: vec3(0, 0, 2.75), groundNormal: vec3(1, 0, 0) });
     expect(dot(sub(dribbleTarget(onWall), onWall.pos), onWall.rot.right)).toBe(0);
+    // (the wall's line: a ground normal's z under 0.9 a wall (a ramp at 0.85), at 0.9 or over the ground (RV-801))
+    const ramp = car({ angVel: vec3(0, 0, 2.75), groundNormal: vec3(0.5268, 0, 0.85) });
+    expect(dot(sub(dribbleTarget(ramp), ramp.pos), ramp.rot.right)).toBe(0);
+    const gentle = car({ angVel: vec3(0, 0, 2.75), groundNormal: vec3(0.42, 0, 0.9075) });
+    expect(dot(sub(dribbleTarget(gentle), gentle.pos), gentle.rot.right)).toBeGreaterThan(0);
     // (accelerating forward: further forward)
     const speeding = car({ vel: vec3(500, 0, 0), lastVel: vec3(480, 0, 0) });
     expect(dribbleTarget(speeding).x).toBeGreaterThan(dribbleTarget(car({ vel: vec3(500, 0, 0), lastVel: vec3(500, 0, 0) })).x);

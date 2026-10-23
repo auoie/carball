@@ -20,6 +20,7 @@ import {
   REJOIN_SECONDS,
   clearRankedSeat,
   clearRankedSeatOf,
+  leaveMatchSeat,
   rankedSeat,
   searchGaveUpSeat,
   seatSearch,
@@ -259,6 +260,25 @@ describe("the pages' handoffs", () => {
     clearRankedSeatOf(6n, storage);
     expect(rankedSeat(Date.now(), storage)?.matchId).toBe(5n);
     clearRankedSeatOf(5n, storage);
+    expect(rankedSeat(Date.now(), storage)).toBeNull();
+  });
+
+  it("leaving a match forgets its own saved seat, never another match's; kicked for idling or the connection lost, kept (RV-770, RV-800)", () => {
+    const storage = memory();
+    const seat = { matchId: 5n, teamSize: 2, joinedAt: Date.now(), account: null };
+    storeRankedSeat(seat, storage);
+    // (Exit, Play Again, the match over: another match's record kept)
+    leaveMatchSeat(6n, undefined, storage);
+    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(5n);
+    // (kicked for idling, the connection lost: this match's kept, its rejoin offered)
+    leaveMatchSeat(5n, "idle", storage);
+    leaveMatchSeat(5n, "lost", storage);
+    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(5n);
+    // (left on purpose, or with another notice: this match's forgotten)
+    leaveMatchSeat(5n, "concluded", storage);
+    expect(rankedSeat(Date.now(), storage)).toBeNull();
+    storeRankedSeat(seat, storage);
+    leaveMatchSeat(5n, undefined, storage);
     expect(rankedSeat(Date.now(), storage)).toBeNull();
   });
 

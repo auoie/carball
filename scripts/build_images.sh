@@ -44,20 +44,50 @@ else
 fi
 
 EM=${EMSCRIPTEN_ROOT:-/usr/lib/emscripten}
-# The two WebAssembly builds kept by their inputs' content (out/images/cache/<name>-<key>: the staged sources' files and
-# the tools' versions hashed), so an image built with the engine unchanged (an API-only update) reuses the last outputs
-# instead of starting from scratch; the sources still staged clean, and a key changes with any input
-CACHE="$R/out/images/cache"
+# The two WebAssembly builds kept by everything that makes them (out/images/cache/<commit|worktree>/<name>-<key>): the
+# staged sources' files, the build's own commands (its function's text), the environment the compilers read and the
+# tools' versions, hashed; so an image built with the engine unchanged (an API-only update) reuses the last outputs
+# instead of starting from scratch, the sources still staged clean. A commit's build never takes a working tree's entry;
+# an entry's files are checked against the hashes kept with them before they're used (a mismatch: put aside, built
+# again), and their hashes are printed, so an image's WebAssembly can be matched; one build at a time takes or fills the
+# cache (RV-794..797)
+CACHE="$R/out/images/cache/$([ $WORKTREE = 1 ] && echo worktree || echo commit)"
 mkdir -p "$CACHE"
-inputs_key() { # the staged files under each path, then the tools' versions
+
+build_engine() {
+	PATH="$EM:$PATH" emcmake cmake -S "$SRC/engine" -B "$SRC/engine/build-wasm" -DCMAKE_BUILD_TYPE=Release > /dev/null
+	PATH="$EM:$PATH" emmake make -C "$SRC/engine/build-wasm" -j8 rlengine rlengine_web
+}
+# (its own target directory; the build machine's paths remapped by the script itself: the module ships)
+build_local_host() {
+	PATH="$EM:$PATH" CARGO_TARGET_DIR="$R/out/images/target-host" CARBALL_ENGINE_WASM="$SRC/engine/build-wasm-host" bash "$SRC/scripts/build_host.sh"
+}
+# The environment the compilers and cargo read
+build_env() {
+	env | grep -E '^(EMCC_|EM_|CFLAGS=|CXXFLAGS=|CPPFLAGS=|LDFLAGS=|RUSTFLAGS=|RUSTDOCFLAGS=|CARGO_ENCODED_RUSTFLAGS=|CARGO_PROFILE_|CARGO_BUILD_|CARGO_TARGET_WASM32|RUSTC|CC=|CXX=|AR=)' | LC_ALL=C sort || true
+}
+# The tools: Emscripten's and its clang's versions, Binaryen's, CMake's, Rust's and Node's
+toolchain() {
+	PATH="$EM:$PATH" emcc -v 2>&1 | head -2
+	PATH="$EM:$PATH" wasm-opt --version 2>&1 || true
+	cmake --version | head -1
+	rustc -vV
+	node --version
+}
+# inputs_key FUNCTION PATH...: the staged files under each path, the build function's text, the environment, the tools
+inputs_key() {
+	local build=$1
+	shift
 	{
-		for path in "$@"; do (cd "$SRC" && find "$path" -type f -print0 | sort -z | xargs -0 sha256sum); done
-		PATH="$EM:$PATH" emcc --version | head -1
-		rustc --version
+		for path in "$@"; do (cd "$SRC" && find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum); done
+		declare -f "$build"
+		build_env
+		toolchain
 	} | sha256sum | cut -c1-24
 }
-# cached NAME KEY DIR FILE... -- COMMAND...: DIR's FILEs from the cache when it holds KEY's, else the command run and its
-# FILEs kept (put in place whole, so a stopped build leaves no half entry)
+# cached NAME KEY DIR FILE... -- COMMAND...: DIR's FILEs from the cache when it holds KEY's and they match their hashes,
+# else the command run and its FILEs kept with their hashes (put in place whole, so a stopped build leaves no half
+# entry); the files' hashes printed either way
 cached() {
 	local name=$1 key=$2 dir=$3
 	shift 3
@@ -65,33 +95,37 @@ cached() {
 	while [ "$1" != "--" ]; do files+=("$1"); shift; done
 	shift
 	local entry="$CACHE/$name-$key"
-	if [ -d "$entry" ]; then
-		echo "(cached: $name's inputs unchanged, $key)"
-		mkdir -p "$dir"
-		for f in "${files[@]}"; do cp -a "$entry/$f" "$dir/"; done
-		return
-	fi
-	"$@"
-	mkdir -p "$entry.partial"
-	for f in "${files[@]}"; do cp -a "$dir/$f" "$entry.partial/"; done
-	mv "$entry.partial" "$entry"
+	(
+		flock 9
+		if [ -d "$entry" ]; then
+			if (cd "$entry" && sha256sum --quiet --strict -c SHA256SUMS); then
+				echo "(cached: $name's inputs unchanged, $key)"
+				mkdir -p "$dir"
+				for f in "${files[@]}"; do cp -a "$entry/$f" "$dir/"; done
+				cat "$entry/SHA256SUMS"
+				exit 0
+			fi
+			echo "(the cached $name's files don't match their hashes: put aside, built again)"
+			mv -T "$entry" "$entry.mismatch-$(date +%Y%m%d%H%M%S)"
+		fi
+		"$@"
+		mkdir -p "$entry.partial"
+		for f in "${files[@]}"; do cp -a "$dir/$f" "$entry.partial/"; done
+		(cd "$entry.partial" && sha256sum "${files[@]}" > SHA256SUMS)
+		mv -T "$entry.partial" "$entry"
+		cat "$entry/SHA256SUMS"
+	) 9> "$CACHE/.lock"
 }
-ENGINE_KEY=$(inputs_key engine)
-HOST_KEY=$(inputs_key engine server scripts/build_host.sh)
+
+# (both keys before either build: the engine's build writes inside engine/, which the host's key reads)
+ENGINE_KEY=$(inputs_key build_engine engine)
+HOST_KEY=$(inputs_key build_local_host engine server scripts/build_host.sh)
 
 echo "== the engine's WebAssembly (the client bundles it)"
-build_engine() {
-	PATH="$EM:$PATH" emcmake cmake -S "$SRC/engine" -B "$SRC/engine/build-wasm" -DCMAKE_BUILD_TYPE=Release > /dev/null
-	PATH="$EM:$PATH" emmake make -C "$SRC/engine/build-wasm" -j8 rlengine rlengine_web
-}
 cached engine "$ENGINE_KEY" "$SRC/engine/build-wasm" carball_engine.mjs carball_engine.wasm carball_engine.d.mts \
 	carball_engine_web.mjs carball_engine_web.wasm carball_engine_web.d.mts -- build_engine
 
 echo "== the local host's WebAssembly (the client bundles it: the offline match against bots, scripts/build_host.sh)"
-# (its own target directory; the build machine's paths remapped by the script itself: the module ships)
-build_local_host() {
-	PATH="$EM:$PATH" CARGO_TARGET_DIR="$R/out/images/target-host" CARBALL_ENGINE_WASM="$SRC/engine/build-wasm-host" bash "$SRC/scripts/build_host.sh"
-}
 cached host "$HOST_KEY" "$SRC/engine/build-wasm-host" carball_host.mjs carball_host.wasm -- build_local_host
 
 echo "== the client's production build, the shipped-data check on it"

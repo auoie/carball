@@ -18,6 +18,7 @@ import {
   clearRankedSeatOf,
   deployedGameServer,
   holdMatchLock,
+  leaveMatchSeat,
   matchPlayedElsewhere,
   openClaim,
   pageUrl,
@@ -1056,9 +1057,7 @@ async function main(): Promise<void> {
     const leave = (notice?: MenuNotice): void => {
       if (left) return;
       left = true;
-      // (left on purpose or over: no rejoin offer of this match (another tab's account's record kept, RX34); kicked or the
-      // connection lost: it stays, LV1)
-      if (notice?.modal !== "idle" && notice?.modal !== "lost") clearRankedSeatOf(welcome.matchId);
+      leaveMatchSeat(welcome.matchId, notice?.modal);
       if (notice) storeNotice(notice);
       connection.close();
       location.assign(pageUrl("menu", location));

@@ -155,6 +155,32 @@ test("free play's ball commands from their keys: 4 launches the ball, 1 takes po
   // Defend Shot: launched at a goal (the nearer, orange or blue: |y| velocity a goal's way), 2778 sideways
   await page.keyboard.press("Digit5");
   await expect.poll(async () => Math.hypot((await hook()).vel.x, (await hook()).vel.y), { timeout: 10_000 }).toBeGreaterThan(2000);
+  // Refused at a wall: the car nose to the side wall, Take Possession's spot beyond it; the refusal's cue, the ball left
+  // where it was (RV-801)
+  const place = (car: object, ball: object): Promise<void> =>
+    page.evaluate(
+      ([c, b]) => {
+        (window as unknown as { carballFreeplay: { place: (car: object, ball: object) => void } }).carballFreeplay.place(c, b);
+      },
+      [car, ball] as const,
+    );
+  const backs = (): Promise<number> =>
+    page.evaluate(() => (window as unknown as { carballAudio: () => { played: Record<string, number> } }).carballAudio().played["menu-back"] ?? 0);
+  await place({ x: 3950, y: 0, yaw: 0 }, { x: 0, y: 1500, z: 93 });
+  const refusals = await backs();
+  await page.keyboard.press("Digit1");
+  await expect.poll(backs, { timeout: 10_000 }).toBe(refusals + 1);
+  const kept = await hook();
+  expect(Math.abs(kept.pos.x)).toBeLessThan(5);
+  expect(Math.abs(kept.pos.y - 1500)).toBeLessThan(5);
+  // Demolished: the commands do nothing (Launch Ball pressed, the ball still at rest)
+  await place({ x: 0, y: 0, yaw: 0 }, { x: 0, y: 1500, z: 93 });
+  await page.evaluate(() => {
+    (window as unknown as { carballFreeplay: { demolish: () => void } }).carballFreeplay.demolish();
+  });
+  await page.keyboard.press("Digit4");
+  await page.waitForTimeout(500);
+  expect(Math.abs((await hook()).vel.z)).toBeLessThan(50);
   expect(errors).toEqual([]);
 });
 

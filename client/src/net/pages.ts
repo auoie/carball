@@ -396,6 +396,13 @@ export function clearRankedSeatOf(matchId: bigint, storage = local()): void {
   if (rankedSeat(Date.now(), storage)?.matchId === matchId) clearRankedSeat(storage);
 }
 
+/** Leaving a match's page: left on purpose or the match over, its own saved seat forgotten (no rejoin offer of it), never
+ *  another match's (another tab's account's, RX34); kicked for idling or the connection lost (`reason`), kept, its rejoin
+ *  offered (LV1) */
+export function leaveMatchSeat(matchId: bigint, reason: MenuNotice["modal"], storage = local()): void {
+  if (reason !== "idle" && reason !== "lost") clearRankedSeatOf(matchId, storage);
+}
+
 export function clearRankedSeat(storage = local()): void {
   try {
     storage?.removeItem(SEAT_KEY);
