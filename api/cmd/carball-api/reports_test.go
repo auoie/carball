@@ -280,9 +280,36 @@ func TestReports(t *testing.T) {
 	if got := report("unban", "--identity", "steam:7656119000000001 "); got != "1 ban(s) lifted\n" {
 		t.Errorf("unban of a malformed stored subject: %q", got)
 	}
-	refused("has a space or control character (and no ban is stored on it as given)", "unban", "--identity", "steam:7656119000000001 ")
+	refused("has a space, a control or invisible character, or one outside ASCII (and no ban is stored on it as given)", "unban", "--identity", "steam:7656119000000001 ")
 	if got := report("bans"); strings.Contains(got, "7656119000000001") {
 		t.Errorf("the malformed ban still listed:\n%s", got)
+	}
+	// (RV-809: such subjects printed quoted, each ban on its one line, so they can be read off and typed back (the shell's
+	// $'...'); a plain one as it is)
+	if _, err := conn.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+		VALUES ('google', 'sub-sp ', 'old', NULL, 'admin', now()), ('google', E'sub\nx', 'old', NULL, 'admin', now())`); err != nil {
+		t.Fatal(err)
+	}
+	list := report("bans")
+	if lineWith(list, `google:"sub-sp "`) == "" || lineWith(list, `google:"sub\nx"`) == "" || lineWith(list, "x") != "" ||
+		lineWith(list, "google:sub-Nobody") == "" {
+		t.Errorf("bans with malformed subjects:\n%s", list)
+	}
+	if got := report("unban", "--identity", "google:sub\nx"); got != "1 ban(s) lifted\n" {
+		t.Errorf("unban of a subject with a newline: %q", got)
+	}
+	// (RV-811: unban matches the subject exactly: a prefix, % or _ lift nothing)
+	if _, err := conn.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+		VALUES ('google', 'sub-Prefix123', 'old', NULL, 'admin', now())`); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"google:sub-Prefix", "google:sub-%", "google:sub-Prefix12_"} {
+		if got := report("unban", "--identity", s); got != "0 ban(s) lifted\n" {
+			t.Errorf("unban %s: %q", s, got)
+		}
+	}
+	if lineWith(report("bans"), "google:sub-Prefix123") == "" {
+		t.Error("a ban lifted by a prefix or a pattern")
 	}
 	if got := report("unban", "--account", ids["Ada"]); got != "1 ban(s) lifted\n" {
 		t.Errorf("unban: %q", got)

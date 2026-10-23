@@ -1632,7 +1632,7 @@
   {
    "id": "SAFE-ban-silent",
    "file": "cmd/carball-api/main.go",
-   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s:%s (account %s): %s, reason %q, by %q; its sessions ended\\n\", i.Provider, i.Subject, banned.Account, describe(end), *reason, *by)",
+   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s (account %s): %s, reason %q, by %q; its sessions ended\\n\", shown(i.Provider, i.Subject), banned.Account, describe(end), *reason, *by)",
    "new": "\t\t_ = i",
    "packages": [
     "./cmd/carball-api/"
@@ -1787,24 +1787,6 @@
    ]
   },
   {
-   "id": "RV781-space-taken",
-   "file": "cmd/carball-api/main.go",
-   "old": "return unicode.IsSpace(r) || unicode.IsControl(r)",
-   "new": "return unicode.IsControl(r)",
-   "packages": [
-    "./cmd/carball-api/"
-   ]
-  },
-  {
-   "id": "RV781-control-taken",
-   "file": "cmd/carball-api/main.go",
-   "old": "return unicode.IsSpace(r) || unicode.IsControl(r)",
-   "new": "return unicode.IsSpace(r) && !unicode.IsControl(r)",
-   "packages": [
-    "./cmd/carball-api/"
-   ]
-  },
-  {
    "id": "RV781-steam-length-unchecked",
    "file": "cmd/carball-api/main.go",
    "old": "\tif provider == store.Steam && !steamID.MatchString(subject) {",
@@ -1825,8 +1807,8 @@
   {
    "id": "RV781-ban-line-no-account",
    "file": "cmd/carball-api/main.go",
-   "old": "i.Provider, i.Subject, banned.Account, describe(end)",
-   "new": "i.Provider, i.Subject, t.account, describe(end)",
+   "old": "shown(i.Provider, i.Subject), banned.Account, describe(end)",
+   "new": "shown(i.Provider, i.Subject), t.account, describe(end)",
    "packages": [
     "./cmd/carball-api/"
    ]
@@ -1899,8 +1881,73 @@
   {
    "id": "RV790-provider-unchecked",
    "file": "cmd/carball-api/main.go",
-   "old": "\tname, subject, ok := strings.Cut(t.identity, \":\")\n\tprovider, known := store.ParseProvider(name)\n\tif !ok || !known || subject == \"\" {\n\t\treturn store.Identity{}, false\n\t}",
-   "new": "\tname, subject, ok := strings.Cut(t.identity, \":\")\n\tprovider, _ := store.ParseProvider(name)\n\tif !ok || subject == \"\" {\n\t\treturn store.Identity{}, false\n\t}",
+   "old": "\tprovider, known := store.ParseProvider(name)\n\tif !ok || !known || subject == \"\" || !utf8.ValidString(subject) {",
+   "new": "\tprovider, _ := store.ParseProvider(name)\n\tif !ok || subject == \"\" || !utf8.ValidString(subject) {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV807-ban-unlocked",
+   "file": "internal/store/store.go",
+   "old": "\terr := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {\n\t\tif err := lockIdentity(ctx, tx, i); err != nil {\n\t\t\treturn err\n\t\t}\n\t\tvar account string",
+   "new": "\terr := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {\n\t\tvar account string",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV808-signup-unlocked",
+   "file": "internal/store/store.go",
+   "old": "\t\tif err := lockIdentity(ctx, tx, Identity{Provider: p.Provider, Subject: p.Subject}); err != nil {\n\t\t\treturn err\n\t\t}\n",
+   "new": "",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV810-space-plain",
+   "file": "cmd/carball-api/main.go",
+   "old": "return r <= ' ' || r > '~'",
+   "new": "return r < ' ' || r > '~'",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV810-invisible-plain",
+   "file": "cmd/carball-api/main.go",
+   "old": "return r <= ' ' || r > '~'",
+   "new": "return r <= ' ' || (r > '~' && r < 0x80)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV810-control-plain",
+   "file": "cmd/carball-api/main.go",
+   "old": "return r <= ' ' || r > '~'",
+   "new": "return r == ' ' || r > '~'",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV809-never-quoted",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif plain(subject) {\n\t\treturn string(provider) + \":\" + subject\n\t}",
+   "new": "\tif true {\n\t\treturn string(provider) + \":\" + subject\n\t}",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV812-utf8-unchecked",
+   "file": "cmd/carball-api/main.go",
+   "old": " || !utf8.ValidString(subject) {",
+   "new": " || false && !utf8.ValidString(subject) {",
    "packages": [
     "./cmd/carball-api/"
    ]

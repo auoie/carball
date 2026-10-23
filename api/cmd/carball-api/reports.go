@@ -197,7 +197,7 @@ func account(args []string, out io.Writer) error {
 			return err
 		}
 		if banned {
-			banLines = append(banLines, fmt.Sprintf("%s:%s %s, by %s: %q", i.Provider, i.Subject, describe(b.End), b.By, b.Reason))
+			banLines = append(banLines, fmt.Sprintf("%s %s, by %s: %q", shown(i.Provider, i.Subject), describe(b.End), b.By, b.Reason))
 		}
 	}
 	leave, hasLeave, err := db.QueueBanOf(ctx, id)

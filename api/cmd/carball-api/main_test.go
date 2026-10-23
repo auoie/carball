@@ -228,8 +228,15 @@ func TestArgumentsRefusedBeforeAnythingRuns(t *testing.T) {
 		{[]string{"ban", "--account", "not-an-id", "--by", "admin", "--reason", "x"}, "--account is an account's id"},
 		{[]string{"unban", "--account", id, "--", "help"}, `unexpected argument "help"`},
 		// (RV-781: a mistyped identity: a pasted space, a newline, a Steam subject not 17 digits, longer than any)
-		{[]string{"ban", "--identity", "steam:76561190000000001 ", "--by", "admin", "--reason", "x"}, "has a space or control character"},
-		{[]string{"ban", "--identity", "google:sub\nbanned google:other", "--by", "admin", "--reason", "x"}, "has a space or control character"},
+		{[]string{"ban", "--identity", "steam:76561190000000001 ", "--by", "admin", "--reason", "x"}, "has a space, a control or invisible character, or one outside ASCII"},
+		{[]string{"ban", "--identity", "google:sub\nbanned google:other", "--by", "admin", "--reason", "x"}, "has a space, a control or invisible character, or one outside ASCII"},
+		// (RV-810: invisible and look-alike characters, outside ASCII, a quote: no provider's subject; with --no-account too)
+		{[]string{"ban", "--identity", "google:g-alpha-1\u200b", "--no-account", "--by", "admin", "--reason", "x"}, "has a space, a control or invisible character, or one outside ASCII"},
+		{[]string{"ban", "--identity", "google:sub\u202e1-ahpla", "--no-account", "--by", "admin", "--reason", "x"}, "has a space, a control or invisible character, or one outside ASCII"},
+		{[]string{"ban", "--identity", "google:sub-\u00e9", "--no-account", "--by", "admin", "--reason", "x"}, "has a space, a control or invisible character, or one outside ASCII"},
+		{[]string{"ban", "--identity", "google:sub\"x", "--no-account", "--by", "admin", "--reason", "x"}, "has a space, a control or invisible character, or one outside ASCII"},
+		// (RV-812: unban with a subject that isn't UTF-8: refused before the database, nothing to look up as given)
+		{[]string{"unban", "--identity", "google:sub-\xff"}, "has a space, a control or invisible character, or one outside ASCII"},
 		{[]string{"ban", "--identity", "steam:7656119000000001", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
 		{[]string{"ban", "--identity", "steam:7656119000000000x", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
 		{[]string{"ban", "--identity", "google:" + strings.Repeat("1", 256), "--by", "admin", "--reason", "x"}, "longer than any provider's"},

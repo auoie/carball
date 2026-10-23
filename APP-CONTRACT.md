@@ -247,7 +247,9 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   characters), and so is a ban in force on any of its identities unless `--replace`, which prints each ban it replaced
   (RV-781, RV-787). `--no-account` bans such an identity on purpose (a deleted account's, a throwaway's; one with an
   account refused), its line saying "no account" (RV-788). `unban --identity` shares the checks, but a subject an older
-  version stored without them is lifted exactly as given (RV-790).
+  version stored without them is lifted exactly as given (RV-790). A subject is printable ASCII with no spaces (both
+  providers'); the commands print any other stored one quoted, typed back as the shell's `$'...'` (RV-809, RV-810).
+  Such a ban and its identity's sign-up take turns on the identity, so neither misses the other (RV-807).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,

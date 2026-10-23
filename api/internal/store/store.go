@@ -380,6 +380,9 @@ func (e RecreateError) Error() string { return "the identity deleted an account 
 func (s *Store) CreateAccount(ctx context.Context, p Pending, name string, subjectHMAC []byte, now, blockAfter time.Time) (string, error) {
 	var id string
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := lockIdentity(ctx, tx, Identity{Provider: p.Provider, Subject: p.Subject}); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM pending_signups WHERE token_hash = $1 AND provider = $2 AND subject = $3
 			AND expires_at > $4`, p.TokenHash, p.Provider, p.Subject, now)
 		if err != nil {
@@ -616,6 +619,9 @@ func (s *Store) BanIdentity(ctx context.Context, i Identity, reason, by string, 
 func (s *Store) BanNoAccount(ctx context.Context, i Identity, reason, by string, end BanEnd, replace bool, now time.Time) (Banned, error) {
 	b := Banned{Identities: []Identity{i}}
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := lockIdentity(ctx, tx, i); err != nil {
+			return err
+		}
 		var account string
 		err := tx.QueryRow(ctx, `SELECT account_id::text FROM identities WHERE provider = $1 AND subject = $2`,
 			i.Provider, i.Subject).Scan(&account)
@@ -629,6 +635,13 @@ func (s *Store) BanNoAccount(ctx context.Context, i Identity, reason, by string,
 		return err
 	})
 	return b, err
+}
+
+// lockIdentity: the transaction holds an identity's lock until it ends, so a ban on an identity with no account and its
+// sign-up, or two such bans, take turns: each sees what the other committed (no row exists to lock: RV-807, RV-808)
+func lockIdentity(ctx context.Context, tx pgx.Tx, i Identity) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, string(i.Provider), i.Subject)
+	return err
 }
 
 // banIdentities: the identities banned and their account's sessions ended (none: no account); the bans in force it replaced, none

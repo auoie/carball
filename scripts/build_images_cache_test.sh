@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/build_images.sh"
 H=$(mktemp -d "${TMPDIR:-/tmp}/build-cache-test.XXXXXX")
 echo "(in $H)"
-eval "$(awk '/^(build_env|toolchain|inputs_key|cached)\(\) \{/,/^}/' "$SCRIPT")"
+eval "$(awk '/^(build_env|cargo_config|toolchain|inputs_key|cached)\(\) \{/,/^}/' "$SCRIPT")"
 EM=${EMSCRIPTEN_ROOT:-/usr/lib/emscripten}
 run=$(date +%s%N)
 SRC="$H/src-$run"; CACHE="$H/cache-$run"; OUT="$H/out-$run"
@@ -31,9 +31,21 @@ check "$([ "$(inputs_key fake engine)" != "$k1" ] && echo changed)" changed "a c
 fake() { echo built >> "$builds"; sleep 1; mkdir -p "$OUT"; echo "wasm $(cat "$SRC/engine/a.cpp")" > "$OUT/x.wasm"; } # (a comment)
 check "$(inputs_key fake engine)" "$k1" "the same build with a comment: the same key"
 for v in EMCC_CFLAGS=-O2 CFLAGS=-g CXXFLAGS=-g LDFLAGS=-s RUSTFLAGS=-Copt-level=1 CARGO_PROFILE_RELEASE_LTO=true EM_CACHE=/x CARGO_ENCODED_RUSTFLAGS=x; do
-	check "$([ "$(env "$v" bash -c "$(declare -f build_env toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine")" != "$k1" ] && echo changed)" changed "$v: a new key"
+	check "$([ "$(env "$v" bash -c "$(declare -f build_env cargo_config toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine")" != "$k1" ] && echo changed)" changed "$v: a new key"
 done
-check "$([ "$(env HOME_UNRELATED=1 bash -c "$(declare -f build_env toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine")" = "$k1" ] && echo same)" same "an unrelated variable: the same key"
+check "$([ "$(env HOME_UNRELATED=1 bash -c "$(declare -f build_env cargo_config toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine")" = "$k1" ] && echo same)" same "an unrelated variable: the same key"
+# (cargo's config: CARGO_INCREMENTAL, a .cargo/config.toml where the build runs or above it, CARGO_HOME's: RV-815)
+check "$([ "$(env CARGO_INCREMENTAL=1 bash -c "$(declare -f build_env cargo_config toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine")" != "$k1" ] && echo changed)" changed "CARGO_INCREMENTAL=1: a new key"
+mkdir -p "$H/cwd-$run/below/.cargo" "$H/cwd-$run/above/.cargo" "$H/home-$run"
+printf '[profile.release]\nopt-level = 1\n' > "$H/cwd-$run/below/.cargo/config.toml"
+check "$([ "$(cd "$H/cwd-$run/below" && inputs_key fake engine)" != "$k1" ] && echo changed)" changed "a .cargo/config.toml where the build runs: a new key"
+mkdir -p "$H/cwd-$run/above/deep"
+printf '[profile.release]\nopt-level = 1\n' > "$H/cwd-$run/above/.cargo/config"
+check "$([ "$(cd "$H/cwd-$run/above/deep" && inputs_key fake engine)" != "$k1" ] && echo changed)" changed "a .cargo/config above where it runs: a new key"
+home_key() { env CARGO_HOME="$H/home-$run" bash -c "$(declare -f build_env cargo_config toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine"; }
+before=$(home_key)
+printf '[build]\nincremental = true\n' > "$H/home-$run/config.toml"
+check "$([ "$(home_key)" != "$before" ] && echo changed)" changed "a config in CARGO_HOME: a new key"
 echo "int y;" > "$SRC/engine/a.cpp"
 check "$([ "$(inputs_key fake engine)" != "$k1" ] && echo changed)" changed "a changed source: a new key"
 echo "int x;" > "$SRC/engine/a.cpp"

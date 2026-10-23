@@ -35,7 +35,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
-	"unicode"
+	"unicode/utf8"
 
 	// (the root certificates built in, for an image without a system bundle: Google, Steam and Cloudflare are https)
 	_ "golang.org/x/crypto/x509roots/fallback"
@@ -74,7 +74,8 @@ func commands() []command {
 				"with an account is refused), and so is a ban in force on any of them unless --replace (the bans it " +
 				"replaced printed)", ban},
 		{"unban", "(--account ID | --identity PROVIDER:SUBJECT)", "the bans lifted (a subject stored by an older version " +
-			"without its checks lifted as given)", unban},
+			"without its checks lifted as given: one bans shows quoted is typed as the shell's $'...', e.g. --identity " +
+			"$'steam:7656119000000001 ')", unban},
 		{"bans", "", "the bans in force", bans},
 		{"stats", "", "the live app at a glance: accounts (new today, in the last 7 days, in all), ranked matches today and in " +
 			"the week by playlist, the bans and leave bans in force", stats},
@@ -547,9 +548,10 @@ func (t *target) parse() (store.Identity, error) {
 	if !ok || !known || subject == "" {
 		return store.Identity{}, errors.New("--identity is PROVIDER:SUBJECT, the provider google or steam")
 	}
-	// (a pasted space, a newline, a wrong length: refused before the database, RV-781)
-	if strings.IndexFunc(subject, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-		return store.Identity{}, fmt.Errorf("--identity's subject %q has a space or control character", subject)
+	// (a pasted space, a newline, an invisible or a look-alike character, a wrong length: refused before the database;
+	// both providers' subjects are printable ASCII: RV-781, RV-810)
+	if !plain(subject) {
+		return store.Identity{}, fmt.Errorf("--identity's subject %q has a space, a control or invisible character, or one outside ASCII", subject)
 	}
 	if provider == store.Steam && !steamID.MatchString(subject) {
 		return store.Identity{}, fmt.Errorf("--identity steam:%q: a Steam subject is a SteamID64, 17 digits", subject)
@@ -568,10 +570,24 @@ func (t *target) asGiven() (store.Identity, bool) {
 	}
 	name, subject, ok := strings.Cut(t.identity, ":")
 	provider, known := store.ParseProvider(name)
-	if !ok || !known || subject == "" {
+	if !ok || !known || subject == "" || !utf8.ValidString(subject) {
 		return store.Identity{}, false
 	}
 	return store.Identity{Provider: provider, Subject: subject}, true
+}
+
+// plain: printable ASCII with no space, quote or backslash, every provider's subject (printed as it is)
+func plain(subject string) bool {
+	return subject != "" && !strings.ContainsFunc(subject, func(r rune) bool { return r <= ' ' || r > '~' || r == '"' || r == '\\' })
+}
+
+// shown: an identity as the admin commands print it, its subject quoted (Go's escapes) unless plain: an older version's
+// stored subject (a trailing space, a newline, a tab) seen for what it is (RV-809)
+func shown(provider store.Provider, subject string) string {
+	if plain(subject) {
+		return string(provider) + ":" + subject
+	}
+	return string(provider) + ":" + strconv.Quote(subject)
 }
 
 // steamID: a SteamID64, the Steam subject
@@ -624,7 +640,7 @@ func ban(args []string, out io.Writer) error {
 	var has store.HasAccountError
 	switch {
 	case errors.As(err, &has):
-		return fmt.Errorf("account %s has signed in with %s: nothing banned (ban it without --no-account)", has.Account, t.identity)
+		return fmt.Errorf("account %s has signed in with %s: nothing banned (ban it without --no-account)", has.Account, shown(identity.Provider, identity.Subject))
 	case errors.As(err, &held):
 		lines := make([]string, len(held.Bans))
 		for k, b := range held.Bans {
@@ -632,7 +648,7 @@ func ban(args []string, out io.Writer) error {
 		}
 		return fmt.Errorf("already banned, nothing changed (--replace to replace it):\n%s", strings.Join(lines, "\n"))
 	case errors.Is(err, store.ErrNoIdentity):
-		return fmt.Errorf("no account has signed in with %s: nothing banned (check it: accounts NAME lists the identities)", t.identity)
+		return fmt.Errorf("no account has signed in with %s: nothing banned (check it: accounts NAME lists the identities)", shown(identity.Provider, identity.Subject))
 	case err != nil:
 		return err
 	}
@@ -641,17 +657,17 @@ func ban(args []string, out io.Writer) error {
 	}
 	for _, i := range banned.Identities {
 		if banned.Account == "" {
-			_, _ = fmt.Fprintf(out, "banned %s:%s (no account): %s, reason %q, by %q\n", i.Provider, i.Subject, describe(end), *reason, *by)
+			_, _ = fmt.Fprintf(out, "banned %s (no account): %s, reason %q, by %q\n", shown(i.Provider, i.Subject), describe(end), *reason, *by)
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "banned %s:%s (account %s): %s, reason %q, by %q; its sessions ended\n", i.Provider, i.Subject, banned.Account, describe(end), *reason, *by)
+		_, _ = fmt.Fprintf(out, "banned %s (account %s): %s, reason %q, by %q; its sessions ended\n", shown(i.Provider, i.Subject), banned.Account, describe(end), *reason, *by)
 	}
 	return nil
 }
 
 // banLine: a ban in force, as ban prints the ones it replaced or was refused by
 func banLine(b store.Ban) string {
-	return fmt.Sprintf("%s:%s's ban: %s, reason %q, by %q, since %s", b.Provider, b.Subject, describe(b.End), b.Reason, b.By, b.Created.UTC().Format(time.RFC3339))
+	return fmt.Sprintf("%s's ban: %s, reason %q, by %q, since %s", shown(b.Provider, b.Subject), describe(b.End), b.Reason, b.By, b.Created.UTC().Format(time.RFC3339))
 }
 
 // banEnd: a ban's end from --for (given: `forGiven`) or --until (`untilGiven`), neither a permanent ban. One given but
@@ -749,7 +765,7 @@ func bans(args []string, out io.Writer) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "IDENTITY\tUNTIL\tBY\tSINCE\tREASON")
 	for _, b := range list {
-		_, _ = fmt.Fprintf(w, "%s:%s\t%s\t%q\t%s\t%q\n", b.Provider, b.Subject, describe(b.End), b.By, b.Created.UTC().Format(time.DateOnly), b.Reason)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%q\t%s\t%q\n", shown(b.Provider, b.Subject), describe(b.End), b.By, b.Created.UTC().Format(time.DateOnly), b.Reason)
 	}
 	return w.Flush()
 }

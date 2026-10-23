@@ -56,7 +56,7 @@ def main() -> int:
             else:
                 open(path, "w", encoding="utf-8").write(text.replace(m["old"], m["new"]))
                 try:
-                    proc = subprocess.run(["go", "test", "-count=1", *m["packages"]], cwd=work, env=env, capture_output=True, text=True, timeout=600)
+                    proc = subprocess.run(["go", "test", "-count=1", *m["packages"]], cwd=work, env=env, capture_output=True, text=True, errors="replace", timeout=600)
                     out, code = proc.stdout + proc.stderr, proc.returncode
                 except subprocess.TimeoutExpired:
                     out, code = "timeout", -1

@@ -19,3 +19,11 @@ A sound's start, from the call to its first audible sample (−40 dBFS), offline
 
 The stat graphs' Performance levels (F10) show two rows of ours under the game's: **Audio Base** (the browser's
 processing) and **Audio Out** (the OS's and the device's output), read from the AudioContext each frame.
+
+**Known edges (RX39, not changed):**
+- With no margin, a frame that reads `currentTime` while the browser is mid-callback starts its sounds up to one render
+  quantum (128 frames, 2.7 ms) late, their 1–3 ms attack skipped: an oscillator starts at zero phase (no step), a noise
+  burst at its peak. Not heard so far; if a click ever is, schedule one quantum ahead (128 / sampleRate).
+- Other browsers, not measured: Firefox may report `baseLatency` 0; Safari has no `outputLatency`, so its Audio Out row
+  never appears; Firefox computes a filter's coefficients once per 128-frame block, so with the engine's τ 0.03 s its
+  filter moves about 8.5% of the way per block (3.3% before), likely not heard.

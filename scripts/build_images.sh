@@ -62,9 +62,24 @@ build_engine() {
 build_local_host() {
 	PATH="$EM:$PATH" CARGO_TARGET_DIR="$R/out/images/target-host" CARBALL_ENGINE_WASM="$SRC/engine/build-wasm-host" bash "$SRC/scripts/build_host.sh"
 }
-# The environment the compilers and cargo read
+# The environment the compilers and cargo read (every CARGO_ variable: CARGO_INCREMENTAL, CARGO_HOME, a profile's)
 build_env() {
-	env | grep -E '^(EMCC_|EM_|CFLAGS=|CXXFLAGS=|CPPFLAGS=|LDFLAGS=|RUSTFLAGS=|RUSTDOCFLAGS=|CARGO_ENCODED_RUSTFLAGS=|CARGO_PROFILE_|CARGO_BUILD_|CARGO_TARGET_WASM32|RUSTC|CC=|CXX=|AR=)' | LC_ALL=C sort || true
+	env | grep -E '^(EMCC_|EM_|CFLAGS=|CXXFLAGS=|CPPFLAGS=|LDFLAGS=|RUSTFLAGS=|RUSTDOCFLAGS=|CARGO_|RUSTC|RUSTUP_TOOLCHAIN=|CC=|CXX=|AR=)' | LC_ALL=C sort || true
+}
+# cargo's config files it would read, named and in full: in the directory the build runs in and each one above it, and
+# in CARGO_HOME (a profile there changes the host's build: RV-815)
+cargo_config() {
+	local d=$PWD f
+	while :; do
+		for f in "$d/.cargo/config" "$d/.cargo/config.toml"; do
+			if [ -f "$f" ]; then echo "$f"; cat "$f"; fi
+		done
+		[ "$d" = / ] && break
+		d=$(dirname "$d")
+	done
+	for f in "${CARGO_HOME:-$HOME/.cargo}/config" "${CARGO_HOME:-$HOME/.cargo}/config.toml"; do
+		if [ -f "$f" ]; then echo "$f"; cat "$f"; fi
+	done
 }
 # The tools: Emscripten's and its clang's versions, Binaryen's, CMake's, Rust's and Node's
 toolchain() {
@@ -74,7 +89,8 @@ toolchain() {
 	rustc -vV
 	node --version
 }
-# inputs_key FUNCTION PATH...: the staged files under each path, the build function's text, the environment, the tools
+# inputs_key FUNCTION PATH...: the staged files under each path, the build function's text, the environment, cargo's
+# config, the tools
 inputs_key() {
 	local build=$1
 	shift
@@ -82,6 +98,7 @@ inputs_key() {
 		for path in "$@"; do (cd "$SRC" && find "$path" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum); done
 		declare -f "$build"
 		build_env
+		cargo_config
 		toolchain
 	} | sha256sum | cut -c1-24
 }
