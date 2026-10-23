@@ -333,11 +333,18 @@ describe("the search with the matchmaker", () => {
     MatchmakerSearchSession.start({ base: "" }, request, noServer.handlers, {}, none.http, pause);
     await noServer.done;
     expect(noServer.got).toEqual([`failed ${MATCHMAKER_TEXT.noServer}`]);
+    // (no answer ever: 1 + 5 tries, the pauses doubling to 8 s, then not reachable: RV-922's X04)
     const down = service({});
     const unreachable = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, unreachable.handlers, {}, down.http, noWait);
+    const downPauses: number[] = [];
+    MatchmakerSearchSession.start({ base: "" }, request, unreachable.handlers, {}, down.http, (ms) => {
+      downPauses.push(ms);
+      return Promise.resolve();
+    });
     await unreachable.done;
     expect(unreachable.got).toEqual([`failed ${MATCHMAKER_TEXT.unreachable}`]);
+    expect(down.calls.filter((c) => c.method === "POST")).toHaveLength(6);
+    expect(downPauses).toEqual([1000, 2000, 4000, 8000, 8000]);
   });
 
   it("the calls' guards: the page's credentials and write header; Cancel Search's delete kept alive past the page (RV-887's M12-M15)", async () => {

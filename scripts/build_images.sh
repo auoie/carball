@@ -30,19 +30,20 @@ if [ "${1:-}" = "--worktree" ]; then
 fi
 TAG=${1:-$("$R/scripts/image_tag.sh")}
 PATHS=(Dockerfile client engine server protocol api scripts/build_host.sh out/arena/collision_meshes)
-# (the context made once, every build below from the same files)
+# (the context made once, every build below from the same files; group and others never given write: what the images
+# copy keeps its mode, RV-926)
 CONTEXT=$(mktemp "${TMPDIR:-/tmp}/carball-context-XXXXXX.tar")
 trap '[ -n "$CONTEXT" ] && rm -f -- "$CONTEXT"' EXIT
 if [ $WORKTREE = 1 ]; then
 	echo "note: built from the working tree (on $COMMIT), not a commit"
-	(cd "$R" && git ls-files -z --cached --others --exclude-standard --deduplicate -- "${PATHS[@]}" | tar --null --ignore-failed-read -T - -cf "$CONTEXT")
+	(cd "$R" && git ls-files -z --cached --others --exclude-standard --deduplicate -- "${PATHS[@]}" | tar --null --ignore-failed-read --mode=go-w -T - -cf "$CONTEXT")
 	SOURCE="the working tree on $COMMIT"
 else
 	# (what isn't committed isn't built: said, so the tag isn't taken for it)
 	if [ -n "$(git -C "$R" status --porcelain -- "${PATHS[@]}")" ]; then
 		echo "note: uncommitted changes under ${PATHS[*]} are not in these images (built from $COMMIT)"
 	fi
-	git -C "$R" archive --format=tar -o "$CONTEXT" "$COMMIT" "${PATHS[@]}"
+	git -C "$R" -c tar.umask=0022 archive --format=tar -o "$CONTEXT" "$COMMIT" "${PATHS[@]}"
 	SOURCE=$COMMIT
 fi
 

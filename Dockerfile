@@ -8,8 +8,10 @@
 # Caching: each build stage is cached by its inputs' content (Docker's layers), so a release that doesn't touch the
 # engine reuses its three C++ builds (the WebAssembly module, the local host's libraries, the server's), and one that
 # doesn't touch the server reuses both of its. Cargo's registry and target are cache mounts, the server's own crate
-# cleaned and built again each time (the context's file times are the commit's, which make and cargo can't go by);
-# npm's and Go's are content-addressed caches.
+# cleaned (`cargo clean -p`) and built again each time: its files' times, and the engine libraries', are no guide to what
+# changed (the context's are the commit's; a library from the layer cache keeps its old one), so a fingerprint must never
+# decide (RV-927). npm's and Go's are content-addressed caches. The images take their files from the `checks` stage,
+# so none is built without its checks passing (RV-925).
 #
 # (KEY_PATH and the `*_FILE` variables name files, not secrets: the check that flags them is skipped above)
 
@@ -53,7 +55,7 @@ COPY scripts/build_host.sh scripts/
 COPY --from=host-engine /src/engine/build-wasm-host/ engine/build-wasm-host/
 RUN --mount=type=cache,id=carball-cargo-registry-host,target=/usr/local/cargo/registry \
     --mount=type=cache,id=carball-target-host,target=/target,sharing=locked \
-    find server -type f -exec touch {} + \
+    cargo clean --release -p carball-server --target wasm32-unknown-emscripten --manifest-path server/Cargo.toml --target-dir /target \
     && CARGO_BUILD_JOBS="$JOBS" CARGO_OFFLINE=0 CARGO_TARGET_DIR=/target CARBALL_ENGINE_WASM=/src/engine/build-wasm-host bash scripts/build_host.sh host \
     && mkdir /out && cp engine/build-wasm-host/carball_host.mjs engine/build-wasm-host/carball_host.wasm /out/
 
@@ -63,9 +65,9 @@ RUN --mount=type=cache,id=carball-cargo-registry-host,target=/usr/local/cargo/re
 # update the date and the version together)
 FROM rust AS server-engine
 ARG JOBS
-RUN echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261023T000000Z trixie main" > /etc/apt/snapshot.list \
+RUN echo "deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] https://snapshot.debian.org/archive/debian/20261023T000000Z trixie main" > /etc/apt/snapshot.list \
     && apt="apt-get -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
-    && $apt update && $apt install -y --no-install-recommends cmake=3.31.6-2 cmake-data=3.31.6-2 \
+    && $apt update --error-on=any && $apt install -y --no-install-recommends cmake=3.31.6-2 cmake-data=3.31.6-2 \
     && rm -rf /var/lib/apt/lists/* /etc/apt/snapshot.list
 WORKDIR /src
 COPY engine/ engine/
@@ -84,9 +86,10 @@ FROM engine-wasm AS engine-tests-wasm
 COPY out/arena/collision_meshes/ out/arena/collision_meshes/
 RUN emmake make -C engine/build-wasm -j"$JOBS" determinism arena_smoketest netstate rollback
 FROM engine-tests-native AS engine-check
-COPY --from=emsdk /emsdk/node/ /opt/node/
+# (the emsdk image's own Node, by its version: a new image's fails here, loudly)
+COPY --from=emsdk /emsdk/node/24.19.0_64bit/ /opt/node/
 COPY --from=engine-tests-wasm /src/engine/build-wasm/ engine/build-wasm/
-RUN PATH="$(echo /opt/node/*/bin):$PATH" sh engine/tests/check_native_wasm.sh 300 && touch /engine-identical
+RUN PATH="/opt/node/bin:$PATH" sh engine/tests/check_native_wasm.sh 300 && touch /engine-identical
 
 # The server's release binary: no debug info, the registry's and the home directory's paths remapped, libstdc++ linked in
 FROM rust AS server
@@ -96,7 +99,7 @@ COPY server/ server/
 COPY --from=server-engine /out/ /engine/
 RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=carball-target,target=/target,sharing=locked \
-    find server -type f -exec touch {} + \
+    cargo clean --release -p carball-server --manifest-path server/Cargo.toml --target-dir /target \
     && CARGO_BUILD_JOBS="$JOBS" CARBALL_ENGINE_NATIVE=/engine CARGO_TARGET_DIR=/target CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=symbols \
        RUSTFLAGS="--remap-path-prefix=/usr/local/cargo=/cargo --remap-path-prefix=/root=/home" \
        cargo build --release --locked --manifest-path server/Cargo.toml \
@@ -107,10 +110,12 @@ RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registr
 FROM golang AS api-build
 WORKDIR /src/api
 COPY api/go.mod api/go.sum ./
+# (the modules from the Go proxy alone, checked against go.sum and the checksum database: no direct fetch)
+ENV GOPROXY=https://proxy.golang.org GOFLAGS=-mod=readonly
 RUN --mount=type=cache,id=carball-gomod,target=/go/pkg/mod go mod download
 COPY api/ ./
 RUN --mount=type=cache,id=carball-gomod,target=/go/pkg/mod --mount=type=cache,id=carball-gobuild,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOFLAGS=-mod=readonly GOWORK=off GOTOOLCHAIN=local \
+    CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local \
     go build -trimpath -ldflags="-s -w -buildid=" -o /out/carball-api ./cmd/carball-api
 
 # The client's production build, the shipped-data and names checks on what it built
@@ -154,7 +159,7 @@ FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:782bb89768cc87b7f95c18b95b
 COPY client/docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY client/docker/security-headers.conf /etc/nginx/security-headers.conf
 COPY client/docker/40-carball-config.sh /docker-entrypoint.d/40-carball-config.sh
-COPY --from=client /src/client/dist/ /usr/share/nginx/html/
+COPY --from=checks /src/client/dist/ /usr/share/nginx/html/
 # (config.json and the Content-Security-Policy, written at start, the nginx user's: the site and all of /etc/nginx stay
 # root's, read-only to it, RV-397, RV-408; nginx keeps /tmp and /var/cache/nginx for its pid and buffers. Both are
 # written once here too, for the default GAME_SERVER_URL: a container started without the entrypoint still sends a
@@ -179,8 +184,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD wget -q -O /dev/nu
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS game
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin carball \
     && mkdir -p /var/lib/carball-game/outbox && chown -R 10001:10001 /var/lib/carball-game
-COPY --from=server /out/carball-server /app/carball-server
-COPY out/arena/collision_meshes/ /app/collision_meshes/
+COPY --from=checks /game/carball-server /app/carball-server
+COPY --from=checks /game/collision_meshes/ /app/collision_meshes/
 ENV SERVER_MODE=queue \
     GAME_PORT=4433 \
     PUBLIC_HOST=game.carball.zolt.top \
@@ -204,7 +209,7 @@ ENTRYPOINT ["/app/carball-server"]
 # read-only)
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS api
 RUN useradd --uid 10002 --no-create-home --shell /usr/sbin/nologin carball
-COPY --from=api-build /out/carball-api /app/carball-api
+COPY --from=checks /api/carball-api /app/carball-api
 ENV LISTEN_ADDR=:8080 \
     HEALTH_ADDR=127.0.0.1:8081 \
     PUBLIC_ORIGIN=https://carball.zolt.top

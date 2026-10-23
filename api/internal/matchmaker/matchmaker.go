@@ -120,7 +120,10 @@ type search struct {
 	superseded chan struct{}
 	// a poll came: only then is it matched (its start's answer may never have reached its page, which then can't cancel
 	// it: a search no page polls was never there, RV-892)
-	polled  bool
+	polled bool
+	// the kept wait it took (a cancelled match's, MX1R-3), given back if no page ever polls it: replaced (a start whose
+	// answer was lost, tried again), cancelled or let go, for the next search within the wait's own life (RV-904, RV-917)
+	kept    *kept
 	state   State
 	changed chan struct{}
 	// a found or ended search's record goes then
@@ -217,13 +220,11 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", State{}, err
 	}
-	// (a search no page polled yet replaced: a start whose answer was lost, the page trying again (RV-881); the retry
-	// keeps the wait it took, a cancelled match's kept one included, RV-904)
-	var inherited time.Time
+	// (the one it replaces gives back the kept wait it took if no page polled it: a start whose answer was lost, the
+	// page trying again (RV-881, RV-904); a search's own wait is never carried, so starts never polled build none up,
+	// RV-917)
 	if old := m.open[p.Account]; old != nil {
-		if !old.polled {
-			inherited = old.since
-		}
+		m.giveBack(old)
 		m.end(old, ReasonReplaced, time.Time{}, now)
 	}
 	m.arrivals++
@@ -232,11 +233,11 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 		lastPoll: now, state: State{Version: 1, Kind: Searching}, changed: make(chan struct{}),
 	}
 	if w, ok := m.waits[p.Account]; ok {
-		s.since = w.since
 		delete(m.waits, p.Account)
-	}
-	if !inherited.IsZero() && inherited.Before(s.since) {
-		s.since = inherited
+		if w.until.After(now) {
+			s.since = w.since
+			s.kept = &w
+		}
 	}
 	m.searches[s.id] = s
 	m.open[p.Account] = s
@@ -291,6 +292,7 @@ func (m *Matchmaker) Cancel(id, account string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s := m.searches[id]; s != nil && s.state.Kind == Searching && (account == "" || s.player.Account == account) {
+		m.giveBack(s)
 		m.end(s, ReasonCancelled, time.Time{}, m.now())
 	}
 }
@@ -312,11 +314,24 @@ func (m *Matchmaker) end(s *search, reason string, until, now time.Time) {
 	s.change(State{Kind: Ended, Reason: reason, Until: until}, now)
 }
 
+// giveBack returns the kept wait a search no page polled took to its account (unless a newer one is kept), for the
+// next search within the wait's own life (RV-917)
+func (m *Matchmaker) giveBack(s *search) {
+	if s.kept == nil || s.polled || s.state.Kind != Searching {
+		return
+	}
+	if _, newer := m.waits[s.player.Account]; !newer {
+		m.waits[s.player.Account] = *s.kept
+	}
+	s.kept = nil
+}
+
 // tidy lets go of what expired: searches no page polls, answers no poll fetched, cooldowns and kept waits, and the
 // matches with no word that they started (no one claimed) or started past the backstop
 func (m *Matchmaker) tidy(now time.Time) {
 	for id, s := range m.searches {
 		if (s.state.Kind == Searching && s.polls == 0 && now.Sub(s.lastPoll) >= SearchLife) || (s.state.Kind != Searching && !now.Before(s.gone)) {
+			m.giveBack(s)
 			if m.open[s.player.Account] == s {
 				delete(m.open, s.player.Account)
 			}

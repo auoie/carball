@@ -81,6 +81,14 @@ func (h *harness) found(t *testing.T, account string) *Match {
 	return s.Match
 }
 
+// alive moves the clock, every search's page polling meanwhile, no round of matches formed
+func (h *harness) alive(d time.Duration) {
+	h.now = t0.Add(d)
+	for _, id := range h.ids {
+		h.m.Poll(context.Background(), id, "", 0, 0)
+	}
+}
+
 // at moves the clock, every search's page polling meanwhile (alive), and forms matches
 func (h *harness) at(d time.Duration) {
 	h.now = t0.Add(d)
@@ -531,6 +539,77 @@ func TestRetriedStartKeepsTheWait(t *testing.T) {
 	// (the one who came, its wait since 0 s, first: matched with x; with the retry's own 45.5 s, x and y would be)
 	if h.found(t, "came") == nil || h.found(t, "x") == nil || h.found(t, "y") != nil {
 		t.Fatal("the retried start lost the kept wait")
+	}
+}
+
+// Starts never polled carry no wait (RV-917): one re-posted every 9 s for 81 s, then polled, waits from that search's
+// start, its rating window 100, not 550; a rival 300 apart not matched
+func TestUnpolledStartsCarryNoWait(t *testing.T) {
+	h := newHarness()
+	for at := time.Duration(0); at <= 81*time.Second; at += 9 * time.Second {
+		h.now = t0.Add(at)
+		if _, _, err := h.m.Start(player("p", 1500), req([]byte{1}, near), h.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.now = t0.Add(90 * time.Second)
+	h.search(t, player("p", 1500), []byte{1}, near)
+	h.search(t, player("rival", 1800), []byte{1}, near)
+	h.at(91 * time.Second)
+	if h.state(t, "p").Kind != Searching || h.state(t, "rival").Kind != Searching {
+		t.Fatal("matched 300 apart: the unpolled starts' wait carried")
+	}
+}
+
+// A kept wait lasts its own life alone (RV-917): a cancelled match's, carried through starts never polled, is gone
+// ReturnFor after the cancel; the search after waits from its own start
+func TestKeptWaitLastsReturnForOnly(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("came", 1500), []byte{1}, near)
+	h.at(40 * time.Second)
+	h.search(t, player("gone", 1500), []byte{1}, near)
+	h.m.Tick(h.now)
+	m := h.found(t, "came")
+	gone := int(h.issued[slices.IndexFunc(h.issued, func(s ticket.Seat) bool { return s.Match == m.ID && s.Seat != h.issued[0].Seat })].Seat)
+	h.m.Cancelled("eu:4433", m.ID, []int{gone}, h.now) // (came's wait kept: since 0, until 100 s)
+	delete(h.ids, "came")                              // (its found search: no page polls it now)
+	delete(h.ids, "gone")
+	for at := 45 * time.Second; at <= 108*time.Second; at += 9 * time.Second {
+		h.alive(at)
+		if at == 63*time.Second {
+			h.search(t, player("x", 1500), []byte{1}, near)
+		}
+		if at == 72*time.Second {
+			h.search(t, player("y", 1500), []byte{1}, near)
+		}
+		if _, _, err := h.m.Start(player("came", 1500), req([]byte{1}, near), h.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.alive(110 * time.Second)
+	h.search(t, player("came", 1500), []byte{1}, near)
+	h.at(111 * time.Second)
+	// (came's wait from 110 s: x (63 s) and y (72 s) the oldest, matched; with the kept 0 s carried, came and x would be)
+	if h.found(t, "x") == nil || h.found(t, "y") == nil || h.found(t, "came") != nil {
+		t.Fatal("a kept wait carried past ReturnFor")
+	}
+}
+
+// A search after one its page polled waits from its own start (another tab, other playlists): the polled one's wait
+// not carried (RV-918)
+func TestSearchAfterAPolledOneWaitsFromItsOwnStart(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("p", 1500), []byte{1}, near)
+	h.alive(9 * time.Second)
+	h.search(t, player("x", 1500), []byte{1}, near)
+	h.alive(18 * time.Second)
+	h.search(t, player("y", 1500), []byte{1}, near)
+	h.alive(27 * time.Second)
+	h.search(t, player("p", 1500), []byte{1}, near)
+	h.at(28 * time.Second)
+	// (p's wait from 27 s: x and y the oldest, matched; with its first search's 0 s, p and x would be)
+	if h.found(t, "x") == nil || h.found(t, "y") == nil || h.found(t, "p") != nil {
+		t.Fatal("a polled search's wait carried into the next")
 	}
 }
 

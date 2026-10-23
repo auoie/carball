@@ -131,5 +131,17 @@ const SERVERS: readonly Server[] = [
 const START_TIMEOUT_MS = 600_000;
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
-  return startServers(SERVERS, START_TIMEOUT_MS, "test-results/servers");
+  const stop = await startServers(SERVERS, START_TIMEOUT_MS, "test-results/servers");
+  // (a preview already running is reused: one started without the development matchmakers behind it would fail the
+  // searching specs with bare 404s, so said here instead, RV-923)
+  for (const port of ["14450", "14451", "14452"]) {
+    const answer = await fetch(`http://localhost:4173/dev-matchmaker/${port}/healthz`).catch(() => null);
+    if (answer?.status !== 200) {
+      await stop();
+      throw new Error(
+        `the preview on :4173 has no development matchmaker at /dev-matchmaker/${port} (a preview started without CARBALL_PREVIEW_MATCHMAKERS, reused?): stop it and run again`,
+      );
+    }
+  }
+  return stop;
 }

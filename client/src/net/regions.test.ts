@@ -6,6 +6,7 @@ import {
   pingAnswer,
   searchPlan,
   searchRequest,
+  serverNameOk,
   storePings,
   storeRegions,
   storedPings,
@@ -140,5 +141,12 @@ describe("the regions searched", () => {
     expect(pingAnswer({ ms: 31, server: "bad_name:4433" })).toBeNull();
     expect(pingAnswer({ ms: 31, server: "" })).toEqual({ ms: 31, name: null });
     expect(pingAnswer(null)).toBeNull();
+  });
+
+  it("a server's name as the matchmaker takes it: a host of 58 characters at most and a port (RV-922's Q01)", () => {
+    expect(serverNameOk(`${"a".repeat(58)}:4433`)).toBe(true);
+    expect(serverNameOk(`${"a".repeat(59)}:4433`)).toBe(false);
+    expect(pingAnswer({ ms: 9, server: `${"a".repeat(59)}:4433` })).toBeNull();
+    for (const bad of ["game.example", "game_eu.example:4433", "game.example:443333", ":4433"]) expect(serverNameOk(bad), bad).toBe(false);
   });
 });

@@ -355,3 +355,22 @@ fn the_guard_reads_cmake_and_the_build_script_as_they_are_read() {
 fn the_guard_refuses_a_path_it_cant_resolve() {
     inputs_of(Path::new(""), "add_library(x STATIC ${UNKNOWN}/a.cpp)");
 }
+
+/// The image build's cargo builds of the server's crate each clean it first (RV-927): its cache-mounted target dir would
+/// otherwise let cargo's fingerprints decide, and the files' times are no guide there (the context's are the commit's; an
+/// engine library from the layer cache keeps an old one), so a revert could ship the build before it
+#[test]
+fn the_image_builds_clean_the_servers_crate_before_each_build() {
+    let dockerfile = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../Dockerfile"));
+    let joined = dockerfile.replace("\\\n", " ");
+    let builds: Vec<&str> = joined
+        .lines()
+        .filter(|l| l.starts_with("RUN ") && (l.contains("cargo build") || l.contains("build_host.sh host")))
+        .collect();
+    assert_eq!(builds.len(), 2, "the server's and the local host's: {builds:?}");
+    for run in builds {
+        let clean = run.find("cargo clean --release -p carball-server");
+        let build = run.find("cargo build").or_else(|| run.find("build_host.sh host"));
+        assert!(clean.is_some() && clean < build, "a build without its clean first: {run}");
+    }
+}

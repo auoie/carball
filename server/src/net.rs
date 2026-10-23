@@ -305,14 +305,14 @@ impl Admission {
         true
     }
 
-    /// Lets go of the addresses with no session open and no start or ping in the last minute: they'd otherwise stay, one
-    /// for every address ever seen (RV-909)
+    /// Lets go of the addresses with no start or ping in the last minute: they'd otherwise stay, one for every address ever
+    /// seen (RV-909; an address's next start makes its entry again)
     fn sweep(&mut self, now: Instant) {
         self.swept = Some(now);
         for times in [&mut self.starts, &mut self.pings] {
-            times.retain(|address, t| {
+            times.retain(|_, t| {
                 last_minute(t, now);
-                !t.is_empty() || self.active.contains_key(address)
+                !t.is_empty()
             });
         }
     }
@@ -957,7 +957,54 @@ mod tests {
         let later = t0 + Duration::from_secs(61);
         assert!(admission.admit(b, later, &limits));
         assert!(!admission.starts.contains_key(&a) && !admission.pings.contains_key(&a), "a gone a minute let go");
-        assert!(admission.starts.contains_key(&b), "b kept: its sessions open");
+        assert!(admission.starts.contains_key(&b), "b kept: a start in its minute");
+    }
+
+    /// RV-919's P1: the sweep keeps an address whose minute is still open: two starts at 50 s and 55 s, a sweep at 61 s,
+    /// then a third within their minute refused (a limit of 2)
+    #[test]
+    fn the_sweep_keeps_an_open_minute() {
+        let limits = NetLimits { per_address_per_minute: 2, ..NetLimits::default() };
+        let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
+        let t0 = Instant::now();
+        let mut admission = Admission::default();
+        assert!(admission.admit(b, t0, &limits)); // (the first sweep, at 0 s)
+        for at in [50, 55] {
+            assert!(admission.admit(a, t0 + Duration::from_secs(at), &limits));
+            admission.release(a);
+        }
+        assert!(
+            !admission.admit(a, t0 + Duration::from_secs(61), &limits),
+            "a third start in the minute, after a sweep"
+        );
+    }
+
+    /// RV-919's R22: a ping's refund prunes its own minute: the pings' budget used at 30 s, a sweep at 61 s (which keeps
+    /// them: 31 s old), a ping at 95 s refunded all the same
+    #[test]
+    fn a_refund_prunes_its_own_minute() {
+        let limits = NetLimits { per_address_per_minute: 3, pings_per_address_per_minute: 2, ..NetLimits::default() };
+        let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
+        let t0 = Instant::now();
+        let mut admission = Admission::default();
+        let ping = |admission: &mut Admission, at: u64| {
+            let at = t0 + Duration::from_secs(at);
+            assert!(admission.admit(a, at, &limits));
+            admission.refund(a, at, &limits);
+            admission.release(a);
+        };
+        assert!(admission.admit(b, t0, &limits)); // (the first sweep, at 0 s)
+        ping(&mut admission, 30);
+        ping(&mut admission, 30);
+        assert!(admission.admit(b, t0 + Duration::from_secs(61), &limits)); // (a sweep)
+        ping(&mut admission, 95);
+        // (refunded: the address's three starts all still free in 95 s's minute)
+        let at = t0 + Duration::from_secs(95);
+        assert!((0..3).all(|_| {
+            let ok = admission.admit(a, at, &limits);
+            admission.release(a);
+            ok
+        }));
     }
 
     #[test]

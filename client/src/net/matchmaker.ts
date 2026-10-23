@@ -45,7 +45,7 @@ export const MATCHMAKER_TEXT = {
    *  the next step said (RV-886, RV-912: the game has no words for it, ours) */
   inMatch: "you're playing a match in another tab, window or device: finish it there, then search again",
   restarted: "the matchmaker restarted: search again",
-  noMatchmaker: "no matchmaker to search with (a development page: ?matchmaker=host:port)",
+  noMatchmaker: "no matchmaker to search with (a development page: ?matchmaker=host:port, or the preview's /dev-matchmaker/PORT)",
 } as const;
 
 /** How many times a poll that fails (no answer, a 502/503/504: the service restarting) is tried again, and the longest
