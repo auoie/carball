@@ -22,6 +22,8 @@ export const PROTOCOL_VERSION = 28;
 export const MAX_TICKET_BYTES = 512;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
+/** A server's name's bytes at most (its address, host:port) */
+export const MAX_SERVER_BYTES = 64;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =
@@ -199,8 +201,10 @@ export type ControlMessage =
   | { readonly type: "idleWarning"; readonly on: boolean }
   /** The server ends this session a second later (KICK_*: MM-37) */
   | { readonly type: "kicked"; readonly reason: number }
-  /** A region's ping answered (Hello's "ping" intent); the session ends (notes/matchmaking.md, Regions) */
-  | { readonly type: "pong" };
+  /** A region's ping answered (Hello's "ping" intent): the server's name as the matchmaker and its match tickets name
+   *  it (its address, host:port: sent with the ping, so the two can't differ, RV-863; empty from a server from before it
+   *  was added within version 28); the session ends (notes/matchmaking.md, Regions) */
+  | { readonly type: "pong"; readonly server: string };
 
 /** Hello's intents (the wire's byte is the index; "search" and "decline" no longer served: the matchmaker's, notes/
  *  matchmaking.md): "ping" a region's (no ticket), "decline" the unclaimed slot its token
@@ -427,6 +431,9 @@ class Reader {
   rest(): Uint8Array {
     return this.take(this.bytes.byteLength - this.#pos);
   }
+  atEnd(): boolean {
+    return this.#pos >= this.bytes.byteLength;
+  }
   name(): string {
     return new TextDecoder().decode(this.take(this.u8()));
   }
@@ -467,9 +474,14 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(0x91);
       w.u8(m.reason);
       break;
-    case "pong":
+    case "pong": {
       w.u8(0x93);
+      const name = new TextEncoder().encode(m.server);
+      const b = name.byteLength <= MAX_SERVER_BYTES ? name : new Uint8Array();
+      w.u8(b.byteLength);
+      w.bytes(b);
       break;
+    }
     case "mute":
       w.u8(0x08);
       w.u32(m.car);
@@ -666,8 +678,13 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       return { type: "idleWarning", on: r.u8() !== 0 };
     case 0x91:
       return { type: "kicked", reason: r.u8() };
-    case 0x93:
-      return { type: "pong" };
+    case 0x93: {
+      // (a server from before the name: none)
+      if (r.atEnd()) return { type: "pong", server: "" };
+      const n = r.u8();
+      if (n > MAX_SERVER_BYTES) throw new DecodeError("server name too long");
+      return { type: "pong", server: new TextDecoder().decode(r.take(n)) };
+    }
     case 0x08:
       return { type: "mute", car: r.u32(), on: r.u8() !== 0 };
     case 0x06:

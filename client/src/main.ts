@@ -8,7 +8,7 @@ import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import type { SessionEnd } from "./game/sessionEnd";
 import { type FoundMatch, Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS, type SearchHandlers } from "./game/matchmaking";
-import { Connection, type MatchSession, devServerAddress } from "./net/connection";
+import { Connection, type MatchSession, devServerAddress, refusalText } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
 import {
   type MenuNotice,
@@ -38,6 +38,7 @@ import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
 import { chooseRegions, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
 import { browserKey, pingServer } from "./net/search";
+import { REFUSED_VERSION } from "./net/protocol";
 import { MATCHMAKER_TEXT, type MatchmakerEndpoint, type MatchmakerSearch, MatchmakerSearchSession } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
@@ -498,6 +499,9 @@ async function main(): Promise<void> {
     const cachedPings = storedPings();
     const pings = new Map<string, number | null>(cachedPings?.pings ?? []);
     let pingedAt = cachedPings?.at ?? -Infinity;
+    /** Each region's server's name as its Pong said it (the matchmaker's: RV-863); none, its URL's host:port */
+    const serverNames = new Map<string, string>();
+    const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
     let pinging: Promise<void> = Promise.resolve();
     let chosen: string[] = [];
     /** The last search's regions (the browser tests') */
@@ -532,7 +536,9 @@ async function main(): Promise<void> {
       pingedAt = Date.now();
       pinging = Promise.all(
         listed.map(async (r) => {
-          pings.set(r.id, await pingServer(r.address));
+          const answer = await pingServer(r.address);
+          pings.set(r.id, answer?.ms ?? null);
+          if (answer?.server) serverNames.set(r.id, answer.server);
           if (storedRegions()?.manual !== true) chosen = chooseRegions(listed, storedRegions(), pings);
           showRegions();
         }),
@@ -554,9 +560,10 @@ async function main(): Promise<void> {
         timer,
         Promise.all(
           listed.map(async (r) => {
-            const ms = await pingServer(r.address, 1);
-            fresh.set(r.id, ms);
-            pings.set(r.id, ms);
+            const answer = await pingServer(r.address, 1);
+            fresh.set(r.id, answer?.ms ?? null);
+            pings.set(r.id, answer?.ms ?? null);
+            if (answer?.server) serverNames.set(r.id, answer.server);
             showRegions();
           }),
         ),
@@ -617,9 +624,9 @@ async function main(): Promise<void> {
               handlers.failed(MATCHMAKER_TEXT.noMatchmaker);
               return;
             }
-            searchable = all;
+            searchable = named(all);
             searchedRegions = all.length > 1 ? chosen : all.map((r) => r.id);
-            running = MatchmakerSearchSession.start(endpoint, searchRequest(all, chosen, measured, playlists), accepted, searchNotes);
+            running = MatchmakerSearchSession.start(endpoint, searchRequest(searchable, chosen, measured, playlists), accepted, searchNotes);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -994,6 +1001,10 @@ async function main(): Promise<void> {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.concluded);
     } else if (notice?.modal === "elsewhere") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.elsewhere);
+    } else if (notice?.modal === "reload") {
+      // (a claim or rejoin refused on version: the server updated since this page loaded, RV-865)
+      const text = refusalText(REFUSED_VERSION);
+      modal.show(MODAL_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
     } else if (notice?.modal === "banned" && notice.until !== undefined) {
       // (a rejoin refused for a ban from another match: the ban as a search says it, its seat gone, RX31)
       const text = queueBanText(notice.until, Date.now());

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RefusedError } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_QUEUE_BANNED, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_QUEUE_BANNED, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
 import { QueueBannedError, SignedOutError } from "./tickets";
 import {
   type GameServerConfig,
@@ -129,6 +129,9 @@ describe("the pages' handoffs", () => {
     expect(claimNotice(refused(REFUSED_TOKEN), rejoin, "gone")).toEqual({ modal: "lost" });
     // (a rejoin's seat live in another tab: said so; a claim's Refused 5 is no such thing)
     expect(claimNotice(refused(REFUSED_IN_MATCH), rejoin, "gone")).toEqual({ modal: "elsewhere" });
+    // (refused on version, a claim or a rejoin: reload, as a search is told, RV-865)
+    expect(claimNotice(refused(REFUSED_VERSION), claim, "gone")).toEqual({ modal: "reload" });
+    expect(claimNotice(refused(REFUSED_VERSION), rejoin, "gone")).toEqual({ modal: "reload" });
     expect(claimNotice(refused(REFUSED_IN_MATCH), claim, "gone")).toEqual({ modal: "lost" });
     expect(claimNotice(refused(REFUSED_CONCLUDED), rejoin, "gone")).toEqual({ modal: "concluded" });
     // (a rejoin's ticket refused for another match's ban: the ban)

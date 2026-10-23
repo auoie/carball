@@ -2,7 +2,7 @@
 // browser's key (a development page's player: its account the key twice). The search itself is the accounts service's
 // matchmaker's (net/matchmaker.ts).
 import { type ServerAddress } from "./connection";
-import { PROTOCOL_VERSION, encodeControl } from "./protocol";
+import { PROTOCOL_VERSION, decodeControl, encodeControl } from "./protocol";
 
 const BROWSER_KEY = "carball.browserKey";
 /** This page's key when the browser keeps none (storage blocked) */
@@ -68,20 +68,21 @@ function transportTo(address: ServerAddress): WebTransport {
 }
 
 /** A region's ping (notes/matchmaking.md, Regions): the round trip in ms on an open session, from a hello with intent
- *  "ping" to the server's first answer (its Pong; a server from before the intent refuses it, as quickly), the better of
- *  `tries`; null if it can't be reached in time */
-export async function pingServer(address: ServerAddress, tries = 2): Promise<number | null> {
-  let best: number | null = null;
+ *  "ping" to the server's Pong, the better of `tries`, and the server's name as its Pong says it (the matchmaker's for
+ *  it: RV-863; empty from a server from before the name); null if it can't be reached in time, or answers with anything
+ *  but a Pong (a server of another protocol version refuses it: not one to match at, RV-864) */
+export async function pingServer(address: ServerAddress, tries = 2): Promise<{ readonly ms: number; readonly server: string } | null> {
+  let best: { ms: number; server: string } | null = null;
   for (let i = 0; i < tries; i++) {
-    const ms = await pingOnce(address).catch(() => null);
+    const answer = await pingOnce(address).catch(() => null);
     // (unreached: not tried again, its dash shown in one try's time, not two: RV-842)
-    if (ms === null) break;
-    if (best === null || ms < best) best = ms;
+    if (answer === null) break;
+    if (best === null || answer.ms < best.ms) best = answer;
   }
-  return best === null ? null : Math.round(best);
+  return best === null ? null : { ms: Math.round(best.ms), server: best.server };
 }
 
-async function pingOnce(address: ServerAddress): Promise<number> {
+async function pingOnce(address: ServerAddress): Promise<{ ms: number; server: string }> {
   const transport = transportTo(address);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -90,16 +91,32 @@ async function pingOnce(address: ServerAddress): Promise<number> {
         reject(new Error("no answer in time"));
       }, PING_TIMEOUT_MS);
     });
-    const timed = async (): Promise<number> => {
+    const timed = async (): Promise<{ ms: number; server: string }> => {
       await transport.ready;
       const stream = await transport.createBidirectionalStream();
       const writer = stream.writable.getWriter();
       const reader = (stream.readable as ReadableStream<Uint8Array>).getReader();
       const start = performance.now();
       await writer.write(pingHello());
-      const { done } = await reader.read();
-      if (done) throw new Error("no answer");
-      return performance.now() - start;
+      // (the first whole message, decoded: a Pong alone answers)
+      let buffer = new Uint8Array(0);
+      for (;;) {
+        if (buffer.byteLength >= 2) {
+          const n = (buffer[0] ?? 0) | ((buffer[1] ?? 0) << 8);
+          if (buffer.byteLength >= 2 + n) {
+            const ms = performance.now() - start;
+            const answer = decodeControl(buffer.subarray(2, 2 + n));
+            if (answer.type !== "pong") throw new Error(`answered with ${answer.type}, not a pong`);
+            return { ms, server: answer.server };
+          }
+        }
+        const { done, value } = await reader.read();
+        if (done) throw new Error("no answer");
+        const joined = new Uint8Array(buffer.byteLength + value.byteLength);
+        joined.set(buffer);
+        joined.set(value, buffer.byteLength);
+        buffer = joined;
+      }
     };
     return await Promise.race([timeout, timed()]);
   } finally {

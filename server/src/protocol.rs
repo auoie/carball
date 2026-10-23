@@ -34,6 +34,8 @@ pub const CHAT_OFF: u8 = 3;
 pub const MAX_NAME_BYTES: usize = 32;
 /// A Hello's search ticket's bytes at most (notes/accounts.md §3: the accounts service's encoded ticket)
 pub const MAX_TICKET_BYTES: usize = 512;
+/// A server's name's bytes at most (its address, host:port: a match ticket's server, the API's `ticket.MaxServer`)
+pub const MAX_SERVER_BYTES: usize = 64;
 /// Why a join was refused
 pub const REFUSED_FULL: u8 = 0;
 /// `Refused`'s reason: the client speaks another protocol version (RV-262; a client of version 12 on can read it)
@@ -284,8 +286,12 @@ pub enum Control {
     Kicked {
         reason: u8,
     },
-    /// A ping's answer (`INTENT_PING`); the session ends
-    Pong,
+    /// A ping's answer (`INTENT_PING`): this server's name as the matchmaker and its match tickets name it (its address,
+    /// host:port: the page sends it with its ping, so the two can't differ, RV-863; empty: none, a development server's
+    /// open match, or a server from before it was added within version 28); the session ends
+    Pong {
+        server: String,
+    },
 }
 
 /// One player's scoreboard line
@@ -573,6 +579,12 @@ impl Writer {
         self.u16(b.len() as u16);
         self.0.extend_from_slice(b);
     }
+    /// A server's name: a byte count, then its bytes (`MAX_SERVER_BYTES` at most; a longer one sent empty)
+    fn server(&mut self, s: &str) {
+        let b = if s.len() <= MAX_SERVER_BYTES { s.as_bytes() } else { &[] };
+        self.u8(b.len() as u8);
+        self.0.extend_from_slice(b);
+    }
     /// A short UTF-8 string: a byte count, then its bytes (`MAX_NAME_BYTES` at most, cut at a character boundary)
     fn name(&mut self, s: &str) {
         let mut end = s.len().min(MAX_NAME_BYTES);
@@ -651,6 +663,14 @@ impl<'a> Reader<'a> {
         let n = usize::from(self.u8()?);
         Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
     }
+    /// A server's name (`MAX_SERVER_BYTES` at most: a longer one is malformed)
+    fn server(&mut self) -> Result<String, DecodeError> {
+        let n = usize::from(self.u8()?);
+        if n > MAX_SERVER_BYTES {
+            return Err(DecodeError::Truncated);
+        }
+        Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
+    }
     fn rest(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.0).to_vec()
     }
@@ -703,7 +723,10 @@ impl Control {
                 w.u8(0x91);
                 w.u8(*reason);
             }
-            Self::Pong => w.u8(0x93),
+            Self::Pong { server } => {
+                w.u8(0x93);
+                w.server(server);
+            }
             Self::Mute { car, on } => {
                 w.u8(0x08);
                 w.u32(*car);
@@ -914,7 +937,8 @@ impl Control {
             },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
             0x91 => Self::Kicked { reason: r.u8()? },
-            0x93 => Self::Pong,
+            // (a server from before the name: none)
+            0x93 => Self::Pong { server: if r.0.is_empty() { String::new() } else { r.server()? } },
             0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
@@ -1157,6 +1181,9 @@ mod tests {
         let mut longer = bytes[2..].to_vec();
         longer.push(0);
         assert!(matches!(Control::decode(&longer), Err(DecodeError::Trailing)), "AP2-12");
+        // (a Pong from a server from before its name, added within version 28: read as none; a name too long refused)
+        assert_eq!(Control::decode(&[0x93]).unwrap(), Control::Pong { server: String::new() });
+        assert!(Control::decode(&[0x93, 65]).is_err());
         drop(hello);
     }
 
@@ -1215,7 +1242,7 @@ mod tests {
             },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
             "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
-            "pong" => Control::Pong,
+            "pong" => Control::Pong { server: m["server"].as_str().unwrap_or_default().to_string() },
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(
                 m["players"]

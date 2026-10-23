@@ -420,7 +420,8 @@ async fn session(
     // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip; its
     // session closed after a moment's flush, its slot free at once, not after the page's close: RV-856)
     if matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING) {
-        let _ = send.write_all(&Control::Pong.encode()).await;
+        let server = limits.server_name.clone().unwrap_or_default();
+        let _ = send.write_all(&Control::Pong { server }.encode()).await;
         let _ = send.finish().await;
         let _ = tokio::time::timeout(PING_FLUSH, connection.closed()).await;
         return Ok(false);
@@ -454,6 +455,12 @@ async fn session(
             crate::ticket::Purpose::Search => false,
         };
         match tickets.check(&ticket, crate::ticket::unix_now()).and_then(|checked| {
+            if let crate::ticket::Purpose::Seat(s) = &checked.purpose
+                && let Some(own) = limits.server_name.as_ref().filter(|own| **own != s.server)
+            {
+                // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863)
+                eprintln!("a match ticket for server {:?}, this server is {own:?}: refused", s.server);
+            }
             if purpose_fits(&checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
         }) {
             Ok(checked) => {

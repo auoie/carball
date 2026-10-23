@@ -429,7 +429,11 @@ fn seat_ticket(
 async fn a_ping_is_answered_and_closed_at_once_and_a_search_or_a_decline_is_refused() {
     let (port, cert_hash, _tickets) = ticketed_server(false).await;
     let (pong, connection, _recv) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
-    assert_eq!(pong, Control::Pong);
+    assert_eq!(
+        pong,
+        Control::Pong { server: format!("localhost:{port}") },
+        "its own name, as its match tickets name it"
+    );
     let start = Instant::now();
     let closed = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
     assert!(closed.is_ok() && start.elapsed() < Duration::from_millis(600), "closed after {:?}", start.elapsed());

@@ -107,8 +107,8 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | Env | Default in the image | |
 |---|---|---|
 | `GAME_PORT` | `4433` | the UDP port (publish the same port: `-p 4433:4433/udp`) |
-| `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it). With the port, this server's name for the matchmaker: `PUBLIC_HOST:GAME_PORT`, which must be the host and port of its `GAME_SERVERS` URL (its match tickets name it; a claim of another server's ticket is refused) |
-| `PUBLIC_PORT` | (none) | the port clients reach it at when it's published as another than `GAME_PORT` (the server's name then `PUBLIC_HOST:PUBLIC_PORT`) |
+| `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it). With the port, this server's name for the matchmaker: `PUBLIC_HOST:GAME_PORT`, which its `Pong` tells the page and the page sends with its ping, so its match tickets name it exactly as it does (RV-863); a claim of another server's ticket is refused, both names logged |
+| `PUBLIC_PORT` | (none) | the port clients reach it at when it's published as another than `GAME_PORT` (the server's name then `PUBLIC_HOST:PUBLIC_PORT`: tidier logs; the name only has to be this server's own and unique) |
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated (case doesn't matter); others (and none) get 403. Required with a certificate: empty or blank, the server refuses to start |
 | `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one; in a test, Chrome's WebTransport refused a locally trusted test CA and ignored `--ignore-certificate-errors*` too). Required in queue mode (an empty one is an error: no silent self-signed server) |
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
@@ -155,8 +155,9 @@ asks (`/dev-ticket`), with no sign-in.
   account. A match opens here at its first claim; an account with a player in a match here can't claim another.
 - **Regions** (notes/matchmaking.md, Regions): one server per region; each is this image with its own `PUBLIC_HOST` and
   certificate (`game`, `game-eu`, `game-asia` .carball.zolt.top), everything else the same (`ALLOWED_ORIGIN`, the ticket
-  keys, `API_URL`, the token). The page sends the matchmaker its ticked regions with each server's ping; a region's ping
-  is a hello of intent 4, answered with `Pong` and the session closed at once (RV-856), no ticket.
+  keys, `API_URL`, the token). The page sends the matchmaker its ticked regions with each server's ping and name; a
+  region's ping is a hello of intent 4, answered with `Pong` (the server's name) and the session closed at once
+  (RV-856), no ticket; only a `Pong` counts as an answer (a server of another protocol version is unreached, RV-864).
 - **Protocol 28** (the central matchmaker): a page from before gets `Refused` 1 ("reload the page") on every intent,
   its ping and its rejoin too. Deploy the API, then the game servers, then the page, back to back.
 - **Volumes:** `/var/lib/carball-game` (the outbox: a few KB, keep it across restarts). The certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`

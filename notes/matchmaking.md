@@ -193,7 +193,9 @@ server (another server's, one from
 before an API restart, one already over) is answered 204 and ignored. A refusal or a 404 would make the outbox retry it
 for a day ahead of every later call (MX1R-2). Each event is applied once in effect.
 
-A server's name is `PUBLIC_HOST:GAME_PORT`, the address its `GAME_SERVERS` URL has. A ping key the API doesn't know
+A server's name is `PUBLIC_HOST:GAME_PORT` as the server itself spells it: its `Pong` says it, and the page sends
+that name with its ping (a server from before the name: its URL's host:port), so a ticket can't name it otherwise
+(RV-863); only a decoded `Pong` counts as a ping's answer (RV-864). A ping key the API doesn't know
 can only match players who all named it, and its ticket opens nothing anywhere, so there's no server list in the API
 (MX1R-9). There's no heartbeat and no state push. An event waits behind a result in the outbox after an API blip; that's
 accepted (MX1R-13).

@@ -51,10 +51,12 @@ else
 fi
 
 EM=${EMSCRIPTEN_ROOT:-/usr/lib/emscripten}
-# The two WebAssembly builds kept by everything that makes them (out/images/cache/<commit|worktree>/<name>-<key>): the
-# staged sources' files, the build's own commands (its function's text), the environment the compilers read and the
-# tools' versions, hashed; so an image built with the engine unchanged (an API-only update) reuses the last outputs
-# instead of starting from scratch, the sources still staged clean. A commit's build never takes a working tree's entry;
+# The two WebAssembly builds and the server's native binary kept by everything that makes them
+# (out/images/cache/<commit|worktree>/<name>-<key>): the staged sources' files, the build's own commands (its
+# function's text), the environment the compilers read and the tools' versions, hashed; so an image built with the
+# engine unchanged (an API-only update) reuses the last outputs instead of starting from scratch, and a release that
+# doesn't touch the server skips Rust (the native build's staging path is in its flags, so cargo itself would rebuild
+# every crate and the engine's C++ each time), the sources still staged clean. A commit's build never takes a working tree's entry;
 # an entry's files are checked against the hashes kept with them before they're used (a mismatch: put aside, built
 # again), and their hashes are printed, so an image's WebAssembly can be matched; one build at a time takes or fills the
 # cache (RV-794..797)
@@ -89,7 +91,7 @@ cargo_config() {
 		if [ -f "$f" ]; then echo "$f"; cat "$f"; fi
 	done
 }
-# The tools: Emscripten's and its clang's versions, Binaryen's, CMake's, Rust's and Node's
+# The tools: Emscripten's and its clang's versions, Binaryen's, CMake's, Rust's and Node's (the WebAssembly builds')
 toolchain() {
 	PATH="$EM:$PATH" emcc -v 2>&1 | head -2
 	PATH="$EM:$PATH" wasm-opt --version 2>&1 || true
@@ -97,8 +99,15 @@ toolchain() {
 	rustc -vV
 	node --version
 }
+# The native build's tools: Rust's, CMake's and the C and C++ compilers' (the engine's C++, through the cmake crate)
+native_toolchain() {
+	rustc -vV
+	cmake --version | head -1
+	"${CC:-cc}" --version | head -1
+	"${CXX:-c++}" --version | head -1
+}
 # inputs_key FUNCTION PATH...: the staged files under each path, the build function's text, the environment, cargo's
-# config, the tools
+# config, the tools (TOOLS names the function that prints them: toolchain, the WebAssembly builds', by default)
 inputs_key() {
 	local build=$1
 	shift
@@ -107,7 +116,7 @@ inputs_key() {
 		declare -f "$build"
 		build_env
 		cargo_config
-		toolchain
+		"${TOOLS:-toolchain}"
 	} | sha256sum | cut -c1-24
 }
 # cached NAME KEY DIR FILE... -- COMMAND...: DIR's FILEs from the cache when it holds KEY's and they match their hashes,
@@ -142,9 +151,23 @@ cached() {
 	) 9> "$CACHE/.lock"
 }
 
-# (both keys before either build: the engine's build writes inside engine/, which the host's key reads)
+# The server's release binary: its own target directory, whatever CARGO_TARGET_DIR says (a development server's binary
+# stays); no debug info, and the staged sources', the registry's and the home directory's paths remapped, Rust's and the
+# engine's C++ alike
+TARGET="$R/out/images/target"
+CARGO_HOME_DIR=${CARGO_HOME:-$HOME/.cargo}
+build_server() {
+	CARGO_TARGET_DIR="$TARGET" CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=symbols \
+		RUSTFLAGS="--remap-path-prefix=$HOME=/home --remap-path-prefix=$CARGO_HOME_DIR=/cargo --remap-path-prefix=$SRC=/src" \
+		CFLAGS="-ffile-prefix-map=$SRC=/src" CXXFLAGS="-ffile-prefix-map=$SRC=/src" \
+		cargo build --release --offline --manifest-path "$SRC/server/Cargo.toml"
+	cp "$TARGET/release/carball-server" "$STAGE/game/"
+}
+
+# (every key before any build: the engine's build writes inside engine/, which the host's and the server's keys read)
 ENGINE_KEY=$(inputs_key build_engine engine)
 HOST_KEY=$(inputs_key build_local_host engine server scripts/build_host.sh)
+SERVER_KEY=$(TOOLS=native_toolchain inputs_key build_server server engine protocol)
 
 echo "== the engine's WebAssembly (the client bundles it)"
 cached engine "$ENGINE_KEY" "$SRC/engine/build-wasm" carball_engine.mjs carball_engine.wasm carball_engine.d.mts \
@@ -163,15 +186,8 @@ cp -a "$SRC/client/dist" "$STAGE/web/dist"
 cp "$SRC/client/docker/Dockerfile" "$SRC/client/docker/nginx.conf" "$SRC/client/docker/security-headers.conf" "$SRC/client/docker/40-carball-config.sh" "$STAGE/web/"
 
 echo "== the server's release binary"
-# (its own target directory, whatever CARGO_TARGET_DIR says: a development server's binary stays; no debug info, and the
-# staged sources', the registry's and the home directory's paths remapped, Rust's and the engine's C++ alike)
-TARGET="$R/out/images/target"
-CARGO_HOME_DIR=${CARGO_HOME:-$HOME/.cargo}
-CARGO_TARGET_DIR="$TARGET" CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=symbols \
-	RUSTFLAGS="--remap-path-prefix=$HOME=/home --remap-path-prefix=$CARGO_HOME_DIR=/cargo --remap-path-prefix=$SRC=/src" \
-	CFLAGS="-ffile-prefix-map=$SRC=/src" CXXFLAGS="-ffile-prefix-map=$SRC=/src" \
-	cargo build --release --offline --manifest-path "$SRC/server/Cargo.toml"
-cp "$TARGET/release/carball-server" "$STAGE/game/"
+# (a cached one checked as a built one: its build machine paths and its names, below)
+cached server "$SERVER_KEY" "$STAGE/game" carball-server -- build_server
 cp -a "$SRC/out/arena/collision_meshes" "$STAGE/game/collision_meshes" # (the committed meshes only)
 cp "$SRC/server/docker/Dockerfile" "$STAGE/game/"
 # (grep -a on the binary itself: without binutils' strings this still counts, RV-414)

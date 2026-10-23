@@ -585,9 +585,10 @@
     {
       "channel": "control",
       "message": {
-        "type": "pong"
+        "type": "pong",
+        "server": "game-eu.example:4433"
       },
-      "hex": "010093"
+      "hex": "1600931467616d652d65752e6578616d706c653a34343333"
     },
     {
       "channel": "control",

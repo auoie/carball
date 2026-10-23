@@ -2,7 +2,7 @@
 // claim (the seat's match ticket, the matchmaker's); the match page hands the menu page back a notice when it ends (a
 // modal to show, a search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { QueueBannedError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
@@ -56,7 +56,7 @@ const keptServer = (value: unknown): { server: string } | Record<string, never> 
 export interface MenuNotice {
   /** The error modal: kicked for being idle, the connection lost, a rejoin too late (the match over), the sign-in gone, a
    *  rejoin's ticket refused for a ban from another match (until `until`) */
-  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned";
+  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned" | "reload";
   /** The ban's end ("banned": ms, wall clock) */
   readonly until?: number;
   /** A search of these playlists to start */
@@ -157,7 +157,12 @@ export function takeNotice(storage = session()): MenuNotice | null {
     const back = value.back;
     const search = playlistsOf(value.search);
     return {
-      ...(value.modal === "idle" || value.modal === "lost" || value.modal === "concluded" || value.modal === "signedOut" || value.modal === "elsewhere"
+      ...(value.modal === "idle" ||
+      value.modal === "lost" ||
+      value.modal === "concluded" ||
+      value.modal === "signedOut" ||
+      value.modal === "elsewhere" ||
+      value.modal === "reload"
         ? { modal: value.modal }
         : {}),
       ...(value.modal === "banned" && typeof value.until === "number" && Number.isFinite(value.until) ? { modal: "banned" as const, until: value.until } : {}),
@@ -383,6 +388,8 @@ export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNo
     return { search: claim.playlists ?? [claim.playlist], warning: matchGone, back: { searchedAt: claim.searchedAt } };
   }
   if (refused === REFUSED_IN_MATCH && claim.rejoin) return { modal: "elsewhere" };
+  // (the server updated since this page loaded: reload, as a search refused so is told, RV-865)
+  if (refused === REFUSED_VERSION) return { modal: "reload" };
   if (refused === REFUSED_CONCLUDED) return { modal: "concluded" };
   if (e instanceof QueueBannedError && claim.rejoin) return { modal: "banned", until: e.until };
   if (e instanceof SignedOutError) return { modal: "signedOut" };
