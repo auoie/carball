@@ -410,13 +410,20 @@ export class SettingsPanel {
     const capturing = this.#capture?.action === action && this.#capture.device === device;
     const b = el("button", {
       className: `binding-slot${capturing ? " capturing" : ""}${input === null ? " empty" : ""}`,
-      textContent: capturing ? (device === "keyboard" ? "Press a key or mouse button…" : "Press or move a gamepad input…") : inputName(input),
+      textContent: inputName(input),
     });
     b.dataset["action"] = action;
     b.dataset["device"] = device;
+    // (waiting for an input: the prompt drawn over the slot's own content, kept but hidden, so the slot and its column
+    // keep their size; read out as its name)
+    if (capturing) {
+      const prompt = device === "keyboard" ? "Press a key or mouse button…" : "Press or move a gamepad input…";
+      b.dataset["prompt"] = prompt;
+      b.setAttribute("aria-label", prompt);
+    }
     // (a pad's face button with its glyph, in the connected pad's family: PlayStation's ✕ ○ □ △ before its name; an Xbox
     // pad's letter, its name too, alone)
-    if (!capturing && input?.kind === "padButton" && input.button <= 3) {
+    if (input?.kind === "padButton" && input.button <= 3) {
       const glyph = keyGlyph(input);
       if (glyph.kind === "pad" && glyph.text === inputName(input)) b.replaceChildren(glyphElement(glyph));
       else b.prepend(glyphElement(glyph), " ");

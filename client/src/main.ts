@@ -1,4 +1,5 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
+import { installMenuScale } from "./ui/menuScale";
 import { setInterfaceScale } from "./ui/stage";
 import { fitHudFonts, loadHudFonts } from "./ui/hudFont";
 import createEngine from "@engine/carball_engine_web.mjs";
@@ -267,6 +268,8 @@ async function main(): Promise<void> {
   particleDetail.performance = settings.video.particleDetail === "performance";
   renderer.scene.add(arena.root);
   let worldDetail = settings.video.worldDetail;
+  // (the menus' size from the window, before anything reads their boxes: the garage frames its car beside its page)
+  installMenuScale();
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
   const audio = new GameAudio(name);

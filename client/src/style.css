@@ -411,9 +411,11 @@ body {
   position: fixed;
   z-index: 6; /* (over the pause and main menus it opens from) */
   inset: 5vh 50% auto auto;
-  transform: translateX(50%);
-  width: min(760px, 94vw);
-  max-height: calc(95vh - 72px); /* (room under it for the pad's button hints: src/ui/padNav.ts) */
+  transform: translateX(50%) scale(var(--menu-scale, 1));
+  transform-origin: 50% 0;
+  width: min(760px, calc(94vw / var(--menu-scale, 1)));
+  /* (room under it for the pad's button hints: src/ui/padNav.ts; drawn at --menu-scale, its limits shrunk to match) */
+  max-height: calc((95vh - 72px) / var(--menu-scale, 1));
   display: flex;
   flex-direction: column;
   background: rgba(12, 16, 26, 0.96);
@@ -535,9 +537,30 @@ body {
   margin: 0 0.35em 0 0.1em;
 }
 
+/* (waiting for an input: the slot's own content kept, hidden, its size unchanged; the prompt over it, cut short with an
+   ellipsis where the slot is narrower) */
 .binding-slot.capturing {
+  position: relative;
   background: #ffb02e !important;
-  color: #111 !important;
+  color: transparent !important;
+}
+
+.binding-slot.capturing > * {
+  visibility: hidden;
+}
+
+.binding-slot.capturing::after {
+  content: attr(data-prompt);
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  padding: 0 12px;
+  color: #111;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sliders {
@@ -2407,6 +2430,8 @@ body {
   left: 6vw;
   top: 22vh;
   width: min(340px, 88vw);
+  transform: scale(var(--menu-scale, 1));
+  transform-origin: 0 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2495,11 +2520,16 @@ body {
   z-index: 4;
 }
 
+/* (each menu's box drawn at --menu-scale, src/ui/menuScale.ts: from its anchored edge, its own layout unchanged; the
+   main menu's pages by the scale property, so their slide-in's transform adds to it, never drawing a page at the old
+   size first) */
 .main-menu-column {
   width: min(360px, 84vw);
   display: flex;
   flex-direction: column;
   gap: 8px;
+  scale: var(--menu-scale, 1);
+  transform-origin: left center;
 }
 
 .main-menu-column[hidden] {
@@ -3063,6 +3093,7 @@ body {
 
 .modal-box {
   width: min(460px, 100%);
+  transform: scale(var(--menu-scale, 1));
   display: flex;
   flex-direction: column;
   gap: 12px;
