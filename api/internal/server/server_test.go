@@ -382,17 +382,7 @@ func TestCallbacksBoundToTheBrowser(t *testing.T) {
 	if got := e.page(e.get(attacker, strings.Replace(e.steamAssertion(login, "n4"), "?flow=", "?flow=other&was=", 1))); got.Get("signin") != "failed" {
 		t.Errorf("a callback's flow not its cookie's: %v", got)
 	}
-	// (a Google flow's state at Steam's callback, its return_to made for it: the flow's provider checked (AP1's
-	// AC1-flow-provider-unchecked))
-	googleStart, err := url.Parse(e.get(attacker, "/api/auth/google/start").Header.Get("Location"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := googleStart.Query().Get("state")
-	forged := "https://steam.example/login?openid.return_to=" + url.QueryEscape(e.srv.URL+"/api/auth/steam/callback?flow="+state)
-	if got := e.page(e.get(attacker, e.steamAssertion(forged, "n5"))); got.Get("signin") != "failed" {
-		t.Errorf("a Google flow at Steam's callback: %v", got)
-	}
+	// (a flow of the other provider's: TestFlowProviderIsChecked)
 	if e.steam.called != 0 {
 		t.Errorf("Steam asked %d times for callbacks refused here", e.steam.called)
 	}
@@ -737,6 +727,61 @@ func TestCookiesAndTokens(t *testing.T) {
 }
 
 // A flow lives FlowTTL: its callback after it fails, Google never asked (AP-11)
+// A sign-in flow is taken once: its callback replayed, even after it succeeded and with the flow's cookie kept (a copy
+// of it, the browser's own cleared), is refused, the code never exchanged again (AC1-flow-not-single-use, the mutation
+// suite's security case kept as a test)
+func TestFlowIsTakenOnce(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	u, _ := url.Parse(e.srv.URL)
+	start := e.get(b, "/api/auth/google/start")
+	var flow string
+	for _, c := range b.Jar.Cookies(u) {
+		if c.Name == "__Host-cb_auth" {
+			flow = c.Value
+		}
+	}
+	if flow == "" {
+		t.Fatal("no flow cookie")
+	}
+	q := e.google.Authorize(t, start.Header.Get("Location"), "sub-once")
+	if got := e.page(e.get(b, "/api/auth/google/callback?"+q.Encode())); got.Get("signin") == "failed" {
+		t.Fatalf("the first callback: %v", got)
+	}
+	copied := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second, CheckRedirect: b.CheckRedirect}
+	replayed := e.get(copied, "/api/auth/google/callback?"+q.Encode(), "Cookie", "__Host-cb_auth="+flow)
+	if got := e.page(replayed); got.Get("signin") != "failed" {
+		t.Errorf("the callback replayed with the flow's cookie: %v", got)
+	}
+	if e.google.Exchanges != 1 {
+		t.Errorf("the code exchanged %d times", e.google.Exchanges)
+	}
+}
+
+// A sign-in flow answers its own provider's callback alone: a Google flow's state at Steam's callback, its return_to
+// made for it, is refused and Steam never asked (AC1-flow-provider-unchecked, kept as a test)
+func TestFlowProviderIsChecked(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	googleStart, err := url.Parse(e.get(b, "/api/auth/google/start").Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := googleStart.Query().Get("state")
+	forged := "https://steam.example/login?openid.return_to=" + url.QueryEscape(e.srv.URL+"/api/auth/steam/callback?flow="+state)
+	if got := e.page(e.get(b, e.steamAssertion(forged, "n5"))); got.Get("signin") != "failed" {
+		t.Errorf("a Google flow at Steam's callback: %v", got)
+	}
+	if e.steam.called != 0 {
+		t.Errorf("Steam asked %d times for a callback refused here", e.steam.called)
+	}
+	if e.meStatus(b) != http.StatusUnauthorized {
+		t.Error("signed in")
+	}
+}
+
+// A sign-in flow ends with its time: a callback after it is refused, the code never exchanged (AC1-flow-expiry-ignored,
+// kept as a test)
 func TestFlowExpires(t *testing.T) {
 	e := setup(t, nil)
 	b := e.browser()

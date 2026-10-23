@@ -38,6 +38,12 @@ Variants are closed: a sealed interface (an unexported marker method, `//sumtype
 when a ban ends, so gochecksumtype fails a type switch that misses one; the providers are an enum the exhaustive linter
 holds every switch to.
 
+The sign-in's security cases are named tests, each failing if its check goes: a flow taken once
+(`TestFlowIsTakenOnce`), a flow's expiry (`TestFlowExpires`), a flow answering its own provider's callback alone
+(`TestFlowProviderIsChecked`), beside the nonce, state and cookie tests. Now and then, a mutation run looks for tests
+that miss a change: [Gremlins](https://github.com/go-gremlins/gremlins) (`gremlins unleash ./...` with the throwaway
+database's variables above), its survivors read by hand (some are equivalent).
+
 Development builds are offline: the modules go.sum pins, from the module cache (`GOPROXY=off`). The image build
 (the root `Dockerfile`) downloads them, checked against go.sum and the checksum database, into its own cache.
 
