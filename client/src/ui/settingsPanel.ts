@@ -3,7 +3,7 @@
 import { browserNotice, currentBrowserLimits } from "./browserNotice";
 import { fullscreenAvailable } from "./displayMode";
 import type { CameraSettings } from "../camera/carballCamera";
-import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onPadStyle } from "../input/bindings";
+import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onKeyboardLayout, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
 import { checkbox, cycler, cyclerControl, slider } from "./controls";
 import { VIDEO_TEXT, type VideoState, withRenderDetail, withVideoChange } from "../settings/video";
@@ -254,10 +254,15 @@ export class SettingsPanel {
       no.focus();
     });
     host.append(this.#root);
-    // (the pad's names in its family's: a pad seen after the panel drew them, or another plugged in)
-    onPadStyle(() => {
+    // (the pad's names in its family's: a pad seen after the panel drew them, or another plugged in; a pad connected or
+    // gone, the Controls screen's line for a pad the browser doesn't map; the keys' names, a layout switched: RV-1132)
+    const redraw = (): void => {
       if (this.isOpen) this.#render();
-    });
+    };
+    onPadStyle(redraw);
+    onKeyboardLayout(redraw);
+    window.addEventListener("gamepadconnected", redraw);
+    window.addEventListener("gamepaddisconnected", redraw);
   }
 
   /** Escape while it's open: a rebind's capture ends, else the Default question goes, else it closes */

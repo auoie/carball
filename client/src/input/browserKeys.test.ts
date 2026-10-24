@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { type Action, type Bindings, DEFAULT_BINDINGS, type KeyboardInput, inputName, keyBound, keyName, setKeyboardLayout, takesBrowserKey } from "./bindings";
+import {
+  type Action,
+  type Bindings,
+  DEFAULT_BINDINGS,
+  type KeyboardInput,
+  inputName,
+  keyBound,
+  keyName,
+  onKeyboardLayout,
+  setKeyboardLayout,
+  takesBrowserKey,
+} from "./bindings";
 import { readHeldActions } from "./mapping";
 
 const bound = (code: string): boolean => keyBound(DEFAULT_BINDINGS, code);
@@ -81,6 +92,23 @@ describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
       setKeyboardLayout(null);
     }
     expect(keyName("KeyW"), "no layout: the US keycap").toBe("W");
+  });
+
+  it("a layout read again: who listens told only when it changed (each focus reads it: RV-1132)", () => {
+    let told = 0;
+    const stop = onKeyboardLayout(() => {
+      told += 1;
+    });
+    try {
+      setKeyboardLayout(new Map([["KeyW", "z"]]));
+      setKeyboardLayout(new Map([["KeyW", "z"]]));
+      expect(told, "the same map again").toBe(1);
+      setKeyboardLayout(new Map([["KeyW", "w"]]));
+      expect(told).toBe(2);
+    } finally {
+      setKeyboardLayout(null);
+      stop();
+    }
   });
 
   it("the wheel's turns, and pad button 17 (Xbox's Share, PlayStation's touchpad)", () => {

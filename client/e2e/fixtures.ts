@@ -31,7 +31,7 @@ export const test = base.extend({
 export { expect } from "@playwright/test";
 
 /** A scripted standard-layout pad for the page (after the fixture hid the real ones): `setPad(buttons down, axes)` from
- *  the test through `window.carballSetPad`; `mapping` "" a pad the browser doesn't map (RV-1095) */
+ *  the test through `window.carballSetPad`; `mapping` "" a pad the browser doesn't map (never read: RV-1124) */
 export async function fakeGamepad(context: BrowserContext, mapping: "standard" | "" = "standard"): Promise<void> {
   await context.addInitScript((padMapping) => {
     const pad = { buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes: [0, 0, 0, 0] };

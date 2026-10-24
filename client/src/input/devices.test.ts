@@ -48,26 +48,37 @@ describe("a pad the browser doesn't map (RV-1124)", () => {
   });
 });
 
-describe("the wheel's notches (RV-1126, RV-1129)", () => {
-  const wheel = (deltaY: number, deltaX = 0, deltaMode = 0) => ({ deltaX, deltaY, deltaMode });
-
-  it("a mouse's notch one tap each, either way; Shift's, sent sideways, the same", () => {
-    const n = new WheelNotches();
-    expect([n.turn(wheel(-100)), n.turn(wheel(100)), n.turn(wheel(53)), n.turn(wheel(0, -120)), n.turn(wheel(0))]).toEqual([
-      "WheelUp",
-      "WheelDown",
-      "WheelDown",
-      "WheelUp",
-      null,
-    ]);
-    expect(n.turn(wheel(3, 0, 1)), "Firefox's lines").toBe("WheelDown");
+describe("the wheel's notches (RV-1126, RV-1129, RV-1130, RV-1131)", () => {
+  /** A wheel event at `at` ms; `shift`: Shift held */
+  const wheel = (at: number, deltaY: number, deltaX = 0, { deltaMode = 0, shift = false } = {}) => ({
+    deltaX,
+    deltaY,
+    deltaMode,
+    shiftKey: shift,
+    timeStamp: at,
   });
 
-  it("a trackpad's stream: one tap a notch's worth, not each event; a turn back starts again", () => {
+  it("a mouse's notch one tap each, either way; Shift's, sent sideways, the same; sideways without Shift none", () => {
     const n = new WheelNotches();
-    const taps = Array.from({ length: 20 }, () => n.turn(wheel(-4))).filter((c) => c !== null);
-    expect(taps).toEqual(["WheelUp", "WheelUp"]);
-    expect([n.turn(wheel(-30)), n.turn(wheel(30)), n.turn(wheel(30))]).toEqual([null, null, "WheelDown"]);
+    const turns = [
+      n.turn(wheel(0, -100)),
+      n.turn(wheel(200, 100)),
+      n.turn(wheel(400, 53)),
+      n.turn(wheel(600, 0, -120, { shift: true })),
+      n.turn(wheel(800, 0, 120)),
+      n.turn(wheel(1000, 0)),
+    ];
+    expect(turns).toEqual(["WheelUp", "WheelDown", "WheelDown", "WheelUp", null, null]);
+    expect(n.turn(wheel(1200, 3, 0, { deltaMode: 1 })), "Firefox's lines").toBe("WheelDown");
+  });
+
+  it("a precision wheel's notch in pieces, a trackpad's swipe, a fast spin: one tap a burst; the next after a pause", () => {
+    const n = new WheelNotches();
+    const pieces = Array.from({ length: 8 }, (_, i) => n.turn(wheel(i * 8, -12.5))).filter((c) => c !== null);
+    expect(pieces, "a notch in eight pieces").toEqual(["WheelUp"]);
+    const swipe = Array.from({ length: 60 }, (_, i) => n.turn(wheel(500 + i * 16, -4))).filter((c) => c !== null);
+    expect(swipe, "a swipe").toEqual(["WheelUp"]);
+    expect([n.turn(wheel(2000, -30)), n.turn(wheel(2010, 30)), n.turn(wheel(2020, 30))], "a turn back starts again").toEqual([null, null, "WheelDown"]);
   });
 });
 

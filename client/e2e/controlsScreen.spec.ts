@@ -61,10 +61,19 @@ test("the wheel binds by a turn, Shift's sideways one too, and fires its action 
   await slot(page, "passBall").click();
   await page.keyboard.up("PrintScreen");
   await expect(slot(page, "passBall")).toHaveText("PrintScreen");
-  // (Shift's turn, which Chromium sends sideways: the same turn, RV-1126)
+  // (Shift's turn, which Chromium sends sideways: the same turn, RV-1126; sideways without Shift none, RV-1131. Shift
+  // held before the capture, else it's the bind)
   await slot(page, "defendShot").click();
   await page.waitForTimeout(100);
   await page.mouse.wheel(120, 0);
+  await page.waitForTimeout(200);
+  await expect(slot(page, "defendShot"), "a sideways swipe: still waiting").toHaveClass(/capturing/);
+  await page.keyboard.press("Escape");
+  await page.keyboard.down("Shift");
+  await slot(page, "defendShot").click();
+  await page.waitForTimeout(100);
+  await page.mouse.wheel(120, 0);
+  await page.keyboard.up("Shift");
   await expect(slot(page, "defendShot")).toHaveText("Wheel down");
   await page.keyboard.press("Escape");
   await expect(page.locator("#settings")).toBeHidden();

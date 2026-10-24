@@ -8,22 +8,34 @@ export const KEYUP_ONLY: readonly string[] = ["PrintScreen"];
 /** A notch's worth of the wheel, px: a mouse's notch at least (100 in Chromium, 53 in its Linux builds, about 48 in
  *  Firefox's); a line or a page always one */
 const WHEEL_NOTCH_PX = 40;
+/** A burst's events this close (ms): a precision wheel's notch in pieces, a trackpad's swipe, a fast spin */
+const WHEEL_BURST_GAP_MS = 50;
 
-/** The wheel's turns as taps: one a notch's worth in a direction, so a trackpad's or a free-spin wheel's stream of small
- *  deltas taps once a notch, not each event (RV-1129); Shift's turn, which Chromium sends sideways, as the same turn
- *  (RV-1126) */
+/** The wheel's turns as taps: one a burst, once a notch's worth has come in its direction, so a precision wheel's notch
+ *  in pieces (RV-1130), a trackpad's swipe or a free-spin wheel's stream (RV-1129) taps once; Shift's turn, which
+ *  Chromium sends sideways, as the same turn, a sideways one without Shift (a tilt wheel, a swipe) none (RV-1126,
+ *  RV-1131) */
 export class WheelNotches {
   #sum = 0;
+  #direction = 0;
+  #last = -Infinity;
+  #tapped = false;
 
-  /** The turn's code once a notch's worth has come in its direction, else null */
-  turn(e: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">): "WheelUp" | "WheelDown" | null {
-    const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+  /** The turn's code at its burst's notch's worth, else null */
+  turn(e: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode" | "shiftKey" | "timeStamp">): "WheelUp" | "WheelDown" | null {
+    const delta = e.deltaY !== 0 ? e.deltaY : e.shiftKey ? e.deltaX : 0;
     if (delta === 0) return null;
     const px = e.deltaMode === 0 ? delta : delta * WHEEL_NOTCH_PX;
-    if (Math.sign(px) !== Math.sign(this.#sum)) this.#sum = 0;
+    const gap = e.timeStamp - this.#last;
+    this.#last = e.timeStamp;
+    if (Math.sign(px) !== this.#direction || gap > WHEEL_BURST_GAP_MS) {
+      this.#direction = Math.sign(px);
+      this.#sum = 0;
+      this.#tapped = false;
+    }
     this.#sum += px;
-    if (Math.abs(this.#sum) < WHEEL_NOTCH_PX) return null;
-    this.#sum = 0;
+    if (this.#tapped || Math.abs(this.#sum) < WHEEL_NOTCH_PX) return null;
+    this.#tapped = true;
     return px < 0 ? "WheelUp" : "WheelDown";
   }
 }

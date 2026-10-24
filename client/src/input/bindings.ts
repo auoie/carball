@@ -274,9 +274,22 @@ export function lockedKeys(bindings: Bindings): string[] {
 /** The keyboard's layout, each key's character by its position (navigator.keyboard.getLayoutMap, where the browser has
  *  it): an AZERTY player's Z key named Z, not W, its binding the same position either way (RV-1101) */
 let layout: ReadonlyMap<string, string> | null = null;
+const layoutListeners = new Set<() => void>();
 
+/** The layout as the browser tells it; who listens told when it changed (read again at each focus: mostly the same) */
 export function setKeyboardLayout(map: ReadonlyMap<string, string> | null): void {
+  const same = map === null || layout === null ? map === layout : map.size === layout.size && [...map].every(([code, c]) => layout?.get(code) === c);
+  if (same) return;
   layout = map;
+  for (const listener of layoutListeners) listener();
+}
+
+/** Told when the layout changed (a page that drew the keys' names redraws them: RV-1132); the unsubscribe */
+export function onKeyboardLayout(listener: () => void): () => void {
+  layoutListeners.add(listener);
+  return () => {
+    layoutListeners.delete(listener);
+  };
 }
 
 /** The punctuation keys a layout renames (its letters too; its digits as their keycaps print them) */
