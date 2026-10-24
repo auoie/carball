@@ -25,6 +25,36 @@ pub const TO_GAME_QUEUE: usize = 65_536;
 /// At most this many messages read between ticks: a flood waits in the queue instead of starving the matches (SEC-3)
 const MESSAGES_PER_LOOP: usize = 2048;
 
+/// When the loop next wakes (s from its start): the next match's tick (`MatchHost::next_tick`), else, with no match, a
+/// tick's length from `now` (the matchmaker's claims waiting no longer than a match's messages)
+pub fn wake_at(next_tick: Option<f64>, now: f64) -> f64 {
+    next_tick.unwrap_or(now + 1.0 / f64::from(crate::game::TICK_RATE))
+}
+
+/// Sleeps until `deadline`, in one sleep: on Linux to the absolute time (clock_nanosleep TIMER_ABSTIME on
+/// CLOCK_MONOTONIC, the clock `Instant` reads), so nothing drifts between reckoning the wait and sleeping; returns at once
+/// for a deadline passed
+pub fn sleep_until(deadline: Instant) {
+    let now = Instant::now();
+    let Some(wait) = deadline.checked_duration_since(now) else { return };
+    #[cfg(target_os = "linux")]
+    {
+        let mut at = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: clock_gettime and clock_nanosleep read and write only the timespec given, a local
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut at) };
+        at.tv_sec += wait.as_secs() as libc::time_t;
+        at.tv_nsec += wait.subsec_nanos() as libc::c_long;
+        if at.tv_nsec >= 1_000_000_000 {
+            at.tv_sec += 1;
+            at.tv_nsec -= 1_000_000_000;
+        }
+        // (an interrupting signal: woken early, the loop reckons again and sleeps the rest)
+        unsafe { libc::clock_nanosleep(libc::CLOCK_MONOTONIC, libc::TIMER_ABSTIME, &at, std::ptr::null_mut()) };
+    }
+    #[cfg(not(target_os = "linux"))]
+    std::thread::sleep(wait);
+}
+
 /// The session's hello is refused: the reason sent, then its queue let go (the session ends)
 fn refuse(out: Sender<Outgoing>, reason: u8) {
     let _ = out.try_send(Outgoing::Control(Control::Refused { reason }.encode()));
@@ -72,6 +102,12 @@ pub fn run_with_reports(
     }
     // (the benchmark's counters, when they're on: each pass's busy time and ticks, notes/benchmarks.md)
     let metrics = crate::metrics::get();
+    // (the sleeps to the ticks as precise as the clock: this thread's timer slack 1 ns, not the kernel's 50 us default)
+    #[cfg(target_os = "linux")]
+    // SAFETY: PR_SET_TIMERSLACK sets this thread's slack alone, from an integer
+    unsafe {
+        libc::prctl(libc::PR_SET_TIMERSLACK, 1 as libc::c_ulong, 0, 0, 0);
+    }
     loop {
         let pass = Instant::now();
         heartbeat.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
@@ -168,10 +204,39 @@ pub fn run_with_reports(
             let (matches, players) = host.counts();
             m.pass(pass.elapsed(), ticked.ticks, ticked.slipped, matches, players);
         }
-        // (until the next tick is due, a millisecond at most: the messages are read meanwhile)
-        let wait = host.next_tick().map_or(0.001, |next| (next - seconds(Instant::now())).clamp(0.0, 0.001));
-        if wait > 0.0 {
-            std::thread::sleep(Duration::from_secs_f64(wait));
+        // (asleep until the next tick is due, in one sleep, not one a millisecond (PERF1: ~940 wakeups a second idle): the
+        // messages that came meanwhile read on waking, before that tick, as they always were before the tick that uses
+        // them: the inputs with the time they arrived (`inputs.at`, the network's), the others (a join, a claim, a reset of
+        // the input buffer) taken at the tick, as the game takes its RPCs before its world's tick)
+        sleep_until(start + Duration::from_secs_f64(wake_at(host.next_tick(), seconds(Instant::now())).max(0.0)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_loop_wakes_at_the_next_tick_else_a_ticks_length_on() {
+        assert_eq!(wake_at(Some(12.5), 10.0), 12.5);
+        let idle = wake_at(None, 10.0);
+        assert!((idle - (10.0 + 1.0 / 120.0)).abs() < 1e-12, "{idle}");
+    }
+
+    #[test]
+    fn the_sleep_to_a_tick_never_wakes_before_it_and_a_passed_one_not_at_all() {
+        for millis in [1u64, 4, 9] {
+            let deadline = Instant::now() + Duration::from_millis(millis);
+            sleep_until(deadline);
+            let woke = Instant::now();
+            assert!(woke >= deadline, "woke {:?} early", deadline - woke);
+            // (late by the clock's wakeup alone: generous, a loaded test machine)
+            assert!(woke - deadline < Duration::from_millis(200), "{:?} late", woke - deadline);
         }
+        let passed = Instant::now();
+        std::thread::sleep(Duration::from_millis(2));
+        let before = Instant::now();
+        sleep_until(passed);
+        assert!(before.elapsed() < Duration::from_millis(50), "a passed deadline: no sleep");
     }
 }

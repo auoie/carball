@@ -39,3 +39,16 @@ Scrape at the start and the end of an interval and take the differences over its
 
 Note with each set of numbers the machine (CPU, cores), the commit, and how the server ran (native or its image, bridge
 or host networking).
+
+## The game thread's sleep (2026-10-24, after PERF1)
+The game loop sleeps once to the next tick (`game_loop::sleep_until`: an absolute CLOCK_MONOTONIC deadline, the thread's
+timer slack 1 ns), not in sleeps of at most 1 ms; the messages that came meanwhile are read on waking, before that tick.
+Measured with no load (a scratch program, 1200 ticks a strategy; and an idle open match's game thread, its voluntary
+context switches over 10 s):
+
+| | tick lateness p50 / p99 / max | wakeups a second (idle match) |
+|---|---|---|
+| sleeps of at most 1 ms (before) | 57 / 92 / 388 us | 960 |
+| one deadline sleep, default slack (50 us) | 57 / 78 / 133 us | 120 |
+| one deadline sleep, slack 1 ns (now) | 7 / 17 / 23 us | 120 |
+

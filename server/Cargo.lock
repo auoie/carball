@@ -258,6 +258,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jsonwebtoken",
+ "libc",
  "prometheus-client",
  "reqwest",
  "ring",

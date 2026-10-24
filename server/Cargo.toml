@@ -37,6 +37,10 @@ tracing-appender = { version = "0.2", optional = true }
 # (the benchmark's counters, `GET /metrics` on the development info server alone: Prometheus text, notes/benchmarks.md)
 prometheus-client = { version = "0.25.1", optional = true }
 
+# (the game loop's sleep to the next tick: an absolute deadline, its thread's timer slack 1 ns; already in the tree)
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["net"]
 # The network server: WebTransport, the queue, the game loop's thread (the release image's build)

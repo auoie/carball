@@ -64,7 +64,7 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | `src/protocol.rs` | messages; byte vectors shared with the client (`protocol/vectors.json`) |
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |
 | `src/game.rs` | the match: joins and leaves, inputs, the match flow (below), updates (rates, splitting into datagrams) |
-| `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock |
+| `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock, asleep until each tick (notes/benchmarks.md) |
 | `src/queue.rs` | who plays together: each playlist's searchers, the oldest with those within a rating window (wider as they wait), teams by a snake draft |
 | `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over; the ranked bookkeeping (each seat's first ticket, the leave penalty's latch, results; a seat held for a rejoin) |
 | `src/net.rs` | WebTransport sessions (a claim's and a rejoin's ticket checked), development identity and info endpoint |
