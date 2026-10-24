@@ -752,12 +752,24 @@ async fn session(
         });
         // (a rejoin the matchmaker confirms first: the account's latest match still this one, at this server; else it
         // searched or was matched since, maybe at another server, and its ticket would put it in two matches. Not asked:
-        // refused, never let in unconfirmed, RV-1008)
+        // refused, never let in unconfirmed, RV-1008. One question at a time for a ticket, held until it's spent: a replay
+        // meanwhile refused as used, so a ticket asks once, not as often as it's sent, RV-1020)
+        let mut _deciding = None;
         if let (crate::ticket::Purpose::Rejoin(m), Some(api)) = (&checked.purpose, &limits.api) {
+            match tickets.decide(&checked) {
+                Ok(deciding) => _deciding = Some(deciding),
+                Err(why) => {
+                    refuse(&mut send, &connection, protocol::REFUSED_TICKET).await;
+                    return Err(refused(why));
+                }
+            }
             let server = limits.server_name.as_deref().unwrap_or_default();
             match api.rejoin(server, *m, &ticket).await {
                 crate::outbox::RejoinAnswer::Allowed => {}
                 crate::outbox::RejoinAnswer::Gone => {
+                    // (final: the account's latest match only ever moves on, so the ticket is spent: a replay refused here
+                    // as used, the API never asked again, RV-1020)
+                    let _ = tickets.spend(&checked, crate::ticket::unix_now());
                     refuse(&mut send, &connection, protocol::REFUSED_REJOIN_GONE).await;
                     bail!(
                         "{}: the rejoin of match {m:016x} refused: the matchmaker says the account searched or was matched \
@@ -765,6 +777,7 @@ async fn session(
                         request.who()
                     );
                 }
+                // (the API down or slow, which passes: the ticket left good for a retry once it's back, RV-1020)
                 crate::outbox::RejoinAnswer::Unconfirmed(why) => {
                     refuse(&mut send, &connection, protocol::REFUSED_UNCONFIRMED).await;
                     bail!("{}: the rejoin of match {m:016x} refused unconfirmed: the matchmaker: {why}", request.who());

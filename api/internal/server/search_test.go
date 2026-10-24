@@ -600,3 +600,54 @@ func TestFleetRejoinQuestion(t *testing.T) {
 		t.Errorf("a rejoin after the account's search: %d %v", code, ok)
 	}
 }
+
+// RV-1020: rejoin questions on their own budgets: each account's (here 2), then everyone's; never the game servers'
+// outbox budget, which is each server's own (by its X-Carball-Server name: here 3), so neither a replayed rejoin
+// ticket nor one server's burst holds another server's results and events
+func TestRejoinQuestionsAndEachServerOnTheirOwnBudgets(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.GameServer = server.Limit{Burst: 3, Window: time.Minute}
+	limits.RejoinQuestions = server.Limit{Burst: 2, Window: 10 * time.Minute}
+	e := setup(t, &limits)
+	b1, _, _ := e.player("sub-q1")
+	b2, _, _ := e.player("sub-q2")
+	pings := map[string]int{euServer: 30}
+	s1 := decode(t, e.searchAs(b1, []int{1}, pings))["search"].(string)
+	s2 := decode(t, e.searchAs(b2, []int{1}, pings))["search"].(string)
+	e.s.Matchmaker.Tick(e.clock.Now())
+	_, f1 := e.poll(b1, s1, 1)
+	e.poll(b2, s2, 1)
+	m1, _ := f1["match"].(map[string]any)
+	if m1 == nil {
+		t.Fatalf("not matched: %v", f1)
+	}
+	match := m1["id"].(string)
+	resp := e.write(b1, http.MethodPost, "/api/ticket?rejoin="+match, nil)
+	rejoin, _ := decode(t, resp)["ticket"].(string)
+	if rejoin == "" {
+		t.Fatalf("the rejoin ticket: %d", resp.StatusCode)
+	}
+	ask := func() int {
+		return e.gameCallAs(euServer, http.MethodPost, "/api/fleet/rejoin", gameToken, map[string]string{"match": match, "server": euServer, "ticket": rejoin}).StatusCode
+	}
+	got := []int{}
+	for range 10 {
+		got = append(got, ask())
+	}
+	if want := []int{200, 200, 429, 429, 429, 429, 429, 429, 429, 429}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the account's rejoin questions: %v, want %v", got, want)
+	}
+	event := func(from string) int {
+		return e.gameCallAs(from, http.MethodPost, "/api/fleet/events", gameToken, map[string]any{"event": "started", "match": "00000000000000ab", "server": euServer}).StatusCode
+	}
+	got = []int{}
+	for range 4 {
+		got = append(got, event(euServer))
+	}
+	if want := []int{204, 204, 204, 429}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("a server's calls after the rejoin questions: %v, want its own 3 then 429", got)
+	}
+	if code := event("game-us.example:4433"); code != http.StatusNoContent {
+		t.Errorf("another server's call after the first's ran out: %d", code)
+	}
+}

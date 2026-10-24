@@ -67,13 +67,15 @@ fn client(https_only: bool, timeout: Duration) -> reqwest::Result<reqwest::Clien
         .build()
 }
 
-/// A request with the game server's credentials: its bearer token, and the tunnel's Access service token if there's one
+/// A request with the game server's credentials: its bearer token, and the tunnel's Access service token if there's one;
+/// and its name (`X-Carball-Server`: the service's budget for the game servers' calls is each server's, RV-1020)
 fn authorized(
     request: reqwest::RequestBuilder,
     token: &str,
     access: Option<&(String, String)>,
+    server: &str,
 ) -> reqwest::RequestBuilder {
-    let request = request.header("Authorization", format!("Bearer {token}"));
+    let request = request.header("Authorization", format!("Bearer {token}")).header("X-Carball-Server", server);
     match access {
         Some((id, secret)) => request.header("CF-Access-Client-Id", id).header("CF-Access-Client-Secret", secret),
         None => request,
@@ -125,10 +127,14 @@ impl Api {
     /// `server` (this server's name) may go ahead: `POST /api/fleet/rejoin`, answered `{"rejoin": bool}`
     pub async fn rejoin(&self, server: &str, match_id: u64, ticket: &str) -> RejoinAnswer {
         let body = json!({ "match": format!("{match_id:016x}"), "server": server, "ticket": ticket });
-        let request =
-            authorized(self.client.post(format!("{}/api/fleet/rejoin", self.url)), &self.token, self.access.as_ref())
-                .header("Content-Type", "application/json")
-                .body(body.to_string());
+        let request = authorized(
+            self.client.post(format!("{}/api/fleet/rejoin", self.url)),
+            &self.token,
+            self.access.as_ref(),
+            server,
+        )
+        .header("Content-Type", "application/json")
+        .body(body.to_string());
         let answer = async {
             let response = request.send().await?;
             let status = response.status().as_u16();
@@ -376,8 +382,12 @@ fn parse(text: &str) -> Option<Call> {
 /// One call sent
 async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: &Call) -> Sent {
     let method = if call.method == "DELETE" { reqwest::Method::DELETE } else { reqwest::Method::POST };
-    let mut request =
-        authorized(client.request(method, format!("{api}{}", call.path)), &config.token, config.access.as_ref());
+    let mut request = authorized(
+        client.request(method, format!("{api}{}", call.path)),
+        &config.token,
+        config.access.as_ref(),
+        &config.server,
+    );
     if let Some(body) = &call.body {
         request = request.header("Content-Type", "application/json").body(body.to_string());
     }
@@ -784,6 +794,7 @@ mod tests {
         );
         let first = seen[0].to_ascii_lowercase();
         assert!(first.contains("authorization: bearer secret-token"), "{first}");
+        assert!(first.contains("x-carball-server: game.example"), "its name: {first}");
         assert!(first.contains("user-agent: carball-server/"), "named: {first}");
         assert!(seen[3].contains(r#"{"match":"m1","ticket":"r1"}"#), "{}", seen[3]);
         assert!(
@@ -989,6 +1000,7 @@ mod tests {
                 .and(header("authorization", "Bearer secret-token"))
                 .and(header("cf-access-client-id", "access-id"))
                 .and(header("cf-access-client-secret", "access-secret"))
+                .and(header("x-carball-server", "game.example:4433"))
                 .and(body_json(json!({"match": "00000000000000a1", "server": "game.example:4433", "ticket": "t.i.k"})))
                 .respond_with(reply)
                 .mount(&service)

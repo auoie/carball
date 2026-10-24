@@ -659,9 +659,10 @@ async fn a_queue_servers_unserved_intents_never_reach_the_game() {
     }
 }
 
-/// RV-1008: a rejoin the matchmaker refuses (its account searched or was matched since, maybe at another server) is
-/// refused REFUSED_REJOIN_GONE, its ticket unspent (the same ticket, confirmed, gets to the game: a match it doesn't have,
-/// concluded); with the matchmaker failing or down, REFUSED_UNCONFIRMED, never let in
+/// RV-1008, RV-1020: a rejoin the matchmaker refuses (its account searched or was matched since, maybe at another server)
+/// is refused REFUSED_REJOIN_GONE and its ticket spent, that being final: a replay refused as used, the matchmaker never
+/// asked again. With the matchmaker failing or down, REFUSED_UNCONFIRMED, never let in, the ticket left good: once it's
+/// back, the same ticket gets to the game (a match it doesn't have: concluded)
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rejoin_the_matchmaker_refuses_or_cant_confirm_is_refused() {
     let service = rejoin_service(false).await;
@@ -670,21 +671,31 @@ async fn a_rejoin_the_matchmaker_refuses_or_cant_confirm_is_refused() {
     let hello = || ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd4, rejoin.clone());
     let (reply, ..) = first_reply(port, cert_hash, hello()).await;
     assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_REJOIN_GONE }, "the matchmaker's no");
-    service.reset().await;
-    answer_rejoins(&service, true).await;
-    let (reply, ..) = first_reply(port, cert_hash, hello()).await;
-    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_CONCLUDED }, "unspent, then confirmed: to the game");
+    let (replayed, ..) = first_reply(port, cert_hash, hello()).await;
+    assert_eq!(replayed, Control::Refused { reason: protocol::REFUSED_TICKET }, "spent: a replay refused as used");
+    assert_eq!(service.received_requests().await.unwrap().len(), 1, "the matchmaker asked once");
     let other = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd5), unix_now()).unwrap();
+    let hello = || ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd5, other.clone());
     service.reset().await;
     wiremock::Mock::given(wiremock::matchers::path("/api/fleet/rejoin"))
         .respond_with(wiremock::ResponseTemplate::new(503))
         .mount(&service)
         .await;
-    let (reply, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd5, other.clone())).await;
+    let (reply, ..) = first_reply(port, cert_hash, hello()).await;
     assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_UNCONFIRMED }, "the matchmaker failing");
-    drop(service);
-    let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd5, other)).await;
+    service.reset().await;
+    answer_rejoins(&service, true).await;
+    let (reply, ..) = first_reply(port, cert_hash, hello()).await;
+    assert_eq!(
+        reply,
+        Control::Refused { reason: protocol::REFUSED_CONCLUDED },
+        "left good, then confirmed: to the game"
+    );
+    // (the matchmaker down: a server asking at a port nothing listens on)
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (port, cert_hash, tickets) = ticketed_server_limited(false, asking(format!("http://127.0.0.1:{closed}"))).await;
+    let third = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd6), unix_now()).unwrap();
+    let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd6, third)).await;
     assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_UNCONFIRMED }, "the matchmaker down");
 }
 

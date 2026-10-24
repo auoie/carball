@@ -36,6 +36,18 @@ var matchID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // constant time, behind the tunnel's Access service token; at most Limits.GameServer of them (AC-26: 429, the game
 // server's outbox tries again later); JSON bodies as the browser's writes. None configured: 503
 func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
+	return s.gameServerCall(next, true)
+}
+
+// gameServerAsking: a game server's question (a rejoin's, RV-1008): its token, its body's size, not GameServer's budget
+// (the question's own, by its account: rejoinCheck)
+func (s *Server) gameServerAsking(next http.HandlerFunc) http.HandlerFunc {
+	return s.gameServerCall(next, false)
+}
+
+// gameServerCall: the game server's token checked, then (budgeted) its own budget's call taken, keyed by the name it sends
+// (X-Carball-Server, as a match ticket names a server; one without or with another: all such together, RV-1020)
+func (s *Server) gameServerCall(next http.HandlerFunc, budgeted bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if len(s.GameServerToken) == 0 {
 			writeError(w, http.StatusServiceUnavailable, "unavailable")
@@ -46,7 +58,11 @@ func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if !s.gameServerCalls.Allow("game-server", s.Now()) {
+		key := r.Header.Get("X-Carball-Server")
+		if !serverName.MatchString(key) {
+			key = "game-server"
+		}
+		if budgeted && !s.gameServerCalls.Allow(key, s.Now()) {
 			writeError(w, http.StatusTooManyRequests, "busy")
 			return
 		}
@@ -212,6 +228,11 @@ func (s *Server) answerRejoin(w http.ResponseWriter, r *http.Request, verify fun
 		return
 	}
 	account := accountID(t.Account)
+	// (each account's questions, then everyone's: the account's own replays use up its budget alone, RV-1020)
+	if s.rejoinQuestions != nil && (!s.rejoinQuestions.Allow(account, s.Now()) || !s.rejoinCeiling.Allow("rejoin", s.Now())) {
+		writeError(w, http.StatusTooManyRequests, "busy")
+		return
+	}
 	ok := s.Matchmaker.RejoinCheck(account, t.Match, body.Server)
 	if !ok {
 		s.log(r).Info("a rejoin refused: the account searched or was matched since", "match", body.Match,

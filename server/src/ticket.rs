@@ -206,8 +206,22 @@ struct DevKey {
 pub struct Tickets {
     keys: RwLock<HashMap<String, Vec<u8>>>,
     nonces: Mutex<HashMap<[u8; 16], i64>>,
+    /// The one-time ids whose use is being decided now (a rejoin's question to the API): one at a time (RV-1020)
+    deciding: Mutex<std::collections::HashSet<[u8; 16]>>,
     dev: Option<DevKey>,
     started: i64,
+}
+
+/// A ticket's use being decided (`Tickets::decide`): its one-time id free again when it's dropped
+pub struct Deciding<'a> {
+    tickets: &'a Tickets,
+    nonce: [u8; 16],
+}
+
+impl Drop for Deciding<'_> {
+    fn drop(&mut self) {
+        self.tickets.deciding.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&self.nonce);
+    }
 }
 
 impl std::fmt::Debug for Tickets {
@@ -224,6 +238,7 @@ impl Tickets {
         Ok(Self {
             keys: RwLock::new(parse_keys(list)?),
             nonces: Mutex::new(HashMap::new()),
+            deciding: Mutex::new(std::collections::HashSet::new()),
             dev: None,
             started: unix_now(),
         })
@@ -321,6 +336,16 @@ impl Tickets {
             return Err(Refusal::Reused);
         }
         Ok(ticket)
+    }
+
+    /// A verified ticket's use being decided, one at a time (a rejoin's question to the API, RV-1020): another use of it
+    /// meanwhile is refused (Reused), so a replayed ticket asks once, not as often as it's sent; free again once dropped
+    pub fn decide(&self, ticket: &Ticket) -> Result<Deciding<'_>, Refusal> {
+        if self.deciding.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(ticket.nonce) {
+            Ok(Deciding { tickets: self, nonce: ticket.nonce })
+        } else {
+            Err(Refusal::Reused)
+        }
     }
 
     /// Takes a verified ticket's one-time id at `now` (kept until it expires): Reused if it was taken since its `verify`
@@ -496,6 +521,20 @@ mod tests {
 
     /// The tickets the API's code made (protocol/ticket_vector.json, api/internal/ticket's vector test: a rejoin's and a
     /// seat's): read as they say
+    /// RV-1020: a ticket's use decided one at a time: a second decision while the first is held is refused (Reused); once
+    /// it's dropped, free again
+    #[test]
+    fn a_tickets_use_is_decided_one_at_a_time() {
+        let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap();
+        let now = unix_now();
+        let encoded = tickets.dev_ticket([7; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd4), now).unwrap();
+        let ticket = tickets.verify(&encoded, now).unwrap();
+        let first = tickets.decide(&ticket).unwrap();
+        assert!(matches!(tickets.decide(&ticket), Err(Refusal::Reused)), "a second while the first is decided");
+        drop(first);
+        assert!(tickets.decide(&ticket).is_ok(), "free again");
+    }
+
     #[test]
     fn the_apis_tickets_read_as_they_were_made() {
         let text =

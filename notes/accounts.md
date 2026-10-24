@@ -171,9 +171,11 @@ API. It:
   for that match's rejoin alone (`Refused` 4 otherwise), its purpose checked before its one-time id is taken (a ticket
   shown for something else stays good, RV-973);
 - asks the API before a rejoin is let in (`POST /api/fleet/rejoin`, the rejoin's ticket): the account's latest match
-  still that one, at this server, or it's refused (`Refused` 8), and refused too when the API doesn't answer in 2 s
-  (`Refused` 9): a rejoin ticket from before a search or a later match would otherwise put it in two matches, across
-  servers too (RV-1008). A used ticket is refused before the API is asked.
+  still that one, at this server, or it's refused (`Refused` 8, the ticket spent: that answer is final, the account's
+  latest match only moving on), and refused too when the API doesn't answer in 2 s (`Refused` 9, the ticket left good
+  for a retry): a rejoin ticket from before a search or a later match would otherwise put it in two matches, across
+  servers too (RV-1008). A used ticket is refused before the API is asked, and a ticket asks one question at a time, so
+  a replay costs the API nothing; the API's budget for these questions is the account's own (RV-1020).
 
 A seat belongs to the account: a reconnect needs a fresh ticket for that account, not the browser key.
 

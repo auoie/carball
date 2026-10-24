@@ -1063,6 +1063,12 @@ func TestTicket(t *testing.T) {
 // gameCall: the game server's call (its bearer token: `token`), JSON
 func (e *env) gameCall(method, path, token string, body any) reply {
 	e.t.Helper()
+	return e.gameCallAs("", method, path, token, body)
+}
+
+// gameCallAs: the same from the game server named `server` (X-Carball-Server; none: no name sent)
+func (e *env) gameCallAs(server, method, path, token string, body any) reply {
+	e.t.Helper()
 	var buf []byte
 	if body != nil {
 		var err error
@@ -1079,6 +1085,9 @@ func (e *env) gameCall(method, path, token string, body any) reply {
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if server != "" {
+		req.Header.Set("X-Carball-Server", server)
 	}
 	return e.do(e.browser(), req)
 }

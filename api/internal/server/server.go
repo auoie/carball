@@ -123,6 +123,8 @@ type Server struct {
 	renames, tickets     *ratelimit.Limiter
 	searchStarts         *ratelimit.Limiter
 	gameServerCalls      *ratelimit.Limiter
+	rejoinQuestions      *ratelimit.Limiter
+	rejoinCeiling        *ratelimit.Limiter
 	// (the log's request lines per client address, and the ones not written since its last: RV-963)
 	requestLines *ratelimit.Limiter
 	linesMu      sync.Mutex
@@ -148,8 +150,13 @@ type Limits struct {
 	SignIns, SignInsWide, Signups, SignupsWide, Renames, Tickets Limit
 	// Searches is each account's searches started (a found match's next search, a cancel and again, another tab)
 	Searches Limit
-	// GameServer is the game server's calls' (results, quitters, refills: AC-26), all of them together
+	// GameServer is each game server's calls' (results, quitters, refills, events: AC-26), by the name it sends
+	// (X-Carball-Server; one without, all such together), so that one server's burst can't hold another's results
+	// (RV-1020)
 	GameServer Limit
+	// RejoinQuestions and RejoinCeiling are the game servers' rejoin questions (RV-1008): each account's, and everyone's
+	// together; apart from GameServer, so that a replayed rejoin ticket can't hold the outbox calls (RV-1020)
+	RejoinQuestions, RejoinCeiling Limit
 	// RequestLines is each client address's request lines in the log (an IPv6 /64's): past them its lines are counted,
 	// not written, so that a flood can't push the abuse trail out of the log's rotation or fill the disk (RV-963); none
 	// (0): every line
@@ -163,14 +170,16 @@ type Limits struct {
 // DefaultLimits: generous for a household or a NAT, tight for a script; a network's wider limit a few households'
 func DefaultLimits() Limits {
 	return Limits{
-		SignIns:     Limit{30, 10 * time.Minute},
-		SignInsWide: Limit{150, 10 * time.Minute},
-		Signups:     Limit{5, time.Hour},
-		SignupsWide: Limit{25, time.Hour},
-		Renames:     Limit{5, 24 * time.Hour},
-		Tickets:     Limit{60, 10 * time.Minute},
-		Searches:    Limit{30, 10 * time.Minute},
-		GameServer:  Limit{300, time.Minute},
+		SignIns:         Limit{30, 10 * time.Minute},
+		SignInsWide:     Limit{150, 10 * time.Minute},
+		Signups:         Limit{5, time.Hour},
+		SignupsWide:     Limit{25, time.Hour},
+		Renames:         Limit{5, 24 * time.Hour},
+		Tickets:         Limit{60, 10 * time.Minute},
+		Searches:        Limit{30, 10 * time.Minute},
+		GameServer:      Limit{300, time.Minute},
+		RejoinQuestions: Limit{20, 10 * time.Minute},
+		RejoinCeiling:   Limit{600, time.Minute},
 		// (a LAN party's 64 players' polls, about one each 25 s, and their pages, well inside)
 		RequestLines: Limit{600, time.Minute},
 		Keys:         200_000,
@@ -188,6 +197,7 @@ func (s *Server) SetLimits(l Limits) {
 	s.renames, s.tickets = limiter(l.Renames), limiter(l.Tickets)
 	s.searchStarts = limiter(l.Searches)
 	s.gameServerCalls = limiter(l.GameServer)
+	s.rejoinQuestions, s.rejoinCeiling = limiter(l.RejoinQuestions), limiter(l.RejoinCeiling)
 	s.requestLines = nil
 	if l.RequestLines.Burst > 0 {
 		s.requestLines = limiter(l.RequestLines)
@@ -196,7 +206,7 @@ func (s *Server) SetLimits(l Limits) {
 
 // Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
 func (s *Server) Sweep(now time.Time) {
-	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls} {
+	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls, s.rejoinQuestions, s.rejoinCeiling} {
 		l.Sweep(now)
 	}
 	if s.requestLines != nil {
@@ -264,7 +274,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search/{id}", s.pollSearch)
 	mux.HandleFunc("DELETE /api/search/{id}", s.write(s.cancelSearch))
 	mux.HandleFunc("POST /api/fleet/events", s.gameServer(s.fleetEvent))
-	mux.HandleFunc("POST /api/fleet/rejoin", s.gameServer(s.rejoinCheck))
+	mux.HandleFunc("POST /api/fleet/rejoin", s.gameServerAsking(s.rejoinCheck))
 	return s.logged(headers(mux))
 }
 

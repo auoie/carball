@@ -132,7 +132,7 @@ development matchmaker's). A setting the server can't read stops it, the error n
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
 | `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a claim without a match ticket (a JWT, EdDSA: notes/accounts.md §3) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
-| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8; no answer, `Refused` 9, never let in unconfirmed; RV-1008). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
+| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8 and its ticket spent, that answer being final; no answer, `Refused` 9, never let in unconfirmed, its ticket left good for a retry; one question at a time for a ticket; RV-1008, RV-1020). Every call names this server (`X-Carball-Server`: the API's budget for the game servers' calls is each server's). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters`, `/api/refills` and `/api/fleet/*` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
 | `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server outside `--dev`: without it, or with a blank one, the server won't start (RX31) |
@@ -203,9 +203,10 @@ asks (`/dev-ticket`), with no sign-in.
   search for 2 minutes, the others keep their wait (first in line). A cancelled or finished match's id is remembered a
   minute, so a late claim can't open it again.
 - **Resources** (measured, RX13): one game thread runs every match (120 Hz each): ~0.7 % of a core a 1v1, ~1.8 % a 3v3
-  (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. **2 vCPU at least:** the network's
-  runtime takes every CPU the container may use but one, the game thread that one (RV-990: on 1 vCPU they share it, and
-  handshakes or decryption can make the ticks late). Memory ~8 MB idle, ~1.4 MB a 1v1
+  (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. **2 vCPU recommended** (1 works:
+  the hosts run on one for now, the benchmark showing when it matters): the network's runtime takes every CPU the
+  container may use but one, the game thread that one (RV-990: on 1 vCPU they share it, and handshakes or decryption can
+  make the ticks late). Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
 - **Logs:** stderr, one line an event (start-up, joins, leaves, matches, refusals, reloads, the outbox's calls): its UTC
   time, its level (`INFO`, `WARN` for a refusal, a call kept for later or a failed reload (the old certificate or keys
@@ -355,7 +356,8 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 - **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the rejoin question
   (`POST /api/fleet/rejoin {match, server, ticket}`: the rejoin's ticket checked as ours, for that match; `{"rejoin":
   true}` while the account's latest match is still that one at that server, false once it searched or was matched since
-  (a ticket from before would put it in two matches, across servers too: RV-1008); nothing spent); the matchmaker's events
+  (a ticket from before would put it in two matches, across servers too: RV-1008); nothing spent; its own budgets, the
+  account's and everyone's, never the calls' below: RV-1020); the matchmaker's events
   (`POST /api/fleet/events {event, server, match, seat, noShows, at}`: one about a match it didn't assign to that server,
   or doesn't know, answered 204 and ignored, so it never holds the outbox's later calls); results (recorded once by
   their match id; each ticket ours, the seat's match ticket for that match at the result's server in its playlist (its
@@ -399,7 +401,8 @@ window.
 | Renames | account | 5 a day |
 | Rejoin tickets | account | 60 in 10 minutes |
 | Searches started | account | 30 in 10 minutes |
-| The game servers' calls (results, quitters, refills, events, rejoin questions) | all of them together | 300 a minute |
+| The game servers' calls (results, quitters, refills, events) | each server, by the name it sends (`X-Carball-Server`; one without: all such together) | 300 a minute |
+| Rejoin questions (`POST /api/fleet/rejoin`) | account / everyone | 20 in 10 minutes / 600 a minute (never the calls' above) |
 | Request lines in the log | address | 600 a minute, the rest counted |
 | A request's body | request | 16 KiB |
 | A search's poll | poll | 25 s; a search no page polls goes 45 s on, unmatched 3 s on |
