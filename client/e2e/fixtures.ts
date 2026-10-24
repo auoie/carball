@@ -31,9 +31,9 @@ export const test = base.extend({
 export { expect } from "@playwright/test";
 
 /** A scripted standard-layout pad for the page (after the fixture hid the real ones): `setPad(buttons down, axes)` from
- *  the test through `window.carballSetPad` */
-export async function fakeGamepad(context: BrowserContext): Promise<void> {
-  await context.addInitScript(() => {
+ *  the test through `window.carballSetPad`; `mapping` "" a pad the browser doesn't map (RV-1095) */
+export async function fakeGamepad(context: BrowserContext, mapping: "standard" | "" = "standard"): Promise<void> {
+  await context.addInitScript((padMapping) => {
     const pad = { buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes: [0, 0, 0, 0] };
     const w = window as unknown as { carballSetPad: (down: number[], axes?: number[]) => void };
     w.carballSetPad = (down, axes = [0, 0, 0, 0]) => {
@@ -48,13 +48,13 @@ export async function fakeGamepad(context: BrowserContext): Promise<void> {
       id: "test pad",
       index: 0,
       connected: true,
-      mapping: "standard",
+      mapping: padMapping,
       timestamp: performance.now(),
       buttons: pad.buttons,
       axes: pad.axes,
     });
     Object.defineProperty(navigator, "getGamepads", { value: () => [gamepad()], configurable: true });
-  });
+  }, mapping);
 }
 
 /** The pad held for one of the page's frames, then let go for two (as e2e/padmenus.spec.ts's tap: never a fixed time; the scripted pad's: fakeGamepad) */

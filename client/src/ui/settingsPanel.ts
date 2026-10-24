@@ -11,7 +11,7 @@ import { END_TEXT } from "../game/matchSequence";
 
 /** The pad's X Default asks first (MENU-14: a confirm, NO focused): our words, the game's YES / NO */
 export const DEFAULT_QUESTION = "Reset this page to its defaults?";
-import { readGamepad } from "../input/devices";
+import { KEYUP_ONLY, padUnmapped, readGamepad } from "../input/devices";
 import {
   AUDIO_LIMITS,
   type AudioSettings,
@@ -404,17 +404,28 @@ export class SettingsPanel {
     });
     const hint = el("p", {
       className: "settings-hint",
-      textContent: "Click a slot, then press a key, click a mouse button, or press/move a gamepad input. Right-click a slot to clear it. Esc cancels.",
+      textContent:
+        "Click a slot, then press a key, click a mouse button or turn the wheel, or press/move a gamepad input. Right-click a slot to clear it. Esc cancels.",
     });
+    // (a pad the browser doesn't map: its numbers as it reports them, its binds to set here, RV-1095)
+    const unmapped = padUnmapped()
+      ? [
+          el("p", {
+            className: "settings-hint unmapped-pad",
+            textContent: "This controller isn't one the browser maps: its buttons and sticks are numbered as it reports them, so set its binds here.",
+          }),
+        ]
+      : [];
     // (a browser that can't take every bind: its limits, always here, RV-1104)
     const limits = currentBrowserLimits();
     const notice = limits.length > 0 ? [browserNotice(limits)] : [];
-    return el("div", {}, [hint, ...notice, table, reset, ...this.#fullscreenNotice()]);
+    // (the Fullscreen notice first, seen before binding: the user's, 2026-10-24)
+    return el("div", {}, [...this.#fullscreenNotice(), hint, ...unmapped, ...notice, table, reset]);
   }
 
   /** Binds a normal tab can lose to the browser (Ctrl, Alt, the OS key: Ctrl+W, Alt's menus) named, with the way to keep
-   *  them, in the bottom right: only Windowed, where the browser locks the keyboard in full screen (a browser that can't
-   *  has its own notice above), and only with such a bind (the user's request) */
+   *  them, at the screen's top, in its flow (never over a slot): only Windowed, where the browser locks the keyboard in
+   *  full screen (a browser that can't has its own notice instead), and only with such a bind (the user's request) */
   #fullscreenNotice(): HTMLElement[] {
     const held = browserHeldBinds(this.#settings.bindings);
     if (this.#settings.options.fullscreen || !fullscreenAvailable() || !keyboardLockAvailable() || held.length === 0) return [];
@@ -474,25 +485,32 @@ export class SettingsPanel {
   #startCapture(action: Action, device: Device): void {
     const swallowContextMenu = (): void => {
       const done = new AbortController();
-      const swallow = (e: Event): void => {
-        e.preventDefault();
-        e.stopPropagation();
+      const end = (): void => {
         done.abort();
       };
-      window.addEventListener("contextmenu", swallow, { capture: true, signal: done.signal });
+      window.addEventListener(
+        "contextmenu",
+        (e) => {
+          if (e.button !== 2) return; // (the ContextMenu key's: not this press's)
+          e.preventDefault();
+          e.stopPropagation();
+          end();
+        },
+        { capture: true, signal: done.signal },
+      );
+      // (Windows sends it after the release, however long the button was held: up to one task past the right button's
+      // mouseup, or the next press, never later: RV-1118)
+      window.addEventListener(
+        "mouseup",
+        (e) => {
+          if (e.button === 2) setTimeout(end, 0);
+        },
+        { capture: true, signal: done.signal },
+      );
       // (the next press's own: not this one's)
       setTimeout(() => {
-        window.addEventListener(
-          "mousedown",
-          () => {
-            done.abort();
-          },
-          { capture: true, signal: done.signal },
-        );
+        window.addEventListener("mousedown", end, { capture: true, signal: done.signal });
       }, 0);
-      setTimeout(() => {
-        done.abort();
-      }, 1000);
     };
     this.#stopCapture();
     const abort = new AbortController();
@@ -507,8 +525,19 @@ export class SettingsPanel {
         "keydown",
         (e) => {
           if (e.code === "Escape") return; // handled by the Escape listener (cancel)
+          if (e.code === "" || e.code === "Unidentified") return; // (a key the browser couldn't name: RV-1117)
           e.preventDefault();
           e.stopPropagation();
+          finish({ kind: "key", code: e.code });
+        },
+        { capture: true, signal: abort.signal },
+      );
+      // (a key whose press comes as its release alone, Windows' PrintScreen: bound at its keyup, RV-1100)
+      window.addEventListener(
+        "keyup",
+        (e) => {
+          if (!KEYUP_ONLY.includes(e.code)) return;
+          e.preventDefault();
           finish({ kind: "key", code: e.code });
         },
         { capture: true, signal: abort.signal },
@@ -534,6 +563,17 @@ export class SettingsPanel {
             e.preventDefault();
           },
           { capture: true, signal: abort.signal },
+        );
+        // (the wheel, a turn up or down: the game's MouseScrollUp and MouseScrollDown, RV-1096)
+        window.addEventListener(
+          "wheel",
+          (e) => {
+            if (e.deltaY === 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            finish({ kind: "key", code: e.deltaY < 0 ? "WheelUp" : "WheelDown" });
+          },
+          { capture: true, passive: false, signal: abort.signal },
         );
       });
     } else {

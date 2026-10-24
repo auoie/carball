@@ -73,7 +73,7 @@ import { Nameplates } from "./ui/nameplates";
 import { LoadingScreen, showLoadingFailure } from "./ui/loadingScreen";
 import { TRAINING_TEXT, type TrainingKeys, TrainingHud } from "./ui/trainingHud";
 import { type KeyGlyph, keyGlyph } from "./ui/keyGlyph";
-import { type GamepadInput, type KeyboardInput, keyBound, lockedKeys } from "./input/bindings";
+import { type GamepadInput, type KeyboardInput, keyBound, lockedKeys, setKeyboardLayout } from "./input/bindings";
 import { LeaveGuard } from "./game/leaveGuard";
 import { DisplayMode } from "./ui/displayMode";
 import { browserNotice, browserNoticeDismissed, currentBrowserLimits, dismissBrowserNotice } from "./ui/browserNotice";
@@ -123,6 +123,11 @@ let matchGuard: LeaveGuard | null = null;
 async function main(): Promise<void> {
   // (the thumb buttons never the browser's back and forward, from the start: RV-1103)
   cancelThumbButtons();
+  // (the keyboard's layout for the keys' names, where the browser tells it: RV-1101)
+  void (navigator as { readonly keyboard?: { readonly getLayoutMap?: () => Promise<ReadonlyMap<string, string>> } }).keyboard
+    ?.getLayoutMap?.()
+    .then(setKeyboardLayout)
+    .catch(() => undefined);
   const loading = new LoadingScreen(required("#loading", HTMLElement));
   const canvas = required("#game", HTMLCanvasElement);
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server

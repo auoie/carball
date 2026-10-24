@@ -364,22 +364,10 @@ body {
   display: none;
 }
 
-/* (the old readouts and keys' line: replaced by the Stat Graphs (HUD-21), a clean screen as the game's; kept unseen for
-   the browser tests that read them) */
-#info,
-#hint {
+/* (the old readouts: replaced by the Stat Graphs (HUD-21), a clean screen as the game's; kept unseen for the browser
+   tests that read them) */
+#info {
   display: none;
-}
-
-#hint {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  padding: 4px 8px;
-  background: var(--panel);
-  border-radius: 6px;
-  font-size: 0.85rem;
-  opacity: 0.8;
 }
 
 [hidden] {
@@ -4319,7 +4307,7 @@ body.pad-mode .settings-tab-glyph {
 /* Binds a normal tab can lose to the browser: the way to keep them, at the Controls screen's end, on the right (in the
    flow: never over a binding slot, a small window's too) */
 .fullscreen-notice {
-  margin: 8px 0 0 auto;
+  margin: 0 0 10px;
   width: fit-content;
   max-width: min(380px, 100%);
   padding: 10px 12px;

@@ -23,9 +23,11 @@ export function browserLimits(env: { readonly keyboardLock: boolean; readonly us
   return [...(firefox ? [T.thumbs] : []), ...(env.keyboardLock ? [] : [T.shortcuts])];
 }
 
-/** What the notice recommends: a Chromium browser, but where there's none (an iPhone's, an iPad's) */
-export function browserRecommendation(userAgent: string): string {
-  return /\b(iPhone|iPad|iPod)\b/.test(userAgent) ? BROWSER_NOTICE_TEXT.ios : BROWSER_NOTICE_TEXT.recommend;
+/** What the notice recommends: a Chromium browser, but where there's none (an iPhone's, an iPad's: an iPad's Safari says
+ *  it's a Mac's, told apart by its touch screen, RV-1121) */
+export function browserRecommendation(userAgent: string, touchPoints = 0): string {
+  const ios = /\b(iPhone|iPad|iPod)\b/.test(userAgent) || (/\bMacintosh\b/.test(userAgent) && touchPoints > 1);
+  return ios ? BROWSER_NOTICE_TEXT.ios : BROWSER_NOTICE_TEXT.recommend;
 }
 
 /** This page's browser's limits */
@@ -72,7 +74,7 @@ export function browserNotice(lines: readonly string[], dismiss?: () => void): H
     list.append(item);
   }
   const recommend = document.createElement("p");
-  recommend.textContent = browserRecommendation(navigator.userAgent);
+  recommend.textContent = browserRecommendation(navigator.userAgent, navigator.maxTouchPoints);
   root.append(title, list, recommend);
   if (dismiss) {
     const button = document.createElement("button");

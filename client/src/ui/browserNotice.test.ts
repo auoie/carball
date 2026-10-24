@@ -19,6 +19,10 @@ describe("a browser's limits for binds (RV-1104)", () => {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1",
       ),
     ).toBe(T.ios);
+    // (an iPad's Safari says it's a Mac's: told apart by its touch screen, RV-1121)
+    const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+    expect(browserRecommendation(mac, 5), "an iPad").toBe(T.ios);
+    expect(browserRecommendation(mac, 0), "a Mac").toBe(T.recommend);
   });
 
   it("the main menu's notice dismissed for good where storage works, shown again where it fails", () => {

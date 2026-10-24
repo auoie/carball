@@ -31,7 +31,6 @@ test("Stat Graphs: None by default and no strip; set in the Interface tab and ke
   expect((await stats(page)).level).toBe("none");
   await expect(page.locator("canvas.stat-graphs")).toBeHidden();
   await expect(page.locator("#info")).toBeHidden();
-  await expect(page.locator("#hint")).toBeHidden();
   // (F10 no key of theirs: nothing)
   await page.keyboard.press("F10");
   await page.waitForTimeout(300);

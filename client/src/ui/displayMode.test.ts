@@ -100,4 +100,14 @@ describe("Display Mode (RV-1091, RV-1112, RV-1113, RV-1116)", () => {
     for (const code of ["Escape", "KeyW", "KeyT", "KeyN", "ControlLeft", "Space"]) expect(keys, code).toContain(code);
     for (const code of ["Tab", "MetaLeft", "MetaRight"]) expect(keys, code).not.toContain(code);
   });
+
+  it("never a code that isn't a key's, one of which fails the whole lock: the wheel's, an unnamed key's (RV-1117)", () => {
+    const keys = lockedKeys({
+      ...DEFAULT_BINDINGS,
+      rollLeft: { ...DEFAULT_BINDINGS.rollLeft, keyboard: { kind: "key", code: "" } },
+      launchBall: { ...DEFAULT_BINDINGS.launchBall, keyboard: { kind: "key", code: "WheelUp" } },
+    });
+    for (const code of ["", "WheelUp"]) expect(keys, code).not.toContain(code);
+    expect(keys).toContain("Escape");
+  });
 });

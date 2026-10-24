@@ -2,6 +2,9 @@
 import { padStyleOf, setPadStyle, takesBrowserKey } from "./bindings";
 import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
 
+/** The keys a browser sends only a keyup for (Windows keeps PrintScreen's keydown): taps when they come (RV-1100) */
+export const KEYUP_ONLY: readonly string[] = ["PrintScreen"];
+
 /** The thumb buttons, Mouse 4 and 5: bindable (air roll, often), never the browser's back and forward, which on a match's
  *  page would leave the match (a loss and a ban): anywhere on the page, a menu's too, from the page's start (its seat
  *  claimed while it loads, RV-1103), in the capture phase (RV-1105). Chromium's; Firefox gives a page no thumb buttons at
@@ -86,9 +89,23 @@ export class InputDevices {
         if (this.#keys.delete(e.code)) {
           this.#releasedKeys.add(e.code);
           this.#events.push({ kind: "key", code: e.code, down: false });
+        } else if (KEYUP_ONLY.includes(e.code) && !editable(e.target)) {
+          // (a key whose press comes as its release alone, Windows' PrintScreen: a tap, RV-1100)
+          this.#tap(e.code);
         }
       },
       { signal },
+    );
+    // (the wheel's turns as the game's MouseScrollUp and MouseScrollDown: a key tapped in a frame, bindable, RV-1096)
+    surface.addEventListener(
+      "wheel",
+      (e) => {
+        if (e.deltaY === 0) return;
+        this.#usingGamepad = false;
+        this.#ownerIsGamepad = false;
+        this.#tap(e.deltaY < 0 ? "WheelUp" : "WheelDown");
+      },
+      { signal, passive: true },
     );
     surface.addEventListener(
       "mousedown",
@@ -170,6 +187,13 @@ export class InputDevices {
   /** What the game sees of the pad (the menus' presses taken out: ui/padNav.ts) */
   padFilter: (pad: GamepadSnapshot | null) => GamepadSnapshot | null = (pad) => pad;
 
+  /** A key pressed and let go within the frame (the wheel's turns, PrintScreen): a press the game acts on, never held */
+  #tap(code: string): void {
+    this.#pressedKeys.add(code);
+    this.#releasedKeys.add(code);
+    this.#events.push({ kind: "key", code, down: true }, { kind: "key", code, down: false });
+  }
+
   /** Held inputs, and the presses and releases since the previous snapshot. */
   snapshot(): InputSnapshot {
     const gamepad = this.padFilter(readGamepad());
@@ -211,13 +235,53 @@ export function gamepads(): readonly (Gamepad | null)[] {
   }
 }
 
-/** The first connected gamepad with the standard layout (its kind noted for the prompts' glyphs: setPadStyle) */
+/** The first connected gamepad with the standard layout, else the first the browser doesn't map (unmappedSnapshot); its
+ *  kind noted for the prompts' glyphs (setPadStyle) */
 export function readGamepad(): GamepadSnapshot | null {
+  let unmapped: Gamepad | null = null;
   for (const pad of gamepads()) {
-    if (pad?.connected && pad.mapping === "standard") {
+    if (!pad?.connected) continue;
+    if (pad.mapping === "standard") {
       setPadStyle(padStyleOf(pad.id));
+      lastPadUnmapped = false;
       return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };
     }
+    unmapped ??= pad;
   }
-  return null;
+  lastPadUnmapped = unmapped !== null;
+  return unmapped ? unmappedSnapshot(unmapped) : null;
+}
+
+/** Each unmapped pad's rest (by its id): its axes' resting values, the buttons held when first seen (RV-1095) */
+const rests = new Map<string, { readonly axes: readonly number[]; readonly held: Set<number> }>();
+/** The pad last read is one the browser doesn't map (the Controls screen says so) */
+let lastPadUnmapped = false;
+
+/** Whether the pad in use is one the browser doesn't map (its buttons and sticks numbered as it reports them) */
+export function padUnmapped(): boolean {
+  return lastPadUnmapped;
+}
+
+/** A pad the browser doesn't map ("standard" mapping missing: an older or uncommon pad): its buttons and sticks by
+ *  their own numbers, its binds set on the Controls screen (RV-1095). An axis at an end when first seen rests there (a
+ *  trigger at -1 reads 0 untouched), any other at 0 (the browser shows a pad first at a stick moved half way: never its
+ *  rest); a button held when first seen (the press that showed it) counts once let go */
+export function unmappedSnapshot(pad: Pick<Gamepad, "id" | "axes" | "buttons">): GamepadSnapshot {
+  let rest = rests.get(pad.id);
+  if (!rest) {
+    rest = {
+      axes: pad.axes.map((v) => (Math.abs(v) > 0.99 ? Math.sign(v) : 0)),
+      held: new Set(pad.buttons.flatMap((b, i) => (b.value > 0.5 ? [i] : []))),
+    };
+    rests.set(pad.id, rest);
+  }
+  setPadStyle(padStyleOf(pad.id));
+  const { axes: restAxes, held } = rest;
+  const axes = pad.axes.map((v, i) => Math.max(-1, Math.min(1, v - (restAxes[i] ?? 0))));
+  const buttons = pad.buttons.map((b, i) => {
+    if (held.has(i) && b.value > 0.5) return 0;
+    held.delete(i);
+    return b.value;
+  });
+  return { axes, buttons };
 }

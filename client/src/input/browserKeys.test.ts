@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { type Action, type Bindings, DEFAULT_BINDINGS, type KeyboardInput, browserHeldBinds, keyBound, takesBrowserKey } from "./bindings";
+import {
+  type Action,
+  type Bindings,
+  DEFAULT_BINDINGS,
+  type KeyboardInput,
+  browserHeldBinds,
+  inputName,
+  keyBound,
+  keyName,
+  setKeyboardLayout,
+  takesBrowserKey,
+} from "./bindings";
+import { readHeldActions } from "./mapping";
 
 const bound = (code: string): boolean => keyBound(DEFAULT_BINDINGS, code);
 const press = (code: string, mods: { ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean } = {}) => ({
@@ -44,6 +56,14 @@ describe("the keys a press in play takes from the browser (RV-1092)", () => {
     ).toBe(true);
   });
 
+  it("zoom by its character on any layout (a German keyboard's + on BracketRight), and Firefox's tools' chords (RV-1120)", () => {
+    expect(takesBrowserKey({ ...press("BracketRight", { ctrlKey: true }), key: "+" }, bound), "Ctrl + on a German keyboard").toBe(false);
+    expect(takesBrowserKey({ ...press("BracketRight", { ctrlKey: true }), key: "]" }, bound), "Ctrl+] on a US one: the game's").toBe(true);
+    // (Ctrl alone bound: the defaults bind E)
+    const ctrl = (code: string): boolean => code === "ControlLeft";
+    for (const code of ["KeyK", "KeyE", "KeyM"]) expect(takesBrowserKey({ ...press(code, { ctrlKey: true }), shiftKey: true }, ctrl), code).toBe(false);
+  });
+
   it("nothing when nothing's bound", () => {
     expect(takesBrowserKey(press("KeyJ", { ctrlKey: true, altKey: true, metaKey: true }), () => false)).toBe(false);
   });
@@ -57,5 +77,44 @@ describe("the binds a normal tab can lose to the browser (the Controls screen's 
     const alt = withKey(withKey(DEFAULT_BINDINGS, "rollLeft", { kind: "key", code: "AltLeft" }), "rearCamera", null);
     expect(browserHeldBinds(alt)).toEqual([{ kind: "key", code: "AltLeft" }]);
     expect(browserHeldBinds(withKey(DEFAULT_BINDINGS, "rearCamera", { kind: "key", code: "KeyR" }))).toEqual([]);
+  });
+});
+
+describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
+  it("a layout's letters and punctuation by its keycaps (AZERTY's Z on the W key), its digits as printed", () => {
+    setKeyboardLayout(
+      new Map([
+        ["KeyW", "z"],
+        ["KeyQ", "a"],
+        ["Semicolon", "m"],
+        ["Digit1", "&"],
+      ]),
+    );
+    try {
+      expect([keyName("KeyW"), keyName("KeyQ"), keyName("Semicolon"), keyName("Digit1"), keyName("KeyE")]).toEqual(["Z", "A", "M", "1", "E"]);
+    } finally {
+      setKeyboardLayout(null);
+    }
+    expect(keyName("KeyW"), "no layout: the US keycap").toBe("W");
+  });
+
+  it("the wheel's turns, and pad button 17 (Xbox's Share, PlayStation's touchpad)", () => {
+    expect([keyName("WheelUp"), keyName("WheelDown")]).toEqual(["Wheel up", "Wheel down"]);
+    expect(inputName({ kind: "padButton", button: 17 }, "xbox")).toBe("Share");
+    expect(inputName({ kind: "padButton", button: 17 }, "playstation")).toBe("Touchpad");
+  });
+
+  it("a wheel turn bound: a press its frame, its action fired once (RV-1096)", () => {
+    const bindings = withKey(DEFAULT_BINDINGS, "launchBall", { kind: "key", code: "WheelUp" });
+    const turned = {
+      keys: new Set<string>(),
+      mouseButtons: new Set<number>(),
+      pressedKeys: new Set(["WheelUp"]),
+      releasedKeys: new Set(["WheelUp"]),
+      gamepad: null,
+    };
+    expect(readHeldActions(turned, bindings, 0.2).launchBall).toBe(true);
+    const after = { keys: new Set<string>(), mouseButtons: new Set<number>(), gamepad: null };
+    expect(readHeldActions(after, bindings, 0.2).launchBall, "the next frame: not held").toBe(false);
   });
 });

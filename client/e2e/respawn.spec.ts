@@ -62,13 +62,18 @@ for (const [width, height] of [
     await page.goto("/?render=off");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
     await freePlay(page);
-    // (a pad press: the pad's prompts)
-    await page.evaluate(async () => {
-      const w = window as unknown as { carballSetPad: (down: number[]) => void };
-      w.carballSetPad([0]);
-      await new Promise((r) => setTimeout(r, 200));
-      w.carballSetPad([]);
-    });
+    // (a pad press: the pad's prompts. Held until the page draws them, the ball cam indicator's toggle in a pad button's
+    // glyph (drawn while the indicator is unseen): a press shorter than a loaded page's frame was never polled, the
+    // keyboard's prompts kept)
+    const setPad = (down: number[]): Promise<void> =>
+      page.evaluate((d) => {
+        (window as unknown as { carballSetPad: (down: number[]) => void }).carballSetPad(d);
+      }, down);
+    const padGlyph = page.locator("#ballcam-toggle .key-pad");
+    await expect(padGlyph, "the keyboard's before the press").toHaveCount(0);
+    await setPad([0]);
+    await expect(padGlyph).toBeAttached({ timeout: 15_000 });
+    await setPad([]);
     await demolished(page);
     await expect(page.locator("#respawn-left .key-stick")).toHaveText("L◂");
     await expect(page.locator("#respawn-right .key-stick")).toHaveText("L▸");

@@ -158,6 +158,8 @@ const PAD_BUTTON_NAMES = [
   "D-pad left",
   "D-pad right",
   "Home",
+  // (button 17, past the standard layout: Chromium's Xbox Series Share button, RV-1099)
+  "Share",
 ];
 /** A PlayStation pad's names for the same buttons (the standard layout: Cross is button 0) */
 const PS_BUTTON_NAMES = [
@@ -178,6 +180,8 @@ const PS_BUTTON_NAMES = [
   "D-pad left",
   "D-pad right",
   "PS",
+  // (button 17: the DualShock 4's and DualSense's touchpad press, RV-1099)
+  "Touchpad",
 ];
 
 /** The pad's kind, for its buttons' names and glyphs (the game's glyph set per pad type: HT-3) */
@@ -239,35 +243,64 @@ export function keyBound(bindings: Bindings, code: string): boolean {
 }
 
 /** The browser's own chords a held modifier bind never takes: page zoom (an accessibility setting) and the developer
- *  tools, theirs unless that very key is bound (RV-1110) */
+ *  tools, theirs unless that very key is bound (RV-1110). Zoom by the character too, a layout's + elsewhere (a German
+ *  keyboard's on BracketRight); the tools Chromium's (I, J, C) and Firefox's (K, E, M: RV-1120) */
 const ZOOM_KEYS = ["Equal", "Minus", "Digit0", "NumpadAdd", "NumpadSubtract", "Numpad0"];
-const TOOLS_KEYS = ["KeyI", "KeyJ", "KeyC"];
+const ZOOM_CHARACTERS = ["+", "-", "=", "0"];
+const TOOLS_KEYS = ["KeyI", "KeyJ", "KeyC", "KeyK", "KeyE", "KeyM"];
 
 /** Whether a key press in play is the game's alone, its browser action never taken (RV-1092): a bound key (F5's reload,
  *  `/`'s quick find), or any key with a bound modifier held (Ctrl held as a bind: Ctrl+D, Ctrl+S; Alt: Alt+D, Alt+E),
  *  but the zoom and developer tools' chords. Ctrl+W, T and N reach the page only in full screen with the keyboard locked
  *  (RV-1091) */
 export function takesBrowserKey(
-  e: { readonly code: string; readonly ctrlKey: boolean; readonly altKey: boolean; readonly metaKey: boolean; readonly shiftKey?: boolean },
+  e: {
+    readonly code: string;
+    readonly key?: string;
+    readonly ctrlKey: boolean;
+    readonly altKey: boolean;
+    readonly metaKey: boolean;
+    readonly shiftKey?: boolean;
+  },
   bound: (code: string) => boolean,
 ): boolean {
   if (bound(e.code)) return true;
-  if ((e.ctrlKey || e.metaKey) && (ZOOM_KEYS.includes(e.code) || (e.shiftKey === true && TOOLS_KEYS.includes(e.code)))) return false;
+  const zoom = ZOOM_KEYS.includes(e.code) || ZOOM_CHARACTERS.includes(e.key ?? "");
+  if ((e.ctrlKey || e.metaKey) && (zoom || (e.shiftKey === true && TOOLS_KEYS.includes(e.code)))) return false;
   const held = (side: string): boolean => bound(`${side}Left`) || bound(`${side}Right`);
   return (e.ctrlKey && held("Control")) || (e.altKey && held("Alt")) || (e.metaKey && held("Meta"));
 }
 
+/** The wheel's turns, bound as keys (the game's MouseScrollUp and MouseScrollDown, RV-1096): no key's code */
+export const WHEEL_CODES: readonly string[] = ["WheelUp", "WheelDown"];
+
 /** The keys the browser's keyboard lock takes in full screen: the bound keys, Escape (the pause menu's, not full
  *  screen's end: a long press still ends it), W, T and N (Ctrl+W, T, N); never Tab nor the system key, so Alt+Tab and
- *  the Windows key stay the system's (RV-1112) */
+ *  the Windows key stay the system's (RV-1112); never a code that isn't a key's (the wheel's, a key the browser couldn't
+ *  name), one of which fails the whole lock (RV-1117) */
 export function lockedKeys(bindings: Bindings): string[] {
   const codes = new Set(["Escape", "KeyW", "KeyT", "KeyN"]);
   for (const b of Object.values<Binding>(bindings)) if (b.keyboard?.kind === "key") codes.add(b.keyboard.code);
-  for (const never of ["Tab", "MetaLeft", "MetaRight", "OSLeft", "OSRight"]) codes.delete(never);
+  for (const never of ["Tab", "MetaLeft", "MetaRight", "OSLeft", "OSRight", "", "Unidentified", ...WHEEL_CODES]) codes.delete(never);
   return [...codes];
 }
 
+/** The keyboard's layout, each key's character by its position (navigator.keyboard.getLayoutMap, where the browser has
+ *  it): an AZERTY player's Z key named Z, not W, its binding the same position either way (RV-1101) */
+let layout: ReadonlyMap<string, string> | null = null;
+
+export function setKeyboardLayout(map: ReadonlyMap<string, string> | null): void {
+  layout = map;
+}
+
+/** The punctuation keys a layout renames (its letters too; its digits as their keycaps print them) */
+const LAYOUT_KEYS = /^(Key[A-Z]|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Backquote|Comma|Period|Slash|IntlBackslash)$/;
+
 export function keyName(code: string): string {
+  const typed = LAYOUT_KEYS.test(code) ? layout?.get(code) : undefined;
+  if (typed !== undefined && typed !== "") return typed.toUpperCase();
+  if (code === "WheelUp") return "Wheel up";
+  if (code === "WheelDown") return "Wheel down";
   if (/^Key[A-Z]$/.test(code)) return code.slice(3);
   if (/^Digit\d$/.test(code)) return code.slice(5);
   const sided = /^(Shift|Control|Alt|Meta)(Left|Right)$/.exec(code);

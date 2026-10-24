@@ -2,7 +2,8 @@
 // clearing what it just bound), right-click on an idle slot still clearing it; and its Fullscreen notice: binds a normal
 // tab can lose to the browser (the defaults' Left Ctrl, rear camera) named, Windowed, with the switch to Fullscreen.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, fakeGamepad, test } from "./fixtures";
+import { freePlay } from "./players";
 
 async function controls(page: Page): Promise<void> {
   await page.goto("/?render=off");
@@ -35,6 +36,9 @@ test("the Fullscreen notice names the binds a normal tab can lose, and switches 
   await controls(page);
   const notice = page.locator("#settings .fullscreen-notice");
   await expect(notice).toContainText("Some of your binds (Left Ctrl) work fully only in Fullscreen");
+  // (above the slots, seen before binding: the user's)
+  const [box, table] = [await notice.boundingBox(), await page.locator("#settings .bindings").boundingBox()];
+  expect(box && table && box.y + box.height <= table.y).toBe(true);
   await notice.getByRole("button", { name: "Switch to Fullscreen" }).click();
   await expect.poll(async () => page.evaluate(() => document.fullscreenElement !== null), { timeout: 5_000 }).toBe(true);
   await expect(notice).toHaveCount(0);
@@ -47,4 +51,55 @@ test("no Fullscreen notice without such a bind", async ({ page }) => {
   await controls(page);
   await expect(page.locator(".bindings")).toBeVisible();
   await expect(page.locator("#settings .fullscreen-notice")).toHaveCount(0);
+});
+
+test("the wheel binds by a turn, and fires its action in play; PrintScreen binds by its keyup alone (RV-1096, RV-1100)", async ({ page }) => {
+  await controls(page);
+  await slot(page, "launchBall").click();
+  await page.waitForTimeout(100);
+  await page.mouse.wheel(0, -120);
+  await expect(slot(page, "launchBall")).toHaveText("Wheel up");
+  await slot(page, "passBall").click();
+  await page.keyboard.up("PrintScreen");
+  await expect(slot(page, "passBall")).toHaveText("PrintScreen");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeHidden();
+  await freePlay(page);
+  // (free play taking input first: a click until the car leaves the floor; then the ball's fastest up, read each frame)
+  const size = page.viewportSize() ?? { width: 1280, height: 720 };
+  const at = { x: size.width / 2, y: size.height / 2 };
+  await expect
+    .poll(
+      async () => {
+        await page.mouse.click(at.x, at.y);
+        return page.evaluate(() => !(window as unknown as { carballFreeplay: { car: () => { onGround: boolean } } }).carballFreeplay.car().onGround);
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      peakUp: number;
+      carballFreeplay: { place: (car: object, ball: object) => void; ball: () => { vel: { z: number } } };
+    };
+    w.carballFreeplay.place({ x: 0, y: 0, yaw: 0 }, { x: 0, y: 1500, z: 93 });
+    w.peakUp = 0;
+    const sample = (): void => {
+      w.peakUp = Math.max(w.peakUp, w.carballFreeplay.ball().vel.z);
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.wheel(0, -120);
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { peakUp: number }).peakUp), { timeout: 10_000 }).toBeGreaterThan(400);
+});
+
+test("a controller the browser doesn't map: read by its own numbers, the Controls screen saying so (RV-1095)", async ({ browser }) => {
+  const context = await browser.newContext();
+  await fakeGamepad(context, "");
+  const page = await context.newPage();
+  await controls(page);
+  await expect(page.locator("#settings .unmapped-pad")).toContainText("isn't one the browser maps");
+  await context.close();
 });
