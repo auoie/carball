@@ -110,7 +110,10 @@ Source: https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en
 - ChadGPT: https://github.com/thecosmicskye/ChadGPT
 - Ripple: https://github.com/Rolv-Arild/replay-pretraining
 
-**Not checked:** Levi, TensorBot, Elementv5 and bowie-knife-99.
+**Not checked here; since checked in notes/bots-licences.md (BOTS2, 2026-10-24):** Levi (MIT, LHolten/Leviathan
+`d1146b2`; not in the v5 pack), TensorBot (no licence; in the pack), Elementv5 (no licence of its own: the pack's MIT
+default alone; in the pack) and bowie-knife-99 (a custom non-commercial licence, `0aa5512`; in the pack, excluded). That
+note holds the v5 pack's licence policy and the commercial-safe candidates (Wisp v2 and Willo 24k, explicit MIT files).
 
 ## 4. Browser-port notes (Nexto)
 Sources: RLBotPack `RLBotPack/Necto/Nexto/{agent,nexto_obs,bot}.py`. The architecture comes from Necto's `training/agent.py`
