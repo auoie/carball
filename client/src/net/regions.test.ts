@@ -129,11 +129,44 @@ describe("the regions searched", () => {
     // (C the kept automatic pick, its kept ping 0 ms, silent now; A answered: A searched)
     const measured = new Map<string, number | null>([["a", 40]]);
     const plan = searchPlan(listed, { ids: ["c"], manual: false }, ["c"], measured, [1]);
-    expect(plan).toEqual({ chosen: ["a"], automatic: true, request: { playlists: [1], pings: { "a.example:4433": 40 }, regions: ["a.example:4433"] } });
+    expect(plan).toEqual({
+      chosen: ["a"],
+      automatic: true,
+      request: { playlists: [1], pings: { "a.example:4433": 40 }, regions: ["a.example:4433"] },
+      outdatedOnly: false,
+    });
     // (the player's ticks kept, whatever answered)
     expect(searchPlan(listed, { ids: ["c"], manual: true }, ["c"], measured, [1])).toMatchObject({ chosen: ["c"], automatic: false });
     // (one region: that one, no pick)
     expect(searchPlan([{ id: "a", server: "a.example:4433" }], null, [], measured, [2]).automatic).toBe(false);
+  });
+
+  it("a region whose server refused this page's version is left out, the others searched; only all of them refused stops it (RV-1030)", () => {
+    const listed = [
+      { id: "a", server: "a.example:4433" },
+      { id: "b", server: "b.example:4433" },
+    ];
+    const old = new Set(["a"]);
+    // (A refused on version (no ping), B answered: the player's A and B, B alone searched)
+    const measured = new Map<string, number | null>([
+      ["a", null],
+      ["b", 30],
+    ]);
+    const both = searchPlan(listed, { ids: ["a", "b"], manual: true }, ["a", "b"], measured, [1], old);
+    expect(both).toMatchObject({ chosen: ["a", "b"], outdatedOnly: false, request: { pings: { "b.example:4433": 30 }, regions: ["b.example:4433"] } });
+    // (the player's A alone: nothing left, refused)
+    const alone = searchPlan(listed, { ids: ["a"], manual: true }, ["a"], measured, [1], old);
+    expect(alone).toMatchObject({ outdatedOnly: true, request: { regions: [] } });
+    // (an automatic pick: the lowest of those that answered, B; every region refused: refused)
+    expect(searchPlan(listed, null, [], measured, [1], old)).toMatchObject({ chosen: ["b"], outdatedOnly: false });
+    const none = new Map<string, number | null>([
+      ["a", null],
+      ["b", null],
+    ]);
+    expect(searchPlan(listed, null, [], none, [1], new Set(["a", "b"]))).toMatchObject({ outdatedOnly: true, request: { regions: [] } });
+    // (a page of one region: that one refused, refused; none refused, as before)
+    expect(searchPlan([listed[0] ?? { id: "", server: "" }], null, [], measured, [1], old).outdatedOnly).toBe(true);
+    expect(searchPlan(listed, { ids: ["a"], manual: true }, ["a"], measured, [1]).outdatedOnly).toBe(false);
   });
 
   it("a ping's answer: its ms and its name; a name the matchmaker wouldn't take, no answer; none, from before the name, its URL's (RV-893, RV-913)", () => {

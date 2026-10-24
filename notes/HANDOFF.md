@@ -32,9 +32,9 @@ indicator), the full §13 harness, free-play polish.
 - The loss/latency check (`client/src/net/session.test.ts`, `client/src/testing/netRun.ts`: the client's network core,
   `src/net/session.ts`, paced as a page, against the server's own match in process: the local host's module, since
   2026-10-23's design 5; a TS port of the input buffer before it) at 80 ms round trip, 20 ms jitter, 2 % loss: the
-  buffer rarely dry, at 11, the local car's corrections p95 up to 3 uu, the bot's p95 ≈ 20 uu; the ball's p95 0 but for
-  seed 5's ~3 s of ball corrections by whole ticks' travel (a finding of design 5, to investigate). Before G1 (the port's
-  replication): 42.9 → 3.9 KB/s, local mispredictions 97 → 32.
+  buffer rarely dry, at 11, the local car's corrections p95 up to 3 uu, the bot's p95 ≈ 20 uu; the ball's p95 0 (seed 5's
+  ~3 s with its car demolished not counted: states applied as they come, no prediction to correct, G5; RV-1029).
+  Before G1 (the port's replication): 42.9 → 3.9 KB/s, local mispredictions 97 → 32.
 - Kept from the first harness step: `server/src/netsim.rs` (seeded paths; `client/src/testing/netsim.ts` its twin,
   checked against the vectors it writes), the input buffer's T2 tests (`server/src/net_tests.rs`).
 

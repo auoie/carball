@@ -41,8 +41,8 @@ export type PingAnswer = { readonly ms: number; readonly server: string } | "out
 
 /** A region's ping (notes/matchmaking.md, Regions): the round trip in ms on an open session, from a hello with intent
  *  "ping" to the server's Pong, the better of `tries`, and the server's name as its Pong says it (the matchmaker's for
- *  it: RV-863; empty from a server from before the name); "outdated" if it refuses the ping on version (a page older
- *  than its servers, RV-1021); null if it can't be reached in time, or answers with anything else (RV-864) */
+ *  it: RV-863; empty from a server from before the name); "outdated" if it refuses the ping on version (this page's and
+ *  the server's apart: one of them the older, RV-1021, RV-1030); null if it can't be reached in time, or answers with anything else (RV-864) */
 export async function pingServer(address: ServerAddress, tries = 2): Promise<PingAnswer> {
   let best: { ms: number; server: string } | null = null;
   for (let i = 0; i < tries; i++) {

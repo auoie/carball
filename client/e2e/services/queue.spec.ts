@@ -5,6 +5,7 @@
 // (notes/matchmaking.md v1 queue checklist, MM-5, MM-10). Nothing drawn (`?render=off`).
 import type { Browser, Page } from "@playwright/test";
 import { expect, fakeGamepad, hideGamepads, tickPlaylists } from "../fixtures";
+import { PROTOCOL_VERSION } from "../../src/net/protocol";
 import { STACKS, signIn, test } from "./fixtures";
 
 test.use({ baseURL: STACKS.queue.origin });
@@ -168,4 +169,11 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   expect(await page.evaluate(() => (window as unknown as { carballMatchmaking: () => { state: unknown } }).carballMatchmaking().state)).toBeNull();
   expect(errors).toEqual([]);
   await context.close();
+});
+
+test("the page's protocol version served beside it, never cached: a page refused on version reads it (RV-1030)", async ({ request }) => {
+  const response = await request.get("/version.json");
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  expect(await response.json()).toEqual({ protocol: PROTOCOL_VERSION });
 });

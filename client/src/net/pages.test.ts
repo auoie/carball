@@ -10,6 +10,7 @@ import {
   REFUSED_TOKEN,
   REFUSED_UNCONFIRMED,
   REFUSED_VERSION,
+  PROTOCOL_VERSION,
 } from "./protocol";
 import { QueueBannedError, RejoinGoneError, SignedOutError } from "./tickets";
 import {
@@ -28,6 +29,7 @@ import {
   matchLock,
   matchPlayedElsewhere,
   openClaim,
+  pageOutdated,
   pageUrl,
   queueAddress,
   queueRegions,
@@ -292,6 +294,22 @@ describe("the pages' handoffs", () => {
     expect(configServers({ gameServer: us.url, gameServers: [{ id: "x" }] })).toEqual([{ id: "default", name: "", url: us.url }]);
     expect(configServers({ gameServer: us.url })).toEqual([{ id: "default", name: "", url: us.url }]);
     expect(configServers({ gameServer: "ftp://x" })).toEqual([]);
+  });
+
+  it("this page older than its deployment only when the deployment's version (its build's, never cached) is newer (RV-1030)", async () => {
+    const version =
+      (body: unknown, status = 200, type = "application/json") =>
+      () =>
+        Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": type } }));
+    expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION + 1 }))).toBe(true);
+    // (the same or older: a server refusing this page is the one behind; a reload changes nothing)
+    expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION }))).toBe(false);
+    expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION - 1 }))).toBe(false);
+    // (none to read: a development page's page in its place, a 404, nothing, a failed request)
+    expect(await pageOutdated(() => Promise.resolve(new Response("<!doctype html>", { headers: { "content-type": "text/html" } })))).toBe(false);
+    expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION + 1 }, 404))).toBe(false);
+    expect(await pageOutdated(version({}))).toBe(false);
+    expect(await pageOutdated(() => Promise.reject(new Error("offline")))).toBe(false);
   });
 
   it("finds each region's address, a region by its id (else the first); a development page none", async () => {

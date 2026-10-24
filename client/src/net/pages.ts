@@ -10,6 +10,7 @@ import {
   REFUSED_TOKEN,
   REFUSED_UNCONFIRMED,
   REFUSED_VERSION,
+  PROTOCOL_VERSION,
   isTicketText,
 } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
@@ -283,6 +284,23 @@ export async function deployedGameServer(
     // (not JSON: unreachable, below)
   }
   return unreachable;
+}
+
+/** Whether this page is older than its deployment's (RV-1030): the deployment's protocol version (`/version.json`, written
+ *  by its build, never cached) newer than this page's, so a reload brings a page its servers take. False when it can't be
+ *  read (a development page, the request failing) or isn't newer: a server refusing this page's version then is the one
+ *  behind, and a reload would change nothing */
+export async function pageOutdated(
+  fetchVersion: (signal: AbortSignal) => Promise<Response> = async (signal) => fetch("/version.json", { cache: "no-store", signal }),
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<boolean> {
+  try {
+    const response = await fetchVersion(AbortSignal.timeout(timeoutMs));
+    const body = (await response.json()) as { protocol?: unknown } | null;
+    return response.ok && typeof body?.protocol === "number" && body.protocol > PROTOCOL_VERSION;
+  } catch {
+    return false;
+  }
 }
 
 /** A region (notes/matchmaking.md, Regions): its id (kept with a claim and a saved seat), its name as the region picker

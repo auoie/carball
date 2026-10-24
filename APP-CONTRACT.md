@@ -84,9 +84,11 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port 1–65535 or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache` (`/bots/*`, Play vs
-  Bots' packages under their own names, among them), `/config.json` `no-store`. A missing file under `/assets/`, `/bots/`
-  or `/config.json` is a 404 (one under `/bots/` `no-cache` too, RV-553); any other unknown path serves `index.html`
-  (RV-537). A page off localhost whose `/config.json` can't be read (missing, an error, not a config) offers no online
+  Bots' packages under their own names, among them), `/config.json` and `/version.json` `no-store` (the latter the
+  page build's protocol version: a page a game server refuses on version reads it, and asks for a reload only if the
+  deployment's is newer than its own; else that server isn't updated yet and its region is left out of the search,
+  RV-1030). A missing file under `/assets/`, `/bots/`, `/config.json` or `/version.json` is a 404 (one under `/bots/`
+  `no-cache` too, RV-553); any other unknown path serves `index.html` (RV-537). A page off localhost whose `/config.json` can't be read (missing, an error, not a config) offers no online
   play ("can't be reached"): it never falls back to a development server (RX29C). Every response carries
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
   Content-Security-Policy (this origin only, but the game servers' origins from `GAME_SERVERS` or `GAME_SERVER_URL` and Cloudflare
@@ -409,6 +411,11 @@ window.
 | A game server call's ticket | ticket | issued within 24 h; each spent once |
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-24 (the working tree on 40cd5e0, RV-1030/RV-1029 and the end-of-match notice: `scripts/build_images.sh
+--worktree --e2e e2e`): the checks passed; the web image serves `/version.json` (`{"protocol":30}`, `no-store`: the
+services' queue spec reads it through the edge). The browser tests passed 90/90 (two local specs on their rerun, timing
+beside the services' stacks coming up); the flows' matches left by address and by Back show no "Connection Lost".
 
 2026-10-24 (the working tree on 9683f41, design 4's second step: `scripts/build_images.sh --worktree --e2e e2e`): the
 checks stage passed, its e2e markers one list now (the game's test flags, the tests' sign-in route and `-tags=e2e`), each

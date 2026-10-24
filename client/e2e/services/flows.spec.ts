@@ -67,13 +67,15 @@ async function inMatch(page: Page, n: number): Promise<void> {
   await expect(page.locator("#net")).toContainText(`${String(n)} cars`, { timeout: 30_000 });
 }
 
-/** Back to the main menu from a match that's over, by its address (a modal the match's end left, its connection gone
- *  with the page, dismissed) */
-async function toMenu(page: Page): Promise<void> {
-  await page.goto("/?render=off");
+/** Back on the main menu from a match that's over, left by the browser (another address, or Back): no "Connection
+ *  Lost" for a match that was over, the page's own leaving closing its connection (the user's report) */
+async function leftForMenu(page: Page, how: "address" | "back"): Promise<void> {
+  if (how === "back") await page.goBack();
+  else await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
-  const ok = page.locator("#modal").getByRole("button", { name: /^ok$/i });
-  if (await ok.isVisible()) await ok.click();
+  await expect(page.locator("#main-menu").getByRole("button", { name: /^play$/i })).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1000);
+  await expect(page.locator("#modal")).toBeHidden();
 }
 
 const pauseButton = (page: Page, label: string) => page.locator("#pause-menu").getByRole("button", { name: new RegExp(`^${label}$`, "i") });
@@ -156,7 +158,8 @@ test("a matched 1v1 conceded: the forfeit its result, the winner's rating up and
     await expect.poll(async () => (await ends(p)).some((e) => e.forfeit), { timeout: 30_000 }).toBe(true);
   }
   // Back on the menu: the result recorded, the ratings moved apart from a new account's 1500, provisional still
-  for (const p of [winner.page, loser.page]) await toMenu(p);
+  await leftForMenu(winner.page, "address");
+  await leftForMenu(loser.page, "back");
   const won = async (): Promise<number> => parseInt(await rating(winner.page), 10);
   await expect.poll(won, { timeout: 40_000 }).toBeGreaterThan(1500);
   const lost = parseInt(await rating(loser.page), 10);
@@ -185,7 +188,7 @@ test("a 1v1 left: the leaver reported, its ban line under Find Match; the other'
   await expect(menu.locator(".main-menu-ban")).toHaveText(/^you left a ranked match: you can search again in [45] minutes$/, { timeout: 40_000 });
   // (the one who stayed: its win, its team left without players)
   await expect.poll(async () => (await ends(stays.page)).length, { timeout: 30_000 }).toBeGreaterThan(0);
-  await toMenu(stays.page);
+  await leftForMenu(stays.page, "address");
   await expect.poll(async () => parseInt(await rating(stays.page), 10), { timeout: 40_000 }).toBeGreaterThan(1500);
   await expect(stays.page.locator("#main-menu .main-menu-ban")).toBeHidden();
   expect(errors).toEqual([]);

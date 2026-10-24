@@ -96,18 +96,23 @@ export function toggleRegion(chosen: readonly string[], id: string, order: reado
 }
 
 /** A search's plan from the pings measured for it alone (RV-879: a kept ping from before is no answer now): the regions
- *  searched (the player's ticked ones; else, `automatic`, the lowest of these pings, kept as the automatic pick) and the
- *  request */
+ *  chosen (the player's ticked ones; else, `automatic`, the lowest of these pings, kept as the automatic pick), the
+ *  request, its regions without those whose server refused this page's version (`outdated`: one such region never stops
+ *  a search of the others, RV-1030), and whether that left none (`outdatedOnly`: every region it would search refused) */
 export function searchPlan(
   listed: readonly { readonly id: string; readonly server: string }[],
   stored: KeptRegions | null,
   chosen: readonly string[],
   measured: ReadonlyMap<string, number | null>,
   playlists: readonly number[],
-): { chosen: string[]; automatic: boolean; request: ReturnType<typeof searchRequest> } {
+  outdated: ReadonlySet<string> = new Set(),
+): { chosen: string[]; automatic: boolean; request: ReturnType<typeof searchRequest>; outdatedOnly: boolean } {
   const automatic = listed.length > 1 && stored?.manual !== true;
   const regions = automatic ? chooseRegions(listed, stored, measured) : [...chosen];
-  return { chosen: regions, automatic, request: searchRequest(listed, regions, measured, playlists) };
+  const searched = listed.length > 1 ? regions : listed.map((r) => r.id);
+  const open = searched.filter((id) => !outdated.has(id));
+  const outdatedOnly = searched.length > 0 && open.length === 0;
+  return { chosen: regions, automatic, request: searchRequest(listed, open, measured, playlists, outdated), outdatedOnly };
 }
 
 /** A region's ping from its server's answer (pingServer's): its ms and the name its Pong gives (the search sends it); a
@@ -125,15 +130,17 @@ export function serverNameOk(name: string): boolean {
 
 /** A search's request from the regions (each its server's name), the ticked ones (a page with one region: that one) and
  *  the pings just measured: every listed region's server that answered, and the ticked ones' servers, each once (MX1R-19:
- *  the matchmaker reads a match's server's ping whether it's ticked or not); a server whose name isn't one left out, so
- *  one region's odd name never fails the search (RV-868) */
+ *  the matchmaker reads a match's server's ping whether it's ticked or not), but those `outdated` (their server refused
+ *  this page's version: never a match there, RV-1030); a server whose name isn't one left out, so one region's odd name
+ *  never fails the search (RV-868) */
 export function searchRequest(
   listed: readonly { readonly id: string; readonly server: string }[],
   chosen: readonly string[],
   pings: ReadonlyMap<string, number | null>,
   playlists: readonly number[],
+  outdated: ReadonlySet<string> = new Set(),
 ): { playlists: readonly number[]; pings: Record<string, number>; regions: string[] } {
-  const ticked = listed.length > 1 ? listed.filter((r) => chosen.includes(r.id)) : listed;
+  const ticked = (listed.length > 1 ? listed.filter((r) => chosen.includes(r.id)) : listed).filter((r) => !outdated.has(r.id));
   const answered: Record<string, number> = {};
   for (const r of listed) {
     const ms = pings.get(r.id);

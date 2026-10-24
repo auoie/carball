@@ -83,12 +83,13 @@ describe("play over a network path (in process)", () => {
       expect(r.local.mean).toBeLessThanOrEqual(2);
       expect(r.movedPerSecond.local).toBeLessThanOrEqual(40);
       expect(r.localMispredictions).toBeLessThanOrEqual(3 * 27);
-      // The bot's and the ball's corrections stay small (each smoothed when drawn)
-      expect(r.remote.p95).toBeLessThanOrEqual(40);
-      // (against the server's own match, seed 5's ball is corrected by a few ticks' travel at nearly every update for
-      // about 3 s, the client mapping its states to the wrong frames under the jitter: a finding of design 5, its p95
-      // 21; the port's was 0 for every seed)
-      expect(r.ball.p95).toBeLessThanOrEqual(25);
+      // The bot's and the ball's corrections stay small (each smoothed when drawn): measured while the client predicts.
+      // (Seed 5's bot demolishes the client's car at 25.4 s: about 3 s of states applied as they come, no prediction
+      // to correct (G5), the world catching up by whole ticks' travel; counted as corrections, they made its ball p95
+      // 21 before RV-1029)
+      expect(r.remote.p95).toBeLessThanOrEqual(30);
+      expect(r.ball.p95).toBe(0);
+      if (seed === 5) expect(r.direct).toBeGreaterThan(100);
       expect(r.downKBps).toBeLessThanOrEqual(6);
       // One replay a frame, however many updates came in it (G3): never more than the round trip and the buffer's
       // depth, ≈ 16 frames here, with the jitter's spread

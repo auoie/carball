@@ -3,6 +3,7 @@ import { cpSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Plugin, type ViteDevServer, defineConfig } from "vite";
+import { PROTOCOL_VERSION } from "./src/net/protocol";
 
 const here = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 
@@ -104,8 +105,20 @@ function chunkModules(worker = false): Plugin {
   };
 }
 
+/** The page's protocol version, served beside it (`/version.json`, never cached: docker/nginx.conf): a page whose ping a
+ *  game server refuses on version reads the deployment's, to tell whether it's the older one (a reload brings the new
+ *  page) or that server is (not updated yet: its region unavailable, no reload asked), RV-1030 */
+function versionFile(): Plugin {
+  return {
+    name: "carball-version",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "version.json", source: `${JSON.stringify({ protocol: PROTOCOL_VERSION })}\n` });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [localAssets(), botPackages(), chunkModules()],
+  plugins: [localAssets(), botPackages(), chunkModules(), versionFile()],
   // (the worker's build recorded too: its files' modules and sources for the shipped-data guard)
   worker: { format: "es", plugins: () => [chunkModules(true)] },
   // (whether this build has the bots: dead code without them, their worker, host and runtime never bundled)

@@ -22,6 +22,7 @@ import {
   leaveMatchSeat,
   matchPlayedElsewhere,
   openClaim,
+  pageOutdated,
   pageUrl,
   type Region,
   queueRegions,
@@ -517,16 +518,25 @@ async function main(): Promise<void> {
     /** Each region's server's name as its Pong said it (the matchmaker's: RV-863); none, its URL's host:port */
     const serverNames = new Map<string, string>();
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
-    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer) */
-    /** This page older than its servers (a ping refused on version: they updated since it loaded): said once, a reload's
-     *  modal, and its searches refused with it, not "no ticked region answered" (RV-1021) */
-    let outdated = false;
+    /** The regions whose server refused this page's version at its last ping: left out of a search, the others searched
+     *  (RV-1030); the reload asked once, and only of a page older than its deployment (a reload brings a page its servers
+     *  take, RV-1021), never of one newer than a server not updated yet, which a reload can't help */
+    const outdatedRegions = new Set<string>();
+    let reloadAsked = false;
+    const askReload = (): void => {
+      if (reloadAsked) return;
+      reloadAsked = true;
+      const text = refusalText(REFUSED_VERSION);
+      modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+    };
+    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer); a refusal on version marks its region */
     const answered = (r: Region, answer: Awaited<ReturnType<typeof pingServer>>): number | null => {
-      if (answer === "outdated" && !outdated) {
-        outdated = true;
-        const text = refusalText(REFUSED_VERSION);
-        modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
-      }
+      if (answer === "outdated") {
+        outdatedRegions.add(r.id);
+        void pageOutdated().then((older) => {
+          if (older) askReload();
+        });
+      } else if (answer !== null) outdatedRegions.delete(r.id);
       const ping = pingAnswer(answer);
       if (ping?.name) serverNames.set(r.id, ping.name);
       return ping?.ms ?? null;
@@ -634,9 +644,15 @@ async function main(): Promise<void> {
             // the player's: the lowest of these pings, kept as the automatic pick, RX43C-1, RV-862, RV-879)
             const request = async (): Promise<SearchRequest> => {
               const measured = await freshPings(all, PING_WAIT_MS);
-              if (outdated) throw new Error(refusalText(REFUSED_VERSION));
               searchable = named(all);
-              const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists);
+              const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists, outdatedRegions);
+              // (every region it would search refused this page's version: the page the older one, the reload's words;
+              // else those servers aren't updated yet, RV-1030)
+              if (plan.outdatedOnly) {
+                const older = await pageOutdated();
+                if (older) askReload();
+                throw new Error(older ? refusalText(REFUSED_VERSION) : MATCHMAKER_TEXT.behind);
+              }
               if (plan.automatic) {
                 chosen = plan.chosen;
                 storeRegions(chosen, false);

@@ -8,7 +8,9 @@ describe("a match session's end and the idle warning (MM-36..41, RV-360)", () =>
     expect(sessionEndReason(KICK_NOT_ALL_JOINED, "waiting")).toBe("notAllJoined");
     expect(sessionEndReason(null, "finished")).toBe("ended");
     expect(sessionEndReason(KICK_IDLE, "finished")).toBe("idle");
-    for (const phase of ["active", "waiting", "podium", "replay", undefined] as const) expect(sessionEndReason(null, phase), phase).toBe("lost");
+    // (the match over, its podium on: ended, the page's own leaving too, not a lost connection)
+    for (const phase of ["prePodium", "podium", "finished"] as const) expect(sessionEndReason(null, phase), phase).toBe("ended");
+    for (const phase of ["active", "waiting", "replay", undefined] as const) expect(sessionEndReason(null, phase), phase).toBe("lost");
     // (a kick this page doesn't know, or one that isn't the idle or the cancelled match's: the server ended it, no lost
     // connection's modal: RV-485)
     expect(sessionEndReason(2, "active")).toBe("ended");

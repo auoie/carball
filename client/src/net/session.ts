@@ -52,6 +52,8 @@ interface Captured {
   readonly cars: ReadonlyMap<number, CarState>;
   readonly ball: BodyState;
   readonly ballSpawns: number;
+  /** Whether the client predicted (its car not demolished) */
+  readonly predicting: boolean;
 }
 
 export class NetSession {
@@ -187,11 +189,15 @@ export class NetSession {
       cars: new Map([...this.#cars.keys()].map((id) => [id, this.#world.car(id)])),
       ball: this.#world.ball(),
       ballSpawns: this.#world.ballSpawnCount(),
+      predicting: this.predictor.predicting,
     };
   }
 
-  /** The world's present state changed from `pre`: carry the difference in each body's drawn pose */
+  /** The world's present state changed from `pre`: carry the difference in each body's drawn pose. Measured (the tests)
+   *  only while the client predicted, before and after: a demolished client applies the server's states as they come,
+   *  no prediction to correct (G5), and the world's moves then are its time catching up, not mispredictions (RV-1029) */
   #smooth(pre: Captured): void {
+    const measured = this.measure && pre.predicting && this.predictor.predicting;
     for (const [id, entry] of this.#cars) {
       const before = pre.cars.get(id);
       if (!before) continue; // (a car new in the world: drawn from its state)
@@ -204,7 +210,7 @@ export class NetSession {
         entry.state.previous = after;
       } else {
         // (each car the server's state held: the correction of its prediction)
-        if (this.measure && this.predictor.lastCars.has(id)) (id === this.#localCar ? this.metrics.localErrors : this.metrics.remoteErrors).push(length(moved));
+        if (measured && this.predictor.lastCars.has(id)) (id === this.#localCar ? this.metrics.localErrors : this.metrics.remoteErrors).push(length(moved));
         entry.error.accumulate(before, after);
         // The previous tick moves with the correction, rotation included (prev' = post pre^-1 prev, as the game's
         // OldRBState): the drawn pose stays where it was
@@ -221,7 +227,7 @@ export class NetSession {
       this.ballError.clear();
       this.ball.previous = ball;
     } else {
-      if (this.measure) this.metrics.ballErrors.push(length(moved));
+      if (measured) this.metrics.ballErrors.push(length(moved));
       // As a car's (NR-1): the error keeps the drawn pose, rotation included; the previous tick moves with the correction
       this.ballError.accumulate(pre.ball, ball);
       const turn = toThreeQuaternion(ball.rot, this.#q1).multiply(toThreeQuaternion(pre.ball.rot, this.#q2).invert());
