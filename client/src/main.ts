@@ -103,6 +103,10 @@ import "./style.css";
  *  cancel through its outbox to the accounts service first, the no-show's cooldown then on the Play page */
 const DECLINE_REREAD_MS = 2000;
 
+/** How long Sign Out and Delete Account wait for the page's search's cancel to be answered (ms) before going on: the
+ *  delete still goes, its answer not waited for (RV-979) */
+const LEAVING_WAIT_MS = 2000;
+
 // Every arena collision mesh: scripts/arena_gen.py writes one file per piece (each its own static body, as in the game)
 const arenaUrls = Object.values(import.meta.glob<string>("@arena/collision_meshes/arena/*.cmf", { query: "?url", import: "default", eager: true }));
 
@@ -144,21 +148,6 @@ async function main(): Promise<void> {
     storeNotice(claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone));
     location.replace(pageUrl("menu", location));
   };
-  // (a queue match's session opened at once, beside the engine's, the arena's and the cars' load and the warm-up, not
-  // after them: the roster's 10 s run from the match's first claim. What the server sends meanwhile waits for the game:
-  // Connection's queue, its close told when the game listens (RV-444); no updates until this page sends inputs; the
-  // flow audit's 1)
-  const claimSession =
-    claim === null
-      ? null
-      : (async () => {
-          const address = await claimAddress(params, location.hostname, undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket, claim.url);
-          const match: MatchSession = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
-          const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
-          // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
-          return claim.rejoin ? openClaim(open) : open();
-        })();
-  claimSession?.catch(claimFailed);
   // (the menu page's notice from a match page, read here)
   const menuNotice = onlinePage ? null : takeNotice();
   const playlistName = (teamSize: number): string | null => PLAYLISTS.find((p) => p.teamSize === teamSize)?.name ?? null;
@@ -239,23 +228,34 @@ async function main(): Promise<void> {
       return { name: "night", theme: createTheme(), session: null };
     }
     loading.step("connecting");
-    // (the queue's match: its claim's session, opened as the page began; a development server's open match,
-    // ?server=host:infoPort; the bots' local host)
-    let session: Awaited<ReturnType<typeof Connection.open>>;
-    if (claimSession) {
-      session = await claimSession;
+    // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim: made once the page has
+    // loaded (the engine, the arena, the cars, the warm-up, its renderer), so a page that can't load or draw never claims,
+    // its seat the ordinary no-show; a page too slow for the roster's 10 s likewise, the user's choice (2026-10-23, in
+    // place of claiming beside the load); the server's URL the menu handed over, no config.json read again)
+    let address;
+    let match: MatchSession = { intent: "join" };
+    if (claim) {
+      // (a claim's ticket its match ticket, the matchmaker's; a rejoin's fetched)
+      address = await claimAddress(params, location.hostname, undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket, claim.url).catch(
+        (e: unknown) => {
+          claimFailed(e);
+          throw e;
+        },
+      );
+      match = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
+    } else if (__CARBALL_BOTS__ && botMatch) {
+      // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
+      const [{ localServerAddress }, { BOTS_BASE }] = await Promise.all([import("./local/localTransport"), import("./bots/listing")]);
+      address = localServerAddress(botMatch, arenaMeshes, BOTS_BASE);
     } else {
-      let address;
-      if (__CARBALL_BOTS__ && botMatch) {
-        // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
-        const [{ localServerAddress }, { BOTS_BASE }] = await Promise.all([import("./local/localTransport"), import("./bots/listing")]);
-        address = localServerAddress(botMatch, arenaMeshes, BOTS_BASE);
-      } else {
-        const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
-        address = await devServerAddress(host, Number(port));
-      }
-      session = await Connection.open(address, joinPreferences(settings), { intent: "join" });
+      const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
+      address = await devServerAddress(host, Number(port));
     }
+    const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
+    // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
+    const opened = claim?.rejoin ? openClaim(open) : open();
+    opened.catch(claimFailed);
+    const session = await opened;
     // (every join saves the record anew, a rejoin's too: a ranked 2v2 or 3v3 offered back for 900 s from this join if it's
     // left by accident, a 1v1 clearing it; the claiming account's alone: LV1, RJ1, RX30C)
     if (claim) {
@@ -275,10 +275,11 @@ async function main(): Promise<void> {
     loading.step("map");
     return { name, theme: createTheme(), session };
   };
-  const { name, theme, session } = await arenaAndSession();
+  // (the renderer before the session: a browser that can't draw fails here, its match never claimed)
   const renderer = new Renderer(canvas);
   // (the browser tests that read no pixels: nothing drawn, software WebGL being most of their time)
   renderer.draws = params.get("render") !== "off";
+  const { name, theme, session } = await arenaAndSession();
   // The video settings' automatic default (settings/video.ts): a weak GPU starts lower, the player's own choice wins; the
   // browser tests say theirs (e2e/fixtures.ts: the maximum, no guard)
   const videoAuto = (window as unknown as { carballVideoAuto?: { readonly weak: boolean; readonly guard: boolean } }).carballVideoAuto;
@@ -697,10 +698,14 @@ async function main(): Promise<void> {
           .then(async (address) => {
             const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token: found.id });
             connection.close();
+            // (read at 2 s, and again once the match's own 10 s are out: a cooldown set by the match's cancel then, a
+            // slow outbox's, shown too, RV-984)
             if (accountsOn) {
-              setTimeout(() => {
-                void readAccount();
-              }, DECLINE_REREAD_MS);
+              for (const later of [DECLINE_REREAD_MS, DECLINE_REREAD_MS + 10_000]) {
+                setTimeout(() => {
+                  void readAccount();
+                }, later);
+              }
             }
           })
           .catch(() => undefined);
@@ -934,7 +939,14 @@ async function main(): Promise<void> {
         modal.ask(title, body, yes);
       },
       changed: setAccount,
-      leaving: async () => matchmaking.cancelled(),
+      // (its search's cancel awaited LEAVING_WAIT_MS at most: a hung delete holds no sign-out, RV-979)
+      leaving: async () =>
+        Promise.race([
+          matchmaking.cancelled(),
+          new Promise<void>((done) => {
+            setTimeout(done, LEAVING_WAIT_MS);
+          }),
+        ]),
       back: () => {
         mainMenu?.showTop();
       },

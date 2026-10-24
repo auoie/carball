@@ -4,7 +4,7 @@
 // server's own tickets, with no accounts.
 
 /** A signed-in account (GET /api/me): its ratings in the playlists (1v1, 2v2, 3v3), a leaver's queue ban's end and a
- *  no-show's search cooldown's end (ms) */
+ *  no-show's search cooldown's end (ms, this page's clock: the service sends its seconds left, RV-983) */
 export interface Account {
   readonly id: string;
   readonly name: string;
@@ -145,7 +145,7 @@ export class AccountsApi {
 }
 
 function account(body: unknown): Account {
-  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown; ratings?: unknown; queueBanUntil?: unknown; searchCooldownUntil?: unknown };
+  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown; ratings?: unknown; queueBanUntil?: unknown; searchCooldownSeconds?: unknown };
   if (typeof b.id !== "string" || typeof b.name !== "string" || !Array.isArray(b.providers)) throw new AccountError("server");
   const ratings: ShownRating[] = [];
   for (const r of Array.isArray(b.ratings) ? (b.ratings as unknown[]) : []) {
@@ -164,7 +164,10 @@ function account(body: unknown): Account {
     providers: PROVIDERS.filter((p) => (b.providers as unknown[]).includes(p)),
     ratings,
     queueBanUntil: time(b.queueBanUntil),
-    searchCooldownUntil: time(b.searchCooldownUntil),
+    searchCooldownUntil:
+      typeof b.searchCooldownSeconds === "number" && Number.isFinite(b.searchCooldownSeconds) && b.searchCooldownSeconds > 0
+        ? Date.now() + b.searchCooldownSeconds * 1000
+        : null,
   };
 }
 

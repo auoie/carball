@@ -27,7 +27,7 @@ interface Fake {
 async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
   // (the ban's end fixed when the fake starts: the page reads /api/me again later, RX30C)
   const banUntil = fake.banned || fake.banFor ? new Date(Date.now() + (fake.banFor ?? 9.5 * 60_000)).toISOString() : null;
-  const cooldownUntil = fake.cooldownFor ? new Date(Date.now() + fake.cooldownFor).toISOString() : null;
+  const cooldownSeconds = fake.cooldownFor ? Math.round(fake.cooldownFor / 1000) : null;
   const json = (route: Route, status: number, body?: unknown): Promise<void> =>
     route.fulfill({ status, contentType: "application/json", body: body === undefined ? "" : JSON.stringify(body) });
   const account = (): object => ({
@@ -41,7 +41,7 @@ async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
       { playlist: 3, rating: 1500, deviation: 500, provisional: true, games: 0 },
     ],
     ...(banUntil === null ? {} : { queueBanUntil: banUntil }),
-    ...(cooldownUntil === null ? {} : { searchCooldownUntil: cooldownUntil }),
+    ...(cooldownSeconds === null ? {} : { searchCooldownSeconds: cooldownSeconds }),
   });
   const wrote = (r: Request): void => {
     fake.writes.push({ method: r.method(), path: new URL(r.url()).pathname, guarded: r.headers()["x-carball"] === "1", body: r.postData() });

@@ -6,24 +6,30 @@ the hosting side's (not here).
 | Image | What | Port | Reached at |
 |---|---|---|---|
 | `carball-web` | the web client: static files (nginx) | **3000/tcp** (plain HTTP; TLS in front, e.g. the tunnel) | `https://carball.zolt.top` |
-| `carball-game` | the game server: matches over WebTransport (HTTP/3, QUIC) | **4433/udp** (`GAME_PORT`), public, nothing else published | `game.carball.zolt.top` (DNS only, no proxy: it's UDP; **an A record only, no AAAA**: see below) |
+| `carball-game` | the game server: matches over WebTransport (HTTP/3, QUIC) | **4433/udp** (`GAME_PORT`), public, nothing else published | `game.carball.zolt.top` (DNS only, no proxy: it's UDP; **A and AAAA records**: see below) |
 | `carball-api` | the accounts service: sign-in (Google, Steam), sessions, accounts (Go; Postgres beside it) | **8080/tcp** (`LISTEN_ADDR`, plain HTTP), on its docker network only: **never published** | `https://carball.zolt.top/api/` (the tunnel routes `/api/` to it, the rest to `carball-web`: same origin) |
 
-**IPv4 only (the user's decision, RV-406).** `game.carball.zolt.top` has an A record and **no AAAA record**. Behind
-Docker's default bridge (`-p 4433:4433/udp`), IPv6 clients reach the server through Docker's userland proxy, so the
-server would see every IPv6 player as one address (the bridge's gateway): one address's limits (8 at once, 30 a minute)
-for all of them, and two no-shows anywhere on IPv6 blocking them all. IPv4 keeps each client's real address. Deploy
-check: `dig AAAA game.carball.zolt.top` returns nothing. The example below publishes the port on IPv4 alone
-(`-p 0.0.0.0:4433:4433/udp`), so nothing reaches it over IPv6 even by mistake. To serve IPv6 later, run the game
-container with `--network host` (it then sees real addresses; no `-p` mapping or network isolation: it shares the host's
-loopback too, so its health endpoint is the host's 127.0.0.1:8081 and it can reach the host's loopback services; UDP 4433
-and 127.0.0.1:8081 must be free on the host), then add the AAAA record.
+**Dual-stack, on host networking (the user's decision of 2026-10-23, in place of RV-406's IPv4 only).** The game
+server listens on `[::]` (IPv6 and IPv4), and each game server's name has **A and AAAA records**. Its container runs
+with `--network host`: it sees every client's real address (an IPv6 one grouped by its /64 for the limits; an IPv4 one
+logged as `a.b.c.d`), with no `-p` mapping and no network isolation. It shares the host's loopback too: its health
+endpoint is the host's 127.0.0.1:8081 (`HEALTH_PORT`; the server refuses to start if that's taken, RV-986) and it can
+reach the host's loopback services. UDP 4433 and 127.0.0.1:8081 must be free on the host, and the host's firewall opens
+4433/udp on both families. (Docker's default bridge would put IPv6 clients behind its userland proxy, every one of them
+the bridge's address: RV-406's reason, gone with host networking.) Deploy check: `dig A` and `dig AAAA` of the game
+server's name both answer, and a page reaches it over IPv6.
 
 **Renamed in 48388aa** (a deployment set up before it: check its files, RV-422). The mode variable `RL_MODE` is now
 `SERVER_MODE`, and the old name is ignored: `RL_MODE=direct` starts the queue. The binary `/app/rl-server` is
 `/app/carball-server` (an `--entrypoint` or health check naming the old path fails). The meshes folder is
 `collision_meshes/arena/` (was `soccar/`): a `MESHES_DIR` of one's own without `arena/*.cmf` stops the server at start,
 naming the folder (RV-421).
+
+**Logs rotate (RV-962).** The three images log to stdout/stderr, IP addresses and account ids and names among it (each
+image's Logs, below). The deployment relies on a rotating log driver: the Docker daemon's `local` (the servers'
+`/etc/docker/daemon.json` sets it, 20 MB × 5 files, about 100 MB a container), or `json-file` with `max-size` and
+`max-file`. The default `json-file` never rotates, and the privacy page promises the logs go with the rotation. Check a
+host with `docker info --format '{{.LoggingDriver}}'`.
 
 ## Build, export, push
 
@@ -114,7 +120,7 @@ development matchmaker's). A setting the server can't read stops it, the error n
 
 | Env | Default in the image | |
 |---|---|---|
-| `GAME_PORT` | `4433` | the UDP port (publish the same port: `-p 4433:4433/udp`) |
+| `GAME_PORT` | `4433` | the UDP port (on host networking: the host's, open on both families) |
 | `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it). With the port, this server's name for the matchmaker: `PUBLIC_HOST:GAME_PORT`, which its `Pong` tells the page and the page sends with its ping, so its match tickets name it exactly as it does (RV-863); a claim of another server's ticket is refused, both names logged |
 | `PUBLIC_PORT` | (none) | the port clients reach it at when it's published as another than `GAME_PORT` (the server's name then `PUBLIC_HOST:PUBLIC_PORT`: tidier logs; the name only has to be this server's own and unique). A queue server whose `PUBLIC_HOST` isn't letters, digits, dots and hyphens (58 at most) refuses to start: the matchmaker would drop its name (RV-868) |
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated (case doesn't matter); others (and none) get 403. Required with a certificate: empty or blank, the server refuses to start |
@@ -177,8 +183,12 @@ asks (`/dev-ticket`), with no sign-in.
   certificate's (a renewal read between its two writes), keeps the old certificate and is tried again at the next check;
   each reload, or failure, is one log line.
 - **Health:** `carball-server --healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET http://127.0.0.1:$HEALTH_PORT/healthz`
-  answers 200 while the game thread runs (its heartbeat within 2 s), else 503. The check reads `HEALTH_PORT` (or
-  `--health-port`) alone. A variable that isn't a number stops the server with its name in the error.
+  answers 200 while the game thread runs (its heartbeat within 2 s), else 503; the check follows no redirect (only that
+  200 is healthy) and gives up in 2 s; its own bad arguments exit 1. The check reads `HEALTH_PORT` (or `--health-port`)
+  alone. A variable that isn't a number stops the server with its name in the error. The endpoint listens on
+  127.0.0.1 alone and takes 16 connections at once, each 2 s for its request's headers (16 KiB at most): a process in
+  the container's own network namespace holding 16 slow connections could keep the check failing (only that
+  namespace reaches the port: RV-938).
 - **Restart policy:** `unless-stopped` (or `always`). The process exits if its game thread ends (a panic outside a
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once (`docker stop`: about 0.1 s); the matches in progress end with it.
@@ -195,8 +205,8 @@ asks (`/dev-ticket`), with no sign-in.
   (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
 - **Logs:** stderr, one line an event (start-up, joins, leaves, matches, refusals, reloads, the outbox's calls): its UTC
-  time, its level (`INFO`, `WARN` for a refusal or a call kept for later, `ERROR` for a failed reload or a match's
-  panic) and the message. The server's own events, and the libraries' errors alone (their warnings are noise: RV-937).
+  time, its level (`INFO`, `WARN` for a refusal, a call kept for later or a failed reload (the old certificate or keys
+  kept), `ERROR` for a match's panic) and the message. The server's own events, and the libraries' errors alone (their warnings are noise: RV-937).
   Each join, leave, kick and refusal names who and where: the client's address (IP:port), the account's id and display
   name once its ticket is checked (else the hello's name), and the match (the matchmaker's id): refused origins,
   addresses past their sessions (a line a minute an address), refused tickets and claims, rate and malformed kicks,
@@ -309,8 +319,9 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 - **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the matchmaker's events
   (`POST /api/fleet/events {event, server, match, seat, noShows, at}`: one about a match it didn't assign to that server,
   or doesn't know, answered 204 and ignored, so it never holds the outbox's later calls); results (recorded once by
-  their match id; each ticket ours, the seat's match ticket for that match, issued within 24 h and spent on that match
-  alone; the ratings changed: Glicko-2),
+  their match id; each ticket ours, the seat's match ticket for that match at the result's server in its playlist (its
+  `aud` and playlist; a ticket for another a 403 `ticket`), each seat once and on its own team (even blue, odd orange;
+  else a 400: RV-951), issued within 24 h and spent on that match alone; the ratings changed: Glicko-2),
   quitters (the seat's ticket, spent on its match; the account's queue ban up the ladder 5 min, 15 min, 1 h, 6 h, 24 h,
   a step forgiven per 24 h without a leave) and refills (the rejoin's ticket for that match, spent: that ban undone). Results are kept a year; used tickets past the window are purged hourly. **Rotating the key:** make a new one
   (`carball-api ticket-key k2`), add its public line to the game server's `TICKET_PUBLIC_KEYS` beside the old and
@@ -409,7 +420,7 @@ locally, see `CERT_PATH`).
 docker run -d --name carball-web --restart unless-stopped -p 127.0.0.1:3000:3000 \
   -e GAME_SERVER_URL=https://game.carball.zolt.top:4433/play carball-web:TAG
 # (the outbox on a named volume: an anonymous one is lost when the container is made anew, and the calls waiting in it)
-docker run -d --name carball-game --restart unless-stopped -p 0.0.0.0:4433:4433/udp \
+docker run -d --name carball-game --restart unless-stopped --network host \
   -e "TICKET_PUBLIC_KEYS=k1 BASE64PUBLICKEY" -e API_URL=https://carball.zolt.top \
   -e GAME_SERVER_TOKEN_FILE=/run/secrets/game_server_token \
   -e CF_ACCESS_CLIENT_ID=… -e CF_ACCESS_CLIENT_SECRET_FILE=/run/secrets/access_secret \

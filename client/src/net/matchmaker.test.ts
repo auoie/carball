@@ -78,7 +78,7 @@ function answers(): { handlers: SearchHandlers; got: string[]; done: Promise<voi
 }
 
 const request = { playlists: [1, 2], pings: { "game-eu.example:4433": 30, "game-us.example:4433": 90 }, regions: ["game-eu.example:4433"] };
-const match = { id: "00000000000000ab", server: "game-eu.example:4433", ticket: "dGlja2V0", playlist: 2, map: 0 };
+const match = { id: "00000000000000ab", server: "game-eu.example:4433", ticket: "dGlj.a2V0.c2ln", playlist: 2, map: 0 };
 const started = { status: 200, body: { search: "a".repeat(32), version: 1, state: "searching" } };
 const noWait = (): Promise<void> => Promise.resolve();
 
@@ -94,7 +94,7 @@ describe("the search with the matchmaker", () => {
     const { handlers, got, done } = answers();
     MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
     await done;
-    expect(got).toEqual(["searching", "found ab at game-eu.example:4433 (2v2) dGlja2V0"]);
+    expect(got).toEqual(["searching", "found ab at game-eu.example:4433 (2v2) dGlj.a2V0.c2ln"]);
     expect(calls[0]).toMatchObject({ method: "POST", path: "/api/search", body: request });
     expect(calls.slice(1).map((c) => c.path)).toEqual([`/api/search/${"a".repeat(32)}?after=1`, `/api/search/${"a".repeat(32)}?after=1`]);
   });
@@ -155,7 +155,7 @@ describe("the search with the matchmaker", () => {
     const { handlers, got, done } = answers();
     MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
     await done;
-    expect(got).toEqual(["searching", "found ab at game-eu.example:4433 (2v2) dGlja2V0"]);
+    expect(got).toEqual(["searching", "found ab at game-eu.example:4433 (2v2) dGlj.a2V0.c2ln"]);
     expect(calls.filter((c) => c.method === "POST").length).toBe(2);
     const twice = service({ "POST /api/search": [started, started], "GET /api/search/": [{ status: 404 }, { status: 404 }] });
     const second = answers();
@@ -438,7 +438,7 @@ describe("the search with the matchmaker", () => {
   });
 
   it("reads a found match's fields, nothing else", () => {
-    expect(foundMatch(match)).toEqual({ id: 0xabn, server: "game-eu.example:4433", ticket: "dGlja2V0", playlist: 2, map: 0 });
+    expect(foundMatch(match)).toEqual({ id: 0xabn, server: "game-eu.example:4433", ticket: "dGlj.a2V0.c2ln", playlist: 2, map: 0 });
     // (a match ticket is a JWT: its parts and dots, 1024 characters at most)
     expect(foundMatch({ ...match, ticket: "eyJh.eyJz.c2ln" })?.ticket).toBe("eyJh.eyJz.c2ln");
     for (const bad of [
@@ -449,6 +449,9 @@ describe("the search with the matchmaker", () => {
       { ...match, ticket: "" },
       { ...match, ticket: "A".repeat(1025) },
       { ...match, ticket: "eyJh eyJz" },
+      { ...match, ticket: "dGlja2V0" },
+      { ...match, ticket: "eyJh.eyJz.c2ln.ZXh0cmE" },
+      { ...match, ticket: "..." },
       null,
     ]) {
       expect(foundMatch(bad)).toBeNull();

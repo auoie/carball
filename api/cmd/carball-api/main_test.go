@@ -2,12 +2,31 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
 
 	"carball/api/internal/server"
 )
+
+// The signer and the keys tickets are checked with: a previous key with the signer's id refused (RV-948), the list's
+// own rules (ticket.ParsePublic) applied; else the signer's key among the previous ones
+func TestLoadTicketKeys(t *testing.T) {
+	seed := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	other := base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32)).Public().(ed25519.PublicKey))
+	signer, keys, err := loadTicketKeys("k2", seed, "k1 "+other)
+	if err != nil || len(keys) != 2 || !keys["k2"].Equal(signer.PublicKey()) {
+		t.Fatalf("a signer and one previous key: %v %v", keys, err)
+	}
+	if _, _, err := loadTicketKeys("k1", seed, "k1 "+other); err == nil || !strings.Contains(err.Error(), "TICKET_PREVIOUS_KEYS") {
+		t.Errorf("a previous key with the signer's id: %v", err)
+	}
+	if _, _, err := loadTicketKeys("k2", seed, "dev "+other); err == nil {
+		t.Error("a previous key with the development key's id")
+	}
+}
 
 func TestBanEnd(t *testing.T) {
 	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)

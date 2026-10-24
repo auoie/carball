@@ -8,19 +8,27 @@ SECONDS_TO_RUN=${1:-300}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
-build/determinism ../out/arena/collision_meshes "$SECONDS_TO_RUN" > "$TMP/native_det.txt"
-node build-wasm/determinism.js /collision_meshes "$SECONDS_TO_RUN" > "$TMP/wasm_det.txt"
-if cmp -s "$TMP/native_det.txt" "$TMP/wasm_det.txt"; then
+# (each leg runs whatever the other did, a failure said with its output's tail, the checks after it still run: RV-933,
+# RV-944)
+native=0 wasm=0
+build/determinism ../out/arena/collision_meshes "$SECONDS_TO_RUN" > "$TMP/native_det.txt" || native=$?
+node build-wasm/determinism.js /collision_meshes "$SECONDS_TO_RUN" > "$TMP/wasm_det.txt" || wasm=$?
+if [ "$native$wasm" = 00 ] && cmp -s "$TMP/native_det.txt" "$TMP/wasm_det.txt"; then
 	echo "determinism: identical ($SECONDS_TO_RUN s scripted 2v2, $(tail -1 "$TMP/native_det.txt"))"
-else
+elif [ "$native$wasm" = 00 ]; then
 	echo "determinism: DIFFERENT"; diff "$TMP/native_det.txt" "$TMP/wasm_det.txt" | head -5; fail=1
-fi
-build/arena_smoketest ../out/arena/collision_meshes > "$TMP/native_smoke.txt"
-node build-wasm/arena_smoketest.js /collision_meshes > "$TMP/wasm_smoke.txt"
-if cmp -s "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt"; then
-	echo "arena smoke test: identical"
 else
+	echo "determinism: FAILED (native exit $native, wasm exit $wasm)"; tail -n 3 "$TMP/native_det.txt" "$TMP/wasm_det.txt"; fail=1
+fi
+native=0 wasm=0
+build/arena_smoketest ../out/arena/collision_meshes > "$TMP/native_smoke.txt" || native=$?
+node build-wasm/arena_smoketest.js /collision_meshes > "$TMP/wasm_smoke.txt" || wasm=$?
+if [ "$native$wasm" = 00 ] && cmp -s "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt"; then
+	echo "arena smoke test: identical"
+elif [ "$native$wasm" = 00 ]; then
 	echo "arena smoke test: DIFFERENT"; diff "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt" | head -5; fail=1
+else
+	echo "arena smoke test: FAILED (native exit $native, wasm exit $wasm)"; tail -n 3 "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt"; fail=1
 fi
 # The server's network state applies exactly, in both builds (both run whatever the other did: a failure's tails both
 # shown, the checks after it still run, RV-933)

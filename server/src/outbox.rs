@@ -519,8 +519,8 @@ mod tests {
     }
 
     /// A stand-in accounts service's answers (wiremock): each request answered with the next status and body (the last
-    /// again after), a `Location` on each if given, after `delay`; each request kept as its text (its line, headers and
-    /// body, as it came)
+    /// again after), a `Location` on each if given, after `delay`; each request kept as its text (its method and path,
+    /// headers and body, as it came: wiremock gives no HTTP version, so none is claimed, RV-940)
     struct Answers {
         answers: Vec<(u16, &'static str)>,
         location: Option<String>,
@@ -534,11 +534,7 @@ mod tests {
             let headers: String =
                 request.headers.iter().map(|(k, v)| format!("{k}: {}\r\n", v.to_str().unwrap_or(""))).collect();
             let body = String::from_utf8_lossy(&request.body);
-            self.seen.lock().unwrap().push(format!(
-                "{} {} HTTP/1.1\r\n{headers}\r\n{body}",
-                request.method,
-                request.url.path()
-            ));
+            self.seen.lock().unwrap().push(format!("{} {}\r\n{headers}\r\n{body}", request.method, request.url.path()));
             let i = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let (status, body) = self.answers[i.min(self.answers.len() - 1)];
             let mut reply = wiremock::ResponseTemplate::new(status).set_delay(self.delay);
@@ -618,7 +614,7 @@ mod tests {
             "m1 refused for good, m2 sent; m3's edge 403 retried, then taken"
         );
         drop(tx);
-        task.await.unwrap();
+        ended(task).await;
     }
 
     fn config(api_url: Option<String>, dir: Option<PathBuf>) -> OutboxConfig {
@@ -638,6 +634,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("carball-outbox-{:016x}", crate::game::random_u64()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The outbox's run ended (its reports' sender dropped), within a minute: a run that never yields (no backoff) fails
+    /// the test instead of hanging the suite (RV-939's O15)
+    async fn ended(task: tokio::task::JoinHandle<()>) {
+        tokio::time::timeout(Duration::from_secs(60), task).await.expect("the outbox's run didn't end").unwrap();
     }
 
     async fn until(what: impl Fn() -> bool) {
@@ -667,11 +669,11 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "POST /api/quitters HTTP/1.1",
-                "POST /api/quitters HTTP/1.1",
-                "POST /api/quitters HTTP/1.1",
-                "POST /api/refills HTTP/1.1",
-                "POST /api/quitters HTTP/1.1"
+                "POST /api/quitters",
+                "POST /api/quitters",
+                "POST /api/quitters",
+                "POST /api/refills",
+                "POST /api/quitters"
             ]
         );
         let first = seen[0].to_ascii_lowercase();
@@ -684,7 +686,7 @@ mod tests {
         );
         assert!(seen[4].contains(r#""match":"m2","ticket":"t2""#), "{}", seen[4]);
         drop(tx);
-        task.await.unwrap();
+        ended(task).await;
         let _ = std::fs::remove_dir(&dir);
     }
 
@@ -702,7 +704,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 5, "taken at the fifth: not sent again");
         assert!(elsewhere_seen.lock().unwrap().is_empty(), "the redirect's host got nothing");
         drop(tx);
-        task.await.unwrap();
+        ended(task).await;
     }
 
     /// https alone (the service's): a plain http origin is never sent to, its call kept for later
@@ -773,7 +775,34 @@ mod tests {
         assert_eq!(std::fs::read_dir(&dir).map_or(0, |d| d.count()), 2, "both on disk");
         until(|| std::fs::read_dir(&dir).map_or(0, |d| d.count()) == 0).await;
         drop(tx);
-        task.await.unwrap();
+        ended(task).await;
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// A call past the acceptance window (24 h: the service would refuse its tickets) dropped unsent, its file gone; the
+    /// call after it sent (RV-939's O16)
+    #[tokio::test]
+    async fn a_call_past_the_window_is_dropped_unsent() {
+        let dir = scratch_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = crate::ticket::unix_now();
+        for (n, (created, m)) in [(now - GIVE_UP_SECONDS - 60, "old"), (now, "new")].into_iter().enumerate() {
+            let call =
+                call_of(&Report::Quitter { match_id: m.into(), ticket: "t".into() }, "game.example:4433", created);
+            std::fs::write(dir.join(format!("{created:012}-{n:06}.json")), serialize(&call)).unwrap();
+        }
+        let (url, seen, _service) = service(vec![204]).await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
+        until(|| {
+            std::fs::read_dir(&dir).map_or(1, |d| d.filter(|e| e.as_ref().is_ok_and(|e| e.path().is_file())).count())
+                == 0
+        })
+        .await;
+        let seen = seen.lock().unwrap().clone();
+        assert!(seen.len() == 1 && seen[0].contains(r#""match":"new""#), "{seen:?}");
+        drop(tx);
+        ended(task).await;
         let _ = std::fs::remove_dir(&dir);
     }
 
@@ -795,7 +824,7 @@ mod tests {
         until(|| std::fs::read_dir(&dir).map_or(0, |d| d.count()) == 0).await;
         assert!(seen.lock().unwrap()[0].contains(r#""match":"m9""#));
         drop(tx);
-        task.await.unwrap();
+        ended(task).await;
         let _ = std::fs::remove_dir(&dir);
     }
 }

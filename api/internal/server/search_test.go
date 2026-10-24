@@ -309,11 +309,10 @@ func TestFleetEvents(t *testing.T) {
 		t.Errorf("the one who came: %d", code)
 	}
 	// (the no-show's cooldown on its account's page, the Play page's line; none for the one who came)
-	want := e.clock.Now().Add(2 * time.Minute).UTC().Format(time.RFC3339)
-	if got := decode(t, e.get(b2, "/api/me"))["searchCooldownUntil"]; got != want {
-		t.Errorf("the no-show's cooldown on /api/me: %v, want %s", got, want)
+	if got := decode(t, e.get(b2, "/api/me"))["searchCooldownSeconds"]; got != float64(120) {
+		t.Errorf("the no-show's cooldown on /api/me: %v, want 120 s", got)
 	}
-	if got, ok := decode(t, e.get(b1, "/api/me"))["searchCooldownUntil"]; ok {
+	if got, ok := decode(t, e.get(b1, "/api/me"))["searchCooldownSeconds"]; ok {
 		t.Errorf("a cooldown for the one who came: %v", got)
 	}
 	// (a restart of the server: its matches before it freed)
@@ -360,6 +359,21 @@ func TestQuitterEndsSearch(t *testing.T) {
 	}
 	if resp := e.searchAs(b, []int{3}, map[string]int{euServer: 30}); resp.StatusCode != http.StatusForbidden || decode(t, resp)["error"] != "queue-banned" {
 		t.Errorf("the quitter's next search: %d", resp.StatusCode)
+	}
+}
+
+// A quitter's report late enough that its ban is over (a first leave's 5 minutes, the leave 10 minutes ago): the
+// account's running search goes on (RV-965)
+func TestALateQuitterReportLeavesASearchAlone(t *testing.T) {
+	e := setup(t, nil)
+	b, _, encoded := e.player("sub-late")
+	id := decode(t, e.searchAs(b, []int{3}, map[string]int{euServer: 30}))["search"].(string)
+	body := map[string]any{"match": testMatch, "ticket": encoded, "at": e.clock.Now().Add(-10 * time.Minute).Unix()}
+	if resp := e.gameCall(http.MethodPost, "/api/quitters", gameToken, body); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("the report: %d", resp.StatusCode)
+	}
+	if _, st := e.poll(b, id, 0); st["state"] != "searching" {
+		t.Errorf("the search after a late report: %v", st)
 	}
 }
 

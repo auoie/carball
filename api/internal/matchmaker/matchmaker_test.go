@@ -371,8 +371,6 @@ func TestNoShow(t *testing.T) {
 	h.search(t, player("stalled", 1500), []byte{1}, near)
 }
 
-// A newer search of the account replaces its open one; Cancel Search ends one; a search no page polls goes; a found
-// answer is kept for a poll that lost it, then goes
 // A search its page stopped polling (an outage: the polls' session reads refused; its page gone) isn't matched past
 // PollGap, so it's no one's no-show; it lives on past the page's retries (SearchLife), matched again once polled, its
 // wait kept
@@ -395,6 +393,8 @@ func TestASearchNotPolledIsntMatchedAndOutlivesThePagesRetries(t *testing.T) {
 	}
 }
 
+// A newer search of the account replaces its open one; Cancel Search ends one; a search no page polls goes; a found
+// answer is kept for a poll that lost it, then goes
 func TestSearchLife(t *testing.T) {
 	h := newHarness()
 	h.search(t, player("tab", 1500), []byte{1}, near)
@@ -590,6 +590,166 @@ func TestRetriedStartKeepsTheWait(t *testing.T) {
 	// (the one who came, its wait since 0 s, first: matched with x; with the retry's own 45.5 s, x and y would be)
 	if h.found(t, "came") == nil || h.found(t, "x") == nil || h.found(t, "y") != nil {
 		t.Fatal("the retried start lost the kept wait")
+	}
+}
+
+// A search whose page holds its long poll open stays matchable past PollGap (RV-982's G02: a live search, its poll
+// open, is the usual case)
+func TestAnOpenLongPollKeepsASearchMatchable(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("a1", 1500), []byte{1}, near)
+	h.search(t, player("a2", 1500), []byte{1}, near)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	answers := make(chan State, 2)
+	for _, a := range []string{"a1", "a2"} {
+		id := h.ids[a]
+		go func() {
+			s, _ := h.m.Poll(ctx, id, "", 1, time.Minute)
+			answers <- s
+		}()
+	}
+	open := func() int {
+		h.m.mu.Lock()
+		defer h.m.mu.Unlock()
+		return h.m.searches[h.ids["a1"]].polls + h.m.searches[h.ids["a2"]].polls
+	}
+	for deadline := time.Now().Add(5 * time.Second); open() != 2; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the long polls not open")
+		}
+	}
+	h.now = t0.Add(10 * time.Second) // (past PollGap since their last answered poll, their polls open)
+	h.m.Tick(h.now)
+	for range 2 {
+		if s := <-answers; s.Kind != Found {
+			t.Errorf("a search with its long poll open: %+v", s)
+		}
+	}
+}
+
+// A long poll's end is its search's last poll (RV-982's G08): a page that keeps polling keeps its search past SearchLife
+// from its start
+func TestALongPollsEndKeepsItsSearch(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("p", 1500), []byte{1}, near)
+	id := h.ids["p"]
+	h.now = t0.Add(40 * time.Second)
+	h.m.Poll(context.Background(), id, "", 1, time.Millisecond) // (a long poll answered by its wait's end at 40 s)
+	h.now = t0.Add(80 * time.Second)
+	h.m.Tick(h.now)
+	if _, ok := h.m.Poll(context.Background(), id, "", 0, 0); !ok {
+		t.Error("dropped 80 s from its start, 40 s from its last poll")
+	}
+}
+
+// keptWait: "came" waiting since t0, matched at 40 s with "gone", the match cancelled with gone its no-show: came's wait
+// kept (since t0) for its next search
+func keptWait(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness()
+	h.search(t, player("came", 1500), []byte{1}, near)
+	h.at(40 * time.Second)
+	h.search(t, player("gone", 1500), []byte{1}, near)
+	h.m.Tick(h.now)
+	m := h.found(t, "came")
+	if m == nil {
+		t.Fatal("not matched")
+	}
+	gone := int(h.issued[slices.IndexFunc(h.issued, func(s ticket.Seat) bool { return s.Match == m.ID && s.Seat != h.issued[0].Seat })].Seat)
+	h.m.Cancelled("eu:4433", m.ID, []int{gone}, h.now)
+	return h
+}
+
+// since: the account's open search's wait's start
+func (h *harness) since(t *testing.T, account string) time.Time {
+	t.Helper()
+	s := h.m.open[account]
+	if s == nil {
+		t.Fatalf("%s has no search open", account)
+	}
+	return s.since
+}
+
+// A kept wait given back by a search no page polled (RV-942): by Cancel Search (W4) and by its expiry (W5), not by a
+// polled one replaced (W1)
+func TestAKeptWaitGivenBackOnlyByAnUnpolledSearch(t *testing.T) {
+	start := func(h *harness, at time.Duration) string {
+		h.now = t0.Add(at)
+		id, _, err := h.m.Start(player("came", 1500), req([]byte{1}, near), h.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	h := keptWait(t)
+	h.m.Cancel(start(h, 41*time.Second), "") // (never polled: its kept wait back)
+	if start(h, 42*time.Second); !h.since(t, "came").Equal(t0) {
+		t.Errorf("Cancel Search of an unpolled search: the wait since %v, want t0", h.since(t, "came"))
+	}
+	h = keptWait(t)
+	start(h, 41*time.Second)
+	h.now = t0.Add(41*time.Second + SearchLife)
+	h.m.Tick(h.now) // (expired, never polled: its kept wait back, inside ReturnFor)
+	if start(h, 41*time.Second+SearchLife+time.Second); !h.since(t, "came").Equal(t0) {
+		t.Errorf("an unpolled search expired: the wait since %v, want t0", h.since(t, "came"))
+	}
+	h = keptWait(t)
+	id := start(h, 41*time.Second)
+	h.m.Poll(context.Background(), id, "", 0, 0) // (polled: its wait its own now, nothing to give back)
+	if start(h, 43*time.Second); !h.since(t, "came").Equal(t0.Add(43 * time.Second)) {
+		t.Errorf("a polled search replaced: the wait since %v, want its own start", h.since(t, "came"))
+	}
+}
+
+// A search no page polled yet, open as its match is cancelled: moved up to the match's wait, which it gives back if its
+// page starts again (its start's answer lost: RV-941)
+func TestAMovedUpWaitOfALostStartIsKept(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("came", 1500), []byte{1}, near)
+	h.at(40 * time.Second)
+	h.search(t, player("gone", 1500), []byte{1}, near)
+	h.m.Tick(h.now)
+	m := h.found(t, "came")
+	gone := int(h.issued[slices.IndexFunc(h.issued, func(s ticket.Seat) bool { return s.Match == m.ID && s.Seat != h.issued[0].Seat })].Seat)
+	h.now = t0.Add(41 * time.Second)
+	if _, _, err := h.m.Start(player("came", 1500), req([]byte{1}, near), h.now); err != nil { // (its answer lost)
+		t.Fatal(err)
+	}
+	h.now = t0.Add(42 * time.Second)
+	h.m.Cancelled("eu:4433", m.ID, []int{gone}, h.now)
+	h.now = t0.Add(43 * time.Second)
+	if _, _, err := h.m.Start(player("came", 1500), req([]byte{1}, near), h.now); err != nil { // (the page's retry)
+		t.Fatal(err)
+	}
+	if !h.since(t, "came").Equal(t0) {
+		t.Errorf("the retry's wait since %v, want t0 (the match's, moved up)", h.since(t, "came"))
+	}
+}
+
+// One match at a time (RV-961): an account that left a started match, searched and was matched again stays in its new
+// match when the first's server says it came back (a rejoin with an earlier ticket)
+func TestBackAfterANewMatchLeavesTheAccountInIt(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("a1", 1500), []byte{1}, near)
+	h.search(t, player("a2", 1500), []byte{1}, near)
+	h.at(time.Second)
+	first := h.found(t, "a1")
+	h.m.Started("eu:4433", first.ID, h.now)
+	seatOf := func(id uint64, account string) int {
+		return int(h.issued[slices.IndexFunc(h.issued, func(s ticket.Seat) bool { return s.Match == id && h.m.matches[id].accounts[s.Seat] == account })].Seat)
+	}
+	h.m.Left("eu:4433", first.ID, seatOf(first.ID, "a1"))
+	h.search(t, player("a1", 1500), []byte{1}, near)
+	h.search(t, player("a3", 1500), []byte{1}, near)
+	h.at(2 * time.Second)
+	second := h.found(t, "a1")
+	if second == nil || second.ID == first.ID {
+		t.Fatal("not matched again")
+	}
+	h.m.Back("eu:4433", first.ID, seatOf(first.ID, "a1"), h.now)
+	if got := h.m.active["a1"]; got != second.ID {
+		t.Errorf("a1's match: %x, want the new one %x", got, second.ID)
 	}
 }
 

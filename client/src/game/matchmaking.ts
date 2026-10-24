@@ -247,17 +247,24 @@ export class Matchmaking {
   /** The same, settled once the service has the cancel: an account about to sign out or go first cancels its search
    *  while its session still stands (else it would go on, matchable, till it lapsed: the flow audit's 6) */
   cancelled(): Promise<void> {
-    if (this.#state === null) return Promise.resolve();
+    // (a cancel already on its way: the same wait, not none, RV-980)
+    if (this.#state === null) return this.#delivering ?? Promise.resolve();
     const searching = this.searching;
     const found = this.#state.status === "joining" ? this.#found : null;
-    const delivered = this.#session?.cancel() ?? Promise.resolve();
+    const delivering = (this.#session?.cancel() ?? Promise.resolve()).then(() => {
+      if (this.#delivering === delivering) this.#delivering = null;
+    });
+    this.#delivering = delivering;
     this.#session = null;
     this.#stop();
     this.#state = null;
     if (found !== null) this.ports.decline(found);
     if (searching) this.ports.sound("cancel");
-    return delivered;
+    return delivering;
   }
+
+  /** The last cancel's delivery while it's on its way */
+  #delivering: Promise<void> | null = null;
 
   /** The page going elsewhere (another map) with this search: the search finished (its session closed and its last
    *  answer awaited), true if a match was found meanwhile (the join goes on: the page follows it), else false (no

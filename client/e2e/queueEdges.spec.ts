@@ -291,6 +291,45 @@ test("a match page running no frames (a hidden tab's) still goes back to search 
   await bContext.close();
 });
 
+test("a match page that can't draw never claims: its seat the no-show, the other told not every player joined (RV-978)", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  // (A's match pages get no WebGL context: the page fails as it loads, before its claim)
+  const a = await menuPage(browser, errors, async (page) => {
+    await page.addInitScript(() => {
+      if (!new URLSearchParams(location.search).has("match")) return;
+      const canvas = HTMLCanvasElement.prototype as unknown as { getContext: (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) => unknown };
+      const real = canvas.getContext;
+      canvas.getContext = function (kind, ...rest) {
+        return kind.startsWith("webgl") ? null : real.call(this, kind, ...rest);
+      };
+    });
+  });
+  const b = await menuPage(browser, errors);
+  await findMatch(a);
+  await findMatch(b);
+  await a.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
+  await expect(a.locator("#loading")).toContainText("WebGL", { timeout: 30_000 });
+  // (B claims and waits; A never claims: the match cancelled at its 10 s, B told and searching again, its wait kept)
+  await b.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
+  await b.waitForURL((url) => !/[?&]match(&|$)/.test(url.search), { timeout: 60_000 });
+  await expect(b.locator("#search-banner")).toContainText("Not every player joined the match. Searching again.", { timeout: 30_000 });
+  // (A the no-show: its next search refused with its cooldown)
+  const again = await a.context().newPage();
+  again.on("pageerror", (e) => errors.push(e.message));
+  await again.goto(`/?${SEARCH}&render=off`);
+  await expect(again.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const menu = again.locator("#main-menu");
+  await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+  await tickPlaylists(menu, ["1v1"]);
+  await menu.getByRole("button", { name: /^find match$/i }).click();
+  await expect(again.locator("#search-banner")).toContainText("You can search again in", { timeout: 30_000 });
+  await b.locator("#search-banner .search-cancel").click();
+  expect(errors).toEqual([]);
+  await a.context().close();
+  await b.context().close();
+});
+
 test("a no-show: the player who came is told and searches again, the no-show can't search for two minutes (RV-367, MX1)", async ({ browser }) => {
   test.setTimeout(180_000);
   const errors: string[] = [];

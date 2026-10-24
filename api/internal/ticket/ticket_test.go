@@ -1,12 +1,14 @@
 package ticket
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +226,153 @@ func TestNewSignerRefusals(t *testing.T) {
 		if _, err := NewSigner(c[0], c[1]); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// rawSigned: a JWT of this header and payload as given (JSON by hand: any member, any spelling), signed with the signer's
+// key
+func rawSigned(s *Signer, header, payload string) string {
+	h := base64.RawURLEncoding.EncodeToString([]byte(header))
+	p := base64.RawURLEncoding.EncodeToString([]byte(payload))
+	return h + "." + p + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(s.key, []byte(h+"."+p)))
+}
+
+// One spelling per ticket and nothing it doesn't carry (AP2-11; RV-946, RV-947, RV-954, RV-955): a line break, stray
+// bits, another header member (crit, b64, x5c, jku), a member twice, a float time, an array aud, ratings of another
+// shape, an unknown claim, a null aud: refused as malformed; a changed payload as a bad signature
+func TestOneSpellingNothingElse(t *testing.T) {
+	s := newSigner(t, "k1")
+	ks := keys(t, s)
+	head := `{"alg":"EdDSA","kid":"k1","typ":"JWT"}`
+	iat := strconv.FormatInt(now.Unix(), 10)
+	body := `{"exp":` + strconv.FormatInt(now.Unix()+120, 10) + `,"iat":` + iat + `,"iss":"carball","jti":"AAAAAAAAAAAAAAAAAAAAAA",` +
+		`"match":"00000000000000a1","name":"Name","purpose":"rejoin","ratings":[[1500,500],[1500,500],[1500,500]],` +
+		`"sub":"` + strings.Repeat("09", 16) + `"}`
+	good := rawSigned(s, head, body)
+	if _, err := Verify(good, ks, now, 0); err != nil {
+		t.Fatalf("the hand-made ticket itself: %v", err)
+	}
+	parts := strings.Split(good, ".")
+	// (the signature's last character, 2 bits of it the signature's and 4 always zero: one of those set, the bytes the same)
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, parts[2][len(parts[2])-1])
+	strayBits := parts[0] + "." + parts[1] + "." + parts[2][:len(parts[2])-1] + string(alphabet[last|1])
+	malformed := map[string]string{
+		"a line break inside":   good[:20] + "\n" + good[20:],
+		"a carriage return":     good[:20] + "\r" + good[20:],
+		"stray bits at its end": strayBits,
+		"padded":                good + "==",
+		"four parts":            good + ".AAAA",
+		"crit":                  rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JWT","crit":["exp"]}`, body),
+		"b64 false":             rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JWT","b64":false}`, body),
+		"x5c":                   rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JWT","x5c":["AAAA"]}`, body),
+		"jku":                   rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JWT","jku":"https://x.example"}`, body),
+		"no typ":                rawSigned(s, `{"alg":"EdDSA","kid":"k1"}`, body),
+		"alg twice":             rawSigned(s, `{"alg":"EdDSA","alg":"EdDSA","kid":"k1","typ":"JWT"}`, body),
+		"a float time":          rawSigned(s, head, strings.Replace(body, `"iat":`+iat, `"iat":`+iat+`.5`, 1)),
+		"an array aud":          rawSigned(s, head, strings.Replace(body, `"purpose":"rejoin"`, `"purpose":"seat","aud":["a.example:1"],"playlist":1,"seat":0,"roster":2`, 1)),
+		"two ratings":           rawSigned(s, head, strings.Replace(body, `[[1500,500],[1500,500],[1500,500]]`, `[[1500,500],[1500,500]]`, 1)),
+		"a rating of three":     rawSigned(s, head, strings.Replace(body, `[[1500,500],`, `[[1500,500,1],`, 1)),
+		"an unknown claim":      rawSigned(s, head, strings.Replace(body, `"iss"`, `"admin":true,"iss"`, 1)),
+		"a claim twice":         rawSigned(s, head, strings.Replace(body, `"iss":"carball"`, `"iss":"carball","iss":"carball"`, 1)),
+		"a null aud":            rawSigned(s, head, strings.Replace(body, `"iss"`, `"aud":null,"iss"`, 1)),
+		"a jti with stray bits": rawSigned(s, head, strings.Replace(body, `"AAAAAAAAAAAAAAAAAAAAAA"`, `"AAAAAAAAAAAAAAAAAAAAAB"`, 1)),
+	}
+	for name, ticket := range malformed {
+		if _, err := Verify(ticket, ks, now, 0); err == nil || !strings.Contains(err.Error(), "malformed") {
+			t.Errorf("%s: %v (want malformed)", name, err)
+		}
+	}
+	tampered := parts[0] + "." + base64.RawURLEncoding.EncodeToString([]byte(strings.Replace(body, `"Name"`, `"Mame"`, 1))) + "." + parts[2]
+	if _, err := Verify(tampered, ks, now, 0); err == nil || !strings.Contains(err.Error(), "bad signature") {
+		t.Errorf("a changed payload: %v (want a bad signature)", err)
+	}
+}
+
+// Each purpose its own life, no skew in it (one clock's difference, RV-950): a rejoin's 120 s, a seat's 30 s
+func TestEachPurposeItsLife(t *testing.T) {
+	s := newSigner(t, "k1")
+	for name, c := range map[string]struct {
+		seat bool
+		life time.Duration
+		ok   bool
+	}{
+		"a rejoin's 120 s": {false, Lifetime, true}, "a rejoin's 121 s": {false, Lifetime + time.Second, false},
+		"a seat's 30 s": {true, SeatLifetime, true}, "a seat's 31 s": {true, SeatLifetime + time.Second, false},
+	} {
+		tk := Ticket{KeyID: "k1", Account: [16]byte{9}, Issued: now, Expires: now.Add(c.life), Name: "Name", Purpose: PurposeRejoin, Match: 1}
+		if c.seat {
+			tk.Purpose, tk.Server, tk.Playlist, tk.Roster = PurposeSeat, "a.example:1", 1, 2
+		}
+		encoded, err := s.signed(tk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Verify(encoded, keys(t, s), now, 30*time.Second); (err == nil) != c.ok {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A ticket past MaxBytes refused for its length alone, validly signed and otherwise fine (RV-952's G2): a 32-byte key
+// id, a server of 64 and a name of 32 characters JSON writes as 6 bytes each
+func TestATicketPastMaxBytesIsRefused(t *testing.T) {
+	long, _ := NewSigner(strings.Repeat("k", 32), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	registered := jwt.Claims{
+		Issuer: Issuer, Subject: strings.Repeat("ff", 16), IssuedAt: jwt.NewNumericDate(now), Expiry: jwt.NewNumericDate(now.Add(SeatLifetime)),
+		Audience: jwt.Audience{strings.Repeat("<", 59) + ":4433"}, ID: base64.RawURLEncoding.EncodeToString(make([]byte, 16)),
+	}
+	own := map[string]any{
+		"name": strings.Repeat("<", 32), "ratings": [3][2]uint16{}, "purpose": "seat", "match": "00000000000000a1",
+		"playlist": 3, "seat": 5, "roster": 6,
+	}
+	encoded := handSigned(t, long, registered, own)
+	if len(encoded) <= MaxBytes {
+		t.Fatalf("only %d bytes", len(encoded))
+	}
+	if _, err := VerifySigned(encoded, keys(t, long)); err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Errorf("a %d-byte ticket: %v", len(encoded), err)
+	}
+}
+
+// The public keys' list by the game server's rules (AP2-5, RV-948): a key of small order (its sign bit either way), the
+// development key's id, an id twice, a key not 32 bytes of base64: refused; an error names the entry, never its text
+// (RV-953)
+func TestParsePublicRefusesWhatTheGameServerRefuses(t *testing.T) {
+	good := func(seed byte) string {
+		return base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, 32)).Public().(ed25519.PublicKey))
+	}
+	keys, err := ParsePublic("k1 " + good(1) + ",\nk2 " + good(2) + "\n")
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("two good keys: %v %v", keys, err)
+	}
+	for _, bad := range smallOrderKeys {
+		signed := bad
+		signed[31] |= 0x80
+		for _, key := range [][32]byte{bad, signed} {
+			if _, err := ParsePublic("so " + base64.StdEncoding.EncodeToString(key[:])); err == nil {
+				t.Errorf("a key of small order taken: %x", key)
+			}
+		}
+	}
+	secret := "c2VlZC1vZi1hLWtleS1uZXZlci10by1iZS1sb2dnZWQhIQ=="
+	for name, list := range map[string]string{
+		"the development key's id": "dev " + good(1),
+		"an id twice":              "k1 " + good(1) + ", k1 " + good(2),
+		"not 32 bytes":             "k1 c2hvcnQ=",
+		"not base64":               "k1 !!!",
+		"three fields":             "k1 " + secret + " extra",
+		"a seed, not a key":        "k1 " + secret,
+	} {
+		_, err := ParsePublic(list)
+		if err == nil {
+			t.Errorf("%s: taken", name)
+		} else if strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: the entry's text in the error: %v", name, err)
+		}
+	}
+	if _, err := NewSigner(DevKeyID, base64.StdEncoding.EncodeToString(make([]byte, 32))); err == nil {
+		t.Error("a signer with the development key's id")
 	}
 }
 

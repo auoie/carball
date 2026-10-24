@@ -862,7 +862,7 @@ async fn the_binarys_healthcheck_answers_by_the_health_endpoint() {
     let (live, dead) = (free_port(), free_port());
     let start = Instant::now();
     let beat = Arc::new(AtomicU64::new(0));
-    tokio::spawn(net::serve_health(live, beat.clone(), start));
+    tokio::spawn(net::serve_health(net::bind_health(live).await.unwrap(), beat.clone(), start));
     tokio::time::sleep(Duration::from_millis(200)).await;
     beat.store(start.elapsed().as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
     // (beside settings the server itself would refuse, a queue without a certificate or origins: the check reads only

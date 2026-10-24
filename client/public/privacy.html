@@ -62,9 +62,11 @@
 
     <h2>Logs</h2>
     <p>
-      The services log IP addresses, account ids and display names, with what each connection did (signing in, searching, joining and leaving a match,
-      and anything refused), for security, abuse prevention and debugging. The logs are kept until the servers' log rotation overwrites them (about
-      100 MB for each service) and are never shared. They never hold your cookies, sign-in codes or tokens.
+      The services log, for security, abuse prevention and debugging: IP addresses (with the connection's port, on the game server), account ids and
+      display names (and a rename's new name), and what each connection did: signing in (with Google or Steam), searching (its playlists and regions),
+      joining and leaving a match, its result (each player's team, whether they left, how long they played), and anything refused. The web server logs
+      each page and file fetched, with the IP address, the browser's user agent and the page it came from. The logs are kept until the servers' log
+      rotation overwrites them (about 100 MB for each service) and are never shared. They never hold your cookies, sign-in codes or tokens.
     </p>
 
     <h2>Others involved</h2>
@@ -76,7 +78,7 @@
     <h2>Deleting your account</h2>
     <p>
       Account → Delete Account removes the account at once: its sign-ins, sessions and ratings. Ranked results you played in stay for the other players,
-      without your account in them. A keyed hash of the sign-in's id is kept for 30 days, so that the same sign-in can't make a new account in that time,
+      without your account in them. Lines the logs already hold (its id and names among them) stay until the rotation overwrites them. A keyed hash of the sign-in's id is kept for 30 days, so that the same sign-in can't make a new account in that time,
       then removed; a ban stays with the sign-in it was given to.
     </p>
 

@@ -113,6 +113,7 @@ pub fn server_config(identity: Identity, port: u16) -> anyhow::Result<ServerConf
         .receive_window(1_000_000u32.into())
         .datagram_receive_buffer_size(Some(64 * 1024))
         .send_window(1_000_000);
+    // (dual-stack, [::]: IPv6 clients served too, the hosts on host networking, RV-406 lifted 2026-10-23)
     Ok(ServerConfig::builder()
         .with_bind_default(port)
         .with_custom_transport(identity, transport)
@@ -371,7 +372,9 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
     let limits = Arc::new(limits);
     loop {
         let incoming = server.accept().await;
+        // (an IPv4 client as a.b.c.d, as the accounts service's lines name it, not [::ffff:a.b.c.d]: RV-967)
         let peer = incoming.remote_address();
+        let peer = std::net::SocketAddr::new(peer.ip().to_canonical(), peer.port());
         let address = address_key(peer.ip());
         let permit =
             match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits, Instant::now()) {
@@ -508,7 +511,7 @@ async fn session(
         let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_MODE }.encode()).await;
         let _ = send.finish().await;
         let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
-        bail!("a hello named {:?} with intent {intent}: not served here", request.name);
+        bail!("a hello with intent {intent}: not served here");
     }
     // (a claim and a rejoin are an account's: its ticket checked here alone, never in the match code the browser's local
     // host shares; the account's key and name in place of the hello's)
@@ -520,7 +523,8 @@ async fn session(
         // rejoin alone, AP3, RV-850)
         let purpose_fits = |purpose: &crate::ticket::Purpose| match purpose {
             crate::ticket::Purpose::Seat(s) => {
-                intent == protocol::INTENT_CLAIM && limits.server_name.as_ref().is_none_or(|own| *own == s.server)
+                // (a server with no name takes no match ticket: failing closed, RV-956)
+                intent == protocol::INTENT_CLAIM && limits.server_name.as_ref().is_some_and(|own| *own == s.server)
             }
             crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && *m == token,
         };
@@ -558,12 +562,13 @@ async fn session(
                 let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_TICKET }.encode()).await;
                 let _ = send.finish().await;
                 let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+                // (no name: the hello's is the page's own setting, not a checked account's, RV-968)
                 let rejoin = if intent == protocol::INTENT_REJOIN {
-                    format!(", a rejoin of match {token:016x}")
+                    format!(" (a rejoin of match {token:016x})")
                 } else {
                     String::new()
                 };
-                bail!("ticket refused: {why:?} (a hello named {:?}{rejoin})", request.name);
+                bail!("ticket refused: {why:?}{rejoin}");
             }
         }
     }
@@ -725,11 +730,16 @@ async fn serve_http(
                 .timer(hyper_util::rt::TokioTimer::new())
                 .header_read_timeout(read)
                 .keep_alive(false)
+                // (a request's headers 16 KiB at most, not hyper's 400 KiB: these endpoints take no more, RV-940)
+                .max_buf_size(MAX_REQUEST_BUFFER)
                 .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
                 .await;
         });
     }
 }
+
+/// A development or health endpoint's request buffer at most (bytes; hyper's least is 8 KiB)
+const MAX_REQUEST_BUFFER: usize = 16 * 1024;
 
 /// A development endpoint's answer: its JSON (any page may read it, never cached), or a 400 for a request it can't serve
 fn dev_answer(body: Option<String>) -> axum::response::Response {
@@ -758,11 +768,14 @@ pub async fn serve_info(
     let info = serde_json::json!({ "port": webtransport_port, "certHash": hex }).to_string();
     let mut app = axum::Router::new().route("/info", get(move || std::future::ready(dev_answer(Some(info.clone())))));
     if let Some(tickets) = dev_tickets {
+        // (a query it can't read (a field twice) its own 400, with the page's headers, not axum's bare one: RV-940)
         app = app.route(
             "/dev-ticket",
-            get(move |axum::extract::Query(query): axum::extract::Query<DevTicketQuery>| {
-                std::future::ready(dev_answer(dev_ticket(&tickets, &query)))
-            }),
+            get(
+                move |query: Result<axum::extract::Query<DevTicketQuery>, axum::extract::rejection::QueryRejection>| {
+                    std::future::ready(dev_answer(query.ok().and_then(|q| dev_ticket(&tickets, &q.0))))
+                },
+            ),
         );
     }
     serve_http(tokio::net::TcpListener::bind((bind, port)).await?, app, 64, Duration::from_secs(2)).await
@@ -807,10 +820,16 @@ fn dev_ticket(tickets: &crate::ticket::Tickets, query: &DevTicketQuery) -> Optio
     Some(serde_json::json!({ "ticket": ticket }).to_string())
 }
 
-/// The container's health check (APP-CONTRACT.md): `GET /healthz` on `127.0.0.1:port` answers 200 while the game thread
-/// runs (its heartbeat, each loop, within 2 s), else 503
+/// The health endpoint's port bound, on 127.0.0.1 (the start fails if it's taken: another process's /healthz would
+/// answer the check, RV-986)
+pub async fn bind_health(port: u16) -> anyhow::Result<tokio::net::TcpListener> {
+    tokio::net::TcpListener::bind(("127.0.0.1", port)).await.with_context(|| format!("HEALTH_PORT 127.0.0.1:{port}"))
+}
+
+/// The container's health check (APP-CONTRACT.md): `GET /healthz` on its listener (`bind_health`) answers 200 while the
+/// game thread runs (its heartbeat, each loop, within 2 s), else 503
 pub async fn serve_health(
-    port: u16,
+    listener: tokio::net::TcpListener,
     heartbeat: Arc<std::sync::atomic::AtomicU64>,
     start: Instant,
 ) -> anyhow::Result<()> {
@@ -827,13 +846,19 @@ pub async fn serve_health(
             })
         }),
     );
-    serve_http(tokio::net::TcpListener::bind(("127.0.0.1", port)).await?, app, 16, Duration::from_secs(2)).await
+    serve_http(listener, app, 16, Duration::from_secs(2)).await
 }
 
 /// `carball-server --healthcheck`: asks the health endpoint (2 s at most, never through a proxy the environment names);
 /// true if it answered 200
 pub async fn health_check(port: u16) -> bool {
-    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(2)).no_proxy().build() else {
+    // (no redirect followed: only the endpoint's own 200 is healthy, RV-940)
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    else {
         return false;
     };
     client
@@ -901,6 +926,12 @@ mod tests {
         assert_eq!(ticket.status(), 200);
         assert_eq!(get("/dev-ticket?name=Ada").await.unwrap().status(), 400, "no match");
         assert_eq!(get("/dev-ticket?rejoin=zz").await.unwrap().status(), 400);
+        // (a query it can't read, a field twice: its own 400, the page's headers on it, RV-940)
+        let twice = get("/dev-ticket?rejoin=00000000000000a1&name=a&name=b").await.unwrap();
+        assert_eq!(
+            (twice.status().as_u16(), twice.headers()["access-control-allow-origin"].to_str().unwrap()),
+            (400, "*")
+        );
         // (a request in two writes, apart: read whole, answered)
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         stream.write_all(b"GET /info HTTP/1.1\r\nHo").await.unwrap();
@@ -919,6 +950,89 @@ mod tests {
             "an idle connection held {:?}",
             started.elapsed()
         );
+    }
+
+    /// The plain HTTP endpoints' limits applied, not configured only (RV-939's H1, H3; RV-940): one request a connection
+    /// (a second sent with it unanswered), the connections at once capped (one more closed at once), a request's headers
+    /// past 16 KiB refused
+    #[tokio::test]
+    async fn the_http_endpoints_limits_hold() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        tokio::spawn(serve_http(listener, app, 2, Duration::from_secs(2)));
+        let connect = || tokio::net::TcpStream::connect(("127.0.0.1", port));
+        let reply = |mut s: tokio::net::TcpStream| async move {
+            let mut text = Vec::new();
+            let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut text)).await;
+            String::from_utf8_lossy(&text).into_owned()
+        };
+        let mut two = connect().await.unwrap();
+        two.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+        let text = reply(two).await;
+        assert_eq!(text.matches("HTTP/1.1 200").count(), 1, "{text}");
+        let held = [connect().await.unwrap(), connect().await.unwrap()];
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let started = Instant::now();
+        let text = reply(connect().await.unwrap()).await;
+        assert!(
+            text.is_empty() && started.elapsed() < Duration::from_secs(1),
+            "one past the cap: {text:?}, {:?}",
+            started.elapsed()
+        );
+        drop(held);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut big = connect().await.unwrap();
+        big.write_all(format!("GET / HTTP/1.1\r\nHost: x\r\nX-Big: {}\r\n\r\n", "a".repeat(20_000)).as_bytes())
+            .await
+            .unwrap();
+        let text = reply(big).await;
+        assert!(text.starts_with("HTTP/1.1 431"), "headers past 16 KiB: {text:?}");
+    }
+
+    /// The health endpoint: 200 while the game thread's heartbeat is within 2 s, else 503; `--healthcheck` true for that
+    /// 200 alone: a 503, a redirect (even to a 200) and a listener that never answers (given up in its 2 s) false
+    /// (RV-939's H5, H7, H9; RV-940)
+    #[tokio::test]
+    async fn the_health_endpoint_and_its_check() {
+        let free = || std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let (port, moved, silent) = (free(), free(), free());
+        let start = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+        let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(10_000));
+        tokio::spawn(serve_health(bind_health(port).await.unwrap(), heartbeat.clone(), start));
+        assert!(bind_health(port).await.is_err(), "a port taken: an error, the start fails");
+        let to = format!("http://127.0.0.1:{port}/healthz");
+        let redirect = axum::Router::new().route(
+            "/healthz",
+            axum::routing::get(move || {
+                std::future::ready((
+                    axum::http::StatusCode::MOVED_PERMANENTLY,
+                    [(axum::http::header::LOCATION, to.clone())],
+                ))
+            }),
+        );
+        tokio::spawn(serve_http(
+            tokio::net::TcpListener::bind(("127.0.0.1", moved)).await.unwrap(),
+            redirect,
+            4,
+            Duration::from_secs(2),
+        ));
+        let never = tokio::net::TcpListener::bind(("127.0.0.1", silent)).await.unwrap();
+        tokio::spawn(async move {
+            let mut kept = Vec::new();
+            while let Ok((stream, _)) = never.accept().await {
+                kept.push(stream);
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(health_check(port).await, "a heartbeat within 2 s");
+        assert!(!health_check(moved).await, "a redirect to a 200");
+        let started = Instant::now();
+        assert!(!health_check(silent).await, "a listener that never answers");
+        assert!(started.elapsed() < Duration::from_secs(3), "given up in {:?}", started.elapsed());
+        heartbeat.store(0, std::sync::atomic::Ordering::Relaxed);
+        assert!(!health_check(port).await, "a heartbeat 10 s old: 503");
     }
 
     #[test]

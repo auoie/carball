@@ -217,38 +217,50 @@ export class AccountPages {
         })
         .catch(fail);
     });
-    const signOut = this.#button(T.signOut, () => {
-      this.#actions
+    // (the account going (signed out, everywhere, deleted): its search cancelled first, the three buttons held till the
+    // call is answered, one at a time, RV-979)
+    let going: HTMLButtonElement[] = [];
+    const leave = (call: () => Promise<void>, after: () => void): void => {
+      for (const b of going) b.disabled = true;
+      void this.#actions
         .leaving()
-        .then(async () => this.#api.signOut())
-        .then(() => {
+        .then(call)
+        .then(after)
+        .catch(fail)
+        .finally(() => {
+          for (const b of going) b.disabled = false;
+        });
+    };
+    const signOut = this.#button(T.signOut, () => {
+      leave(
+        async () => this.#api.signOut(),
+        () => {
           this.#actions.changed(null);
           this.showSignIn();
-        })
-        .catch(fail);
+        },
+      );
     });
     const everywhere = this.#button(T.signOutEverywhere, () => {
-      this.#actions
-        .leaving()
-        .then(async () => this.#api.signOutEverywhere())
-        .then(() => {
+      leave(
+        async () => this.#api.signOutEverywhere(),
+        () => {
           this.#actions.changed(null);
           this.showSignIn(T.signedOutEverywhere);
-        })
-        .catch(fail);
+        },
+      );
     });
     const remove = this.#button(T.deleteAccount, () => {
       this.#actions.ask(T.deleteTitle, T.deleteBody, () => {
-        this.#actions
-          .leaving()
-          .then(async () => this.#api.deleteAccount())
-          .then(() => {
+        leave(
+          async () => this.#api.deleteAccount(),
+          () => {
             this.#actions.changed(null);
             this.showSignIn();
-          })
-          .catch(fail);
+          },
+        );
       });
     });
+    going = [signOut, everywhere, remove];
     remove.classList.add("account-danger");
     const rename = document.createElement("div");
     rename.className = "account-rename";

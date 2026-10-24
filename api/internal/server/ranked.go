@@ -113,6 +113,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		len(body.Players) != 2*body.Playlist
 	perTeam := [2]int{}
 	seen := map[string]bool{}
+	seats := map[byte]bool{}
 	var players []string // (the log's: each its account, name, team, a quitter)
 	for _, p := range body.Players {
 		if bad || (p.Team != 0 && p.Team != 1) || p.Seconds < 0 || p.Seconds > MaxMatchSeconds {
@@ -120,17 +121,24 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		t, err := s.playerTicket(p.Ticket, ticket.PurposeSeat, body.Match, now)
+		// (each its seat's ticket for this match at this server in this playlist (its aud and playlist, as the matchmaker
+		// signed them: RV-951), else refused as any ticket not for this)
+		if err == nil && (t.Server != body.Server || int(t.Playlist) != body.Playlist) {
+			err = errors.New("ticket: another server's or playlist's seat")
+		}
 		if err != nil {
 			s.log(r).Warn("a result's ticket refused", "match", body.Match, "err", err)
 			writeError(w, http.StatusForbidden, "ticket")
 			return
 		}
 		account := accountID(t.Account)
-		if seen[account] {
+		// (each account and each seat once, a seat's team its own: even blue, odd orange, RV-951)
+		if seen[account] || seats[t.Seat] || int(t.Seat%2) != p.Team {
 			bad = true
 			break
 		}
 		seen[account] = true
+		seats[t.Seat] = true
 		perTeam[p.Team]++
 		quit := ""
 		if p.Quitter {
@@ -213,13 +221,19 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		// (out of its match, and a search of its running now ended with the ban: RV-849)
 		ban, banned, err := s.Store.QueueBanOf(r.Context(), account)
-		until, _ := ranked.BannedUntil(ban, banned, now)
-		if err != nil {
-			until = now
+		until, on := ranked.BannedUntil(ban, banned, now)
+		switch {
+		case err != nil:
+			s.Matchmaker.Quitter(account, now, now)
+		case on:
+			s.log(r).Info("a quitter reported: queue-banned", "match", body.Match, "account", account, "name", t.Name,
+				"until", until.UTC().Format(time.RFC3339))
+			s.Matchmaker.Quitter(account, until, now)
+		default:
+			// (a report late enough that its ban is over (its leave's time kept, the window held): a search of the account's
+			// goes on, RV-965)
+			s.log(r).Info("a quitter reported late: its ban already over", "match", body.Match, "account", account, "name", t.Name)
 		}
-		s.log(r).Info("a quitter reported: queue-banned", "match", body.Match, "account", account, "name", t.Name,
-			"until", until.UTC().Format(time.RFC3339))
-		s.Matchmaker.Quitter(account, until, now)
 	}
 	s.queueBanDone(w, r, err)
 }

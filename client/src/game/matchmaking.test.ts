@@ -106,12 +106,15 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     mm.start([1]);
     const cancelling = mm.cancelled().then(() => (settled = true));
     expect(mm.state).toBeNull();
+    // (a second press while it's on its way: the same wait, not at once, RV-980)
+    let again = false;
+    const second = mm.cancelled().then(() => (again = true));
     await Promise.resolve();
-    expect(settled).toBe(false);
+    expect([settled, again]).toEqual([false, false]);
     expect(delivered).not.toBeNull();
     (delivered as unknown as () => void)();
-    await cancelling;
-    expect(settled).toBe(true);
+    await Promise.all([cancelling, second]);
+    expect([settled, again]).toEqual([true, true]);
   });
 
   it("a failed search shows Failed and its warning line, then goes; a new search starts with a warning line", () => {

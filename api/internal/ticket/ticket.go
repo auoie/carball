@@ -16,13 +16,16 @@
 package ticket
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +106,9 @@ type Signer struct {
 func NewSigner(keyID, seed string) (*Signer, error) {
 	if keyID == "" || len(keyID) > 32 || strings.ContainsAny(keyID, " \t\r\n") {
 		return nil, errors.New("a ticket key's id is 1-32 characters, no spaces")
+	}
+	if keyID == DevKeyID {
+		return nil, fmt.Errorf("the key id %q is the development key's", DevKeyID)
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(seed))
 	if err != nil || len(raw) != ed25519.SeedSize {
@@ -228,8 +234,13 @@ func Verify(encoded string, keys map[string]ed25519.PublicKey, now time.Time, sk
 	if err != nil {
 		return Ticket{}, err
 	}
-	// (a life of Lifetime at most, begun before it ends: as the game server's check, AP2-3)
-	if t.Expires.Before(t.Issued) || t.Expires.Sub(t.Issued) > Lifetime+skew {
+	// (its purpose's life at most, begun before it ends: as the game server's check, AP2-3, RV-950; one clock's
+	// difference, no skew in it)
+	life := Lifetime
+	if t.Purpose == PurposeSeat {
+		life = SeatLifetime
+	}
+	if t.Expires.Before(t.Issued) || t.Expires.Sub(t.Issued) > life {
 		return Ticket{}, errors.New("ticket: not a ticket's life")
 	}
 	if now.Add(skew).Before(t.Issued) || !now.Add(-skew).Before(t.Expires) {
@@ -240,57 +251,188 @@ func Verify(encoded string, keys map[string]ed25519.PublicKey, now time.Time, sk
 
 // VerifySigned reads a ticket and checks its signature (EdDSA alone, by a key of ours) and its claims, not its time: a
 // result's or a quitter's (the game server hands on the player's ticket from the match's start; its issue time checked
-// against the acceptance window instead)
+// against the acceptance window instead). One spelling per ticket (AP2-11, RV-946): three parts, each canonical
+// base64url, no line break; its header exactly alg EdDSA, its key's id and typ JWT (RV-947); its claims read strictly
+// (`read`)
 func VerifySigned(encoded string, keys map[string]ed25519.PublicKey) (Ticket, error) {
+	malformed := errors.New("ticket: malformed")
 	if len(encoded) > MaxBytes {
 		return Ticket{}, errors.New("ticket: too long")
 	}
-	token, err := jwt.ParseSigned(encoded, []jose.SignatureAlgorithm{jose.EdDSA})
-	if err != nil || len(token.Headers) != 1 {
-		return Ticket{}, errors.New("ticket: malformed")
+	kid, err := header(encoded)
+	if err != nil {
+		return Ticket{}, malformed
 	}
-	key, ok := keys[token.Headers[0].KeyID]
+	key, ok := keys[kid]
 	if !ok {
-		return Ticket{}, fmt.Errorf("ticket: no key %q", token.Headers[0].KeyID)
+		return Ticket{}, fmt.Errorf("ticket: no key %q", kid)
 	}
-	var registered jwt.Claims
-	var own claims
-	if err := token.Claims(key, &registered, &own); err != nil {
+	token, err := jwt.ParseSigned(encoded, []jose.SignatureAlgorithm{jose.EdDSA})
+	if err != nil || len(token.Headers) != 1 || token.Headers[0].KeyID != kid {
+		return Ticket{}, malformed
+	}
+	var payload json.RawMessage
+	if err := token.Claims(key, &payload); err != nil {
 		return Ticket{}, errors.New("ticket: bad signature")
 	}
-	return read(token.Headers[0].KeyID, registered, own)
+	return read(kid, payload)
 }
 
-// read is a verified ticket's claims as a Ticket, each in its form (a malformed one refused)
-func read(keyID string, registered jwt.Claims, own claims) (Ticket, error) {
+// header: a ticket's key id, its spelling and its header checked: three parts, each canonical unpadded base64url (no
+// line break, no stray bits: Go's decoder skips \r and \n, so they're refused first), the header exactly alg "EdDSA",
+// kid (1-32 bytes) and typ "JWT", each once
+func header(encoded string) (string, error) {
 	bad := errors.New("ticket: malformed")
-	t := Ticket{KeyID: keyID, Name: own.Name}
-	account, err := hex.DecodeString(registered.Subject)
-	nonce, errNonce := base64.RawURLEncoding.DecodeString(registered.ID)
-	if registered.Issuer != Issuer || err != nil || len(account) != 16 || errNonce != nil || len(nonce) != 16 ||
-		registered.IssuedAt == nil || registered.Expiry == nil || len(own.Match) != 16 {
+	parts := strings.Split(encoded, ".")
+	if strings.ContainsAny(encoded, "\r\n") || len(parts) != 3 {
+		return "", bad
+	}
+	var raw []byte
+	for i, part := range parts {
+		decoded, err := base64.RawURLEncoding.Strict().DecodeString(part)
+		if err != nil || len(decoded) == 0 {
+			return "", bad
+		}
+		if i == 0 {
+			raw = decoded
+		}
+	}
+	members, err := object(raw)
+	if err != nil || len(members) != 3 {
+		return "", bad
+	}
+	var alg, kid, typ string
+	for name, into := range map[string]*string{"alg": &alg, "kid": &kid, "typ": &typ} {
+		if v, ok := members[name]; !ok || json.Unmarshal(v, into) != nil {
+			return "", bad
+		}
+	}
+	if alg != string(jose.EdDSA) || typ != "JWT" || kid == "" || len(kid) > 32 {
+		return "", bad
+	}
+	return kid, nil
+}
+
+// object: a JSON object's members (its values as they are), each name once and nothing after it; else an error
+func object(raw []byte) (map[string]json.RawMessage, error) {
+	bad := errors.New("ticket: not one JSON object")
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, bad
+	}
+	out := map[string]json.RawMessage{}
+	for dec.More() {
+		t, err := dec.Token()
+		name, isName := t.(string)
+		if err != nil || !isName {
+			return nil, bad
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, bad
+		}
+		if _, twice := out[name]; twice {
+			return nil, bad
+		}
+		out[name] = value
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, bad
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, bad
+	}
+	return out, nil
+}
+
+// read is a verified ticket's claims (its payload) as a Ticket, each in its form, strictly (RV-954): only the claims a
+// ticket has, each once; iat and exp whole seconds; sub 32 hex digits; jti 16 bytes of canonical base64url; aud a
+// string; the ratings three pairs; a rejoin's with its match and no seat, a seat's with its server, playlist, seat and
+// roster (`fits`)
+func read(keyID string, payload []byte) (Ticket, error) {
+	bad := errors.New("ticket: malformed")
+	members, err := object(payload)
+	if err != nil {
+		return Ticket{}, bad
+	}
+	allowed := map[string]bool{
+		"iss": true, "sub": true, "aud": true, "iat": true, "exp": true, "jti": true, "name": true, "ratings": true,
+		"purpose": true, "match": true, "playlist": true, "seat": true, "roster": true,
+	}
+	for name := range members {
+		if !allowed[name] {
+			return Ticket{}, bad
+		}
+	}
+	str := func(name string) (string, bool) {
+		var v string
+		raw, ok := members[name]
+		return v, ok && json.Unmarshal(raw, &v) == nil
+	}
+	seconds := func(name string) (time.Time, bool) {
+		n, err := strconv.ParseInt(string(members[name]), 10, 64)
+		return time.Unix(n, 0).UTC(), err == nil
+	}
+	small := func(name string) (*byte, bool) {
+		raw, ok := members[name]
+		if !ok {
+			return nil, true
+		}
+		n, err := strconv.ParseUint(string(raw), 10, 8)
+		b := byte(n)
+		return &b, err == nil
+	}
+	iss, okIss := str("iss")
+	sub, okSub := str("sub")
+	jti, okJti := str("jti")
+	name, okName := str("name")
+	purpose, okPurpose := str("purpose")
+	match, okMatch := str("match")
+	issued, okIssued := seconds("iat")
+	expires, okExpires := seconds("exp")
+	playlist, okPlaylist := small("playlist")
+	seat, okSeat := small("seat")
+	roster, okRoster := small("roster")
+	var ratings [][]uint16
+	okRatings := json.Unmarshal(members["ratings"], &ratings) == nil && len(ratings) == 3
+	for _, r := range ratings {
+		okRatings = okRatings && len(r) == 2
+	}
+	for _, ok := range []bool{okIss, okSub, okJti, okName, okPurpose, okMatch, okIssued, okExpires, okPlaylist, okSeat, okRoster, okRatings} {
+		if !ok {
+			return Ticket{}, bad
+		}
+	}
+	if iss != Issuer || len(sub) != 32 || len(match) != 16 {
+		return Ticket{}, bad
+	}
+	t := Ticket{KeyID: keyID, Name: name, Issued: issued, Expires: expires}
+	account, err := hex.DecodeString(sub)
+	nonce, errNonce := base64.RawURLEncoding.Strict().DecodeString(jti)
+	if err != nil || errNonce != nil || len(nonce) != 16 {
 		return Ticket{}, bad
 	}
 	copy(t.Account[:], account)
 	copy(t.Nonce[:], nonce)
-	t.Issued, t.Expires = registered.IssuedAt.Time().UTC(), registered.Expiry.Time().UTC()
-	for i, r := range own.Ratings {
+	for i, r := range ratings {
 		t.Ratings[i] = Shown{Rating: r[0], Deviation: r[1]}
 	}
-	if t.Match, err = strconv.ParseUint(own.Match, 16, 64); err != nil {
+	if t.Match, err = strconv.ParseUint(match, 16, 64); err != nil {
 		return Ticket{}, bad
 	}
-	switch own.Purpose {
+	_, hasAud := members["aud"]
+	switch purpose {
 	case "rejoin":
-		if len(registered.Audience) != 0 || own.Playlist != nil || own.Seat != nil || own.Roster != nil {
+		if hasAud || playlist != nil || seat != nil || roster != nil {
 			return Ticket{}, bad
 		}
 		t.Purpose = PurposeRejoin
 	case "seat":
-		if len(registered.Audience) != 1 || own.Playlist == nil || own.Seat == nil || own.Roster == nil {
+		server, okServer := str("aud")
+		if !okServer || playlist == nil || seat == nil || roster == nil {
 			return Ticket{}, bad
 		}
-		t.Purpose, t.Server, t.Playlist, t.Seat, t.Roster = PurposeSeat, registered.Audience[0], *own.Playlist, *own.Seat, *own.Roster
+		t.Purpose, t.Server, t.Playlist, t.Seat, t.Roster = PurposeSeat, server, *playlist, *seat, *roster
 	default:
 		return Ticket{}, bad
 	}
@@ -301,24 +443,78 @@ func read(keyID string, registered jwt.Claims, own claims) (Ticket, error) {
 }
 
 // ParsePublic reads public key lines as the game server's TICKET_PUBLIC_KEYS lists them ("KID BASE64", comma- or
-// newline-separated)
+// newline-separated), by its rules (server/src/ticket.rs `parse_keys`, AP2-5, RV-948): a key id 1-32 characters, never
+// the development key's, never twice; a key 32 bytes, never one of small order (a signature "checks" under one for any
+// message). An error names the entry by its number, never its text (a seed pasted in the wrong file stays out of the
+// log: RV-953)
 func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
 	out := map[string]ed25519.PublicKey{}
+	n := 0
 	for _, item := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == '\n' }) {
 		fields := strings.Fields(item)
 		if len(fields) == 0 {
 			continue
 		}
+		n++
 		if len(fields) != 2 || len(fields[0]) > 32 {
-			return nil, fmt.Errorf("ticket: a key line is \"KID BASE64\", got %q", item)
+			return nil, fmt.Errorf("ticket: key entry %d isn't \"KID BASE64\"", n)
 		}
-		raw, err := base64.StdEncoding.DecodeString(fields[1])
-		if err != nil || len(raw) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("ticket: key %q is not 32 bytes of base64", fields[0])
+		kid := fields[0]
+		raw, err := base64.StdEncoding.Strict().DecodeString(fields[1])
+		switch {
+		case err != nil || len(raw) != ed25519.PublicKeySize:
+			return nil, fmt.Errorf("ticket: key entry %d isn't 32 bytes of base64", n)
+		case kid == DevKeyID:
+			return nil, fmt.Errorf("ticket: key entry %d has the development key's id", n)
+		case smallOrder(raw):
+			return nil, fmt.Errorf("ticket: key entry %d is of small order (no signer's)", n)
 		}
-		out[fields[0]] = ed25519.PublicKey(raw)
+		if _, twice := out[kid]; twice {
+			return nil, fmt.Errorf("ticket: key entry %d repeats an id", n)
+		}
+		out[kid] = ed25519.PublicKey(raw)
 	}
 	return out, nil
+}
+
+// smallOrderKeys are the Ed25519 public keys of small order, sign bit aside (libsodium's list; the game server's
+// SMALL_ORDER)
+var smallOrderKeys = func() [7][32]byte {
+	var ones [32]byte
+	for i := range ones {
+		ones[i] = 0xff
+	}
+	ones[31] = 0x7f
+	a, b, c := ones, ones, ones
+	a[0], b[0], c[0] = 0xec, 0xed, 0xee
+	var one [32]byte
+	one[0] = 1
+	return [7][32]byte{
+		{},
+		one,
+		{
+			0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4, 0x89, 0xf2, 0xef, 0x98, 0xf0, 0xd5, 0xdf,
+			0xac, 0x05, 0xd3, 0xc6, 0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x05,
+		},
+		{
+			0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b, 0x76, 0x0d, 0x10, 0x67, 0x0f, 0x2a, 0x20,
+			0x53, 0xfa, 0x2c, 0x39, 0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0x7a,
+		},
+		a, b, c,
+	}
+}()
+
+// smallOrder: a public key of small order, its sign bit aside
+func smallOrder(key []byte) bool {
+	if len(key) != 32 {
+		return false
+	}
+	for _, bad := range smallOrderKeys {
+		if string(key[:31]) == string(bad[:31]) && key[31]&0x7f == bad[31] {
+			return true
+		}
+	}
+	return false
 }
 
 // DevKeyID is the development key's id; DevSeedText what its seed is the SHA-256 of. Published on purpose: only a

@@ -543,9 +543,15 @@ impl MatchHost {
     /// decided: its result told at its winner, the matchmaker frees its accounts then, so one on its end screen may claim
     /// the next match it finds)
     pub fn account_busy(&self, key: u64) -> bool {
+        self.account_busy_except(key, None)
+    }
+
+    /// The same, but for the matchmaker's match `except` (a rejoin's own)
+    fn account_busy_except(&self, key: u64, except: Option<u64>) -> bool {
         key != 0
             && self.matches.values().any(|m| {
                 !m.open
+                    && Some(m.ranked) != except
                     && !m.decided()
                     && m.reservations.iter().any(|r| r.key == key && r.claimed.is_some() && r.here_since.is_some())
             })
@@ -566,6 +572,11 @@ impl MatchHost {
     ) -> Result<(), u8> {
         let now = self.now;
         let concluded = Err(protocol::REFUSED_CONCLUDED);
+        // (one match at a time: an account playing another match here (a search since, matched and claimed) takes no seat
+        // back in this one, RV-961)
+        if request.verified && self.account_busy_except(request.key, Some(match_id)) {
+            return Err(protocol::REFUSED_IN_MATCH);
+        }
         let Some((&mid, hosted)) = self.matches.iter_mut().find(|(_, m)| m.ranked == match_id && !m.open) else {
             return concluded;
         };
@@ -773,6 +784,8 @@ impl MatchHost {
                 done.push((match_id, false));
             }
         }
+        // (the starts told now, before this step's leaves: a leave told first would be undone by its start, RV-971)
+        self.reports.append(&mut started);
         // (the players the games let go of themselves, kicked for idling or not reading: leaves, counted as they happen
         // (LV1), the game's own forfeit after them no excuse; their sessions' closes later find no seat)
         let dropped: Vec<(MatchId, crate::game::Dropped)> = self
@@ -782,10 +795,25 @@ impl MatchHost {
                 m.game.as_mut().map(Game::take_dropped).unwrap_or_default().into_iter().map(move |d| (match_id, d))
             })
             .collect();
+        let mut stalled = Vec::new();
         for (match_id, d) in dropped {
-            if self.players.remove(&d.id).is_some() {
-                self.seat_left_decided(match_id, d.id, true, d.lost, Some(d.decided));
+            if self.players.remove(&d.id).is_none() {
+                continue;
             }
+            match self.matches.get_mut(&match_id) {
+                // (dropped before the start: its seat left, the match cancelled with it the no-show, as a leave then,
+                // RV-966)
+                Some(hosted) if hosted.holding() => {
+                    if let Some(slot) = hosted.reservations.iter_mut().find(|r| r.claimed == Some(d.id)) {
+                        slot.left = true;
+                    }
+                    stalled.push(match_id);
+                }
+                _ => self.seat_left_decided(match_id, d.id, true, d.lost, Some(d.decided)),
+            }
+        }
+        for match_id in stalled {
+            self.cancel(match_id);
         }
         // (the armed leaves by a lost connection whose window is over: an outage, or reported)
         let waiting: Vec<MatchId> =
@@ -816,7 +844,6 @@ impl MatchHost {
         for playlist in restart {
             self.open_match(playlist, now);
         }
-        self.reports.extend(started);
         self.closed.retain(|_, until| *until > now);
     }
 
@@ -1194,6 +1221,77 @@ mod tests {
         // (the result keeps each seat's first ticket, not the rejoin's)
         assert_eq!(slot.ticket.as_ref().map(|t| t.encoded.as_str()), Some("t1"));
         assert_eq!(host.game_of(10).map(|g| g.player_count()), Some(4));
+    }
+
+    /// A match's start told before a leave in the same step (a player the game dropped as it started: RV-971); a player
+    /// dropped before the start leaves its seat, the match cancelled with it the no-show (RV-966)
+    #[test]
+    fn a_start_is_told_before_its_steps_leaves_and_a_drop_before_the_start_is_the_no_show() {
+        init_engine();
+        let non_ranked = |host: &mut MatchHost| -> Vec<Report> {
+            host.take_reports()
+                .into_iter()
+                .filter(|r| !matches!(r, Report::Quitter { .. } | Report::Refilled { .. } | Report::Result(_)))
+                .collect()
+        };
+        // (a player whose queue fills a tick or so after the hold's release, within one step of five catch-up ticks: the
+        // capacity that does so found by trying)
+        let (tx, _rx) = channel(OUT_QUEUE);
+        let mut seen = false;
+        for capacity in 1..400 {
+            let mut host = MatchHost::new(1, None);
+            let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+            let (stuck, _never_read) = channel(capacity);
+            assert!(host.claim(tokens[0], 1, seat(1), tx.clone()) && host.claim(tokens[1], 2, seat(2), stuck));
+            host.tick(5.0 / 120.0);
+            let reports = non_ranked(&mut host);
+            let at = |kind: fn(&Report) -> bool| reports.iter().position(kind);
+            if let (Some(start), Some(left)) =
+                (at(|r| matches!(r, Report::Started { .. })), at(|r| matches!(r, Report::Left { .. })))
+            {
+                assert!(start < left, "the start after the leave: {reports:?}");
+                seen = true;
+                break;
+            }
+        }
+        assert!(seen, "no step with both a start and a leave");
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (stuck, _never_read) = channel(1);
+        assert!(host.claim(tokens[0], 1, seat(1), stuck));
+        host.tick(1.0 / 120.0);
+        let reports = non_ranked(&mut host);
+        assert!(
+            matches!(reports.as_slice(), [Report::Cancelled { no_shows, .. }] if no_shows == &vec![0]),
+            "dropped before the start: {reports:?}"
+        );
+        assert_eq!(host.match_count(), 0);
+    }
+
+    /// One match at a time (RV-961): a leaver who searched, was matched and claimed another match here gets no seat back
+    /// in the first with an earlier rejoin ticket; once that match is decided, they do
+    #[test]
+    fn a_rejoin_while_the_account_plays_another_match_here_is_refused() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let first = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        host.observe(3.0);
+        host.leave(1, false);
+        let other = host.create_match(ONES, &[1, 5], 3.0).tokens;
+        assert!(host.claim(other[0], 11, seat(1), tx.clone()) && host.claim(other[1], 12, seat(5), tx.clone()));
+        assert_eq!(
+            host.rejoin(first, 13, rejoining(1), tx.clone()),
+            Err(protocol::REFUSED_IN_MATCH),
+            "playing another match here"
+        );
+        assert!(host.account_busy(1), "the other match still holds the account");
     }
 
     /// The refill only once every seat is back, and no rejoin once a team has won (a search giving a left seat up is the

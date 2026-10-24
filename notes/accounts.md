@@ -155,10 +155,13 @@ both sides' tests check.
 The game server checks it offline, with `TICKET_PUBLIC_KEYS` (a list, so keys can rotate), so a match never waits on the
 API. It:
 - takes EdDSA alone (`none`, or an HMAC keyed with the public key, refused), the key named by the `kid`, `iss`
-  `carball`, and each claim in its form (a rejoin's with no seat, a seat's in its playlist's roster);
+  `carball`, and each claim in its form (a rejoin's with no seat, a seat's in its playlist's roster); a header of
+  exactly `alg`, `kid` and `typ`, and no claim a ticket doesn't have, none null (RV-947, RV-954); each purpose's own
+  life (a rejoin's 120 s, a seat's 30 s: RV-950). The API reads the tickets it gets back as strictly, and takes one
+  spelling of each: three canonical base64url parts, no line break (RV-946);
 - allows ±30 s of clock skew (both boxes on NTP);
 - caps the ticket's size in `Hello`;
-- keeps used one-time ids until `exp`, so a ticket is used once; refuses a ticket issued before the process started (its
+- keeps used one-time ids until `exp` and the 30 s skew, so a ticket is used once; refuses a ticket issued before the process started (its
   id may have been used with the one before), one longer than the API's lifetime or ending before it began (AP2-3,
   AP2-4);
 - takes its keys from `TICKET_PUBLIC_KEYS` or `TICKET_PUBLIC_KEYS_FILE`, the file read again on SIGHUP (a rotation
@@ -208,7 +211,7 @@ player by the account (RX29C).
   carries the leave's time, and the ban runs from it (held within the acceptance window: a report that gets through late
   bans for what's left). The API raises the account's `queue_bans` row by the ladder (ours, the user's choice of LV1's: 5 min → 15 min → 1 h → 6 h →
   24 h cap, one step forgiven for every 24 h without a leave); the matchmaker refuses a search while it runs, and the
-  page shows until when (`/api/me`'s `queueBanUntil`; a no-show's cooldown likewise, `searchCooldownUntil`). A rejoin needs no search, so the ban never blocks it: its ticket
+  page shows until when (`/api/me`'s `queueBanUntil`; a no-show's cooldown likewise, `searchCooldownSeconds`). A rejoin needs no search, so the ban never blocks it: its ticket
   is a **rejoin's** (`POST /api/ticket?rejoin=MATCH`, purpose `rejoin` and that match's id), which the ban doesn't stop
   when it came from that same match, and which the game server takes for that match's rejoin alone (a match ticket only
   for a claim of its seat). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the

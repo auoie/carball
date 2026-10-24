@@ -22,10 +22,10 @@ export const PROTOCOL_VERSION = 29;
 /** A Hello's ticket's bytes at most (the accounts service's JWT) */
 export const MAX_TICKET_BYTES = 1024;
 
-/** A ticket's form as the page takes and keeps it: a JWT's base64url parts and dots, MAX_TICKET_BYTES at most (the
- *  matchmaker's found match, the accounts service's or a development server's rejoin ticket, a stored claim's) */
+/** A ticket's form as the page takes and keeps it: a JWT's three base64url parts, MAX_TICKET_BYTES at most (the
+ *  matchmaker's found match, the accounts service's or a development server's rejoin ticket, a stored claim's; RV-958) */
 export function isTicketText(value: unknown): value is string {
-  return typeof value === "string" && value.length <= MAX_TICKET_BYTES && /^[A-Za-z0-9_.-]+$/.test(value);
+  return typeof value === "string" && value.length <= MAX_TICKET_BYTES && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
 }
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;

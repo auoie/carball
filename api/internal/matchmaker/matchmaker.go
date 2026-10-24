@@ -19,8 +19,9 @@ import (
 // The matchmaker's times
 const (
 	// SearchLife is how long a search lives with no poll open or answered (its page gone): longer than the page's retries
-	// of a failed poll (1, 2, 4, 8 and 8 s apart: client/src/net/matchmaker.ts), so a passing outage (the database not
-	// answering a poll's session read) doesn't drop it and start its wait afresh
+	// of a failed poll (1, 2, 4, 8 and 8 s apart: client/src/net/matchmaker.ts) when each fails at once (the database not
+	// answering a poll's session read: a 503), so a passing outage doesn't drop it and start its wait afresh; a poll that
+	// hangs instead (up to the page's 40 s) can outlast it, its page then searching again (RV-985)
 	SearchLife = 45 * time.Second
 	// PollGap is how long after its last poll answered a search with no poll open is still matched (its page's next poll
 	// follows at once): a search no page is polling now (an outage, its page gone) isn't matched into a no-show
@@ -533,6 +534,13 @@ func (m *Matchmaker) Back(server string, id uint64, seat int, now time.Time) {
 	defer m.mu.Unlock()
 	if mt := m.event(server, id); mt != nil && seat >= 0 && seat < len(mt.accounts) {
 		a := mt.accounts[seat]
+		// (an account in a newer match (it searched since, and was matched) stays in that one: one match at a time, its
+		// rejoin a server's mistake, said, RV-961)
+		if cur, ok := m.active[a]; ok && cur != id {
+			m.log.Warn("a rejoin of an account in another match: left in that one", "account", a, "match", matchText(id),
+				"active", matchText(cur))
+			return
+		}
 		mt.present[a] = true
 		m.active[a] = id
 		if s := m.open[a]; s != nil {
@@ -562,8 +570,11 @@ func (m *Matchmaker) Cancelled(server string, id uint64, noShows []int, now time
 	if mt == nil {
 		return
 	}
-	m.log.Info("a match cancelled before its start", "match", matchText(id), "server", server, "noShows", mt.seats(noShows),
-		"cooldownUntil", now.Add(NoShowCooldown).UTC().Format(time.RFC3339))
+	attrs := []any{"match", matchText(id), "server", server, "noShows", mt.seats(noShows)}
+	if len(noShows) > 0 {
+		attrs = append(attrs, "cooldownUntil", now.Add(NoShowCooldown).UTC().Format(time.RFC3339))
+	}
+	m.log.Info("a match cancelled before its start", attrs...)
 	for seat, a := range mt.accounts {
 		if slices.Contains(noShows, seat) {
 			until := now.Add(NoShowCooldown)
@@ -577,6 +588,11 @@ func (m *Matchmaker) Cancelled(server string, id uint64, noShows []int, now time
 		if s := m.open[a]; s != nil {
 			if mt.since[a].Before(s.since) {
 				s.since = mt.since[a]
+				// (one no page polled yet keeps that wait to give back, its start's answer maybe lost and its page about to
+				// start again: RV-941)
+				if !s.polled {
+					s.kept = &kept{since: mt.since[a], until: now.Add(ReturnFor)}
+				}
 			}
 		} else {
 			m.waits[a] = kept{since: mt.since[a], until: now.Add(ReturnFor)}

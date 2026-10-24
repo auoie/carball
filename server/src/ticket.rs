@@ -48,9 +48,6 @@ const LIFETIME: i64 = 120;
 const SEAT_LIFETIME: i64 = 30;
 /// The development key's id (reserved: a listed key can't take it)
 pub const DEV_KEY_ID: &str = "dev";
-/// A ticket's longest life (s): the API's two minutes and the skew; a ticket longer, or ending before it began, refused
-/// (AP2-3)
-const MAX_LIFETIME: i64 = LIFETIME + SKEW;
 
 /// The Ed25519 public keys of small order (libsodium's list, sign bit aside: each checked to decode to a point P with
 /// [8]P the identity): a signature "checks" under one for many messages, so none is taken (AP2-5)
@@ -120,7 +117,11 @@ pub struct Seat {
 pub struct Ticket {
     pub account: [u8; 16],
     pub name: String,
+    /// When it was issued and when it expires (Unix s)
+    pub issued: i64,
     pub expires: i64,
+    /// Its one-time id
+    pub nonce: [u8; 16],
     /// In the playlists 1v1, 2v2, 3v3 (index 0, 1, 2)
     pub ratings: [Shown; 3],
     pub purpose: Purpose,
@@ -139,12 +140,14 @@ pub enum Refusal {
     NotForThis,
 }
 
-/// A ticket's claims as the API writes them (a seat's `aud`, playlist, seat and roster: none in a rejoin's)
+/// A ticket's claims as the API writes them (a seat's `aud`, playlist, seat and roster: none in a rejoin's); none else,
+/// and none null (RV-954)
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Claims {
     iss: String,
     sub: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     aud: Option<String>,
     iat: i64,
     exp: i64,
@@ -154,12 +157,39 @@ struct Claims {
     purpose: String,
     #[serde(rename = "match")]
     match_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     playlist: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     seat: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     roster: Option<u8>,
+}
+
+/// A claim given has a value: null refused (absent: none, the field's default)
+fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+/// A ticket's header as the API writes it, and nothing else: alg, kid and typ, each once (RV-947: jsonwebtoken's own
+/// takes others, crit among them, and ignores them)
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictHeader {
+    alg: String,
+    kid: String,
+    typ: String,
+}
+
+/// A ticket's key id, its header checked: three parts, the header exactly alg "EdDSA", kid (1-32 bytes) and typ "JWT"
+fn strict_header(encoded: &str) -> Option<String> {
+    let mut parts = encoded.split('.');
+    let head = parts.next()?;
+    if parts.count() != 2 {
+        return None;
+    }
+    let header: StrictHeader = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(head).ok()?).ok()?;
+    (header.alg == "EdDSA" && header.typ == "JWT" && !header.kid.is_empty() && header.kid.len() <= 32)
+        .then_some(header.kid)
 }
 
 /// The development key: its signing key (jsonwebtoken's, PKCS#8) and its public key
@@ -254,8 +284,7 @@ impl Tickets {
         if encoded.len() > MAX_BYTES {
             return Err(Refusal::Malformed);
         }
-        let kid =
-            jsonwebtoken::decode_header(encoded).map_err(|_| Refusal::Malformed)?.kid.ok_or(Refusal::Malformed)?;
+        let kid = strict_header(encoded).ok_or(Refusal::Malformed)?;
         let claims = {
             let keys = self.keys.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             let key = keys.get(&kid).ok_or(Refusal::UnknownKey)?;
@@ -266,10 +295,13 @@ impl Tickets {
                 })?
                 .claims
         };
-        let (ticket, nonce, issued) = read(claims).ok_or(Refusal::Malformed)?;
-        // (its life within the API's, and begun before it ends: AP2-3; issued since this process started, no skew allowed:
-        // its one-time id may have been used with the process before, whose ids are gone, AP2-4, AP3)
-        if ticket.expires < issued || ticket.expires.saturating_sub(issued) > MAX_LIFETIME {
+        let ticket = read(claims).ok_or(Refusal::Malformed)?;
+        let (nonce, issued) = (ticket.nonce, ticket.issued);
+        // (its life within its purpose's (one clock's difference: no skew in it, RV-950), and begun before it ends: AP2-3;
+        // issued since this process started, no skew allowed: its one-time id may have been used with the process before,
+        // whose ids are gone, AP2-4, AP3)
+        let life = if matches!(ticket.purpose, Purpose::Seat(_)) { SEAT_LIFETIME } else { LIFETIME };
+        if ticket.expires < issued || ticket.expires.saturating_sub(issued) > life {
             return Err(Refusal::Malformed);
         }
         if now.saturating_add(SKEW) < issued || now.saturating_sub(SKEW) >= ticket.expires || issued < self.started {
@@ -341,24 +373,29 @@ fn validation() -> Validation {
 /// bytes, a key of small order, a key id twice or the development key's id refused (AP2-5)
 fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     let mut keys = HashMap::new();
-    for entry in list.split([',', '\n']).map(str::trim).filter(|e| !e.is_empty()) {
+    // (an error names the entry by its number, never its text: a seed pasted in the wrong file stays out of the log,
+    // RV-953)
+    for (n, entry) in
+        list.split([',', '\n']).map(str::trim).filter(|e| !e.is_empty()).enumerate().map(|(i, e)| (i + 1, e))
+    {
         let (kid, b64) = entry
             .split_once(char::is_whitespace)
-            .ok_or_else(|| anyhow::anyhow!("TICKET_PUBLIC_KEYS: {entry:?} isn't \"KID BASE64\""))?;
-        let key = STANDARD.decode(b64.trim())?;
-        anyhow::ensure!(key.len() == 32, "TICKET_PUBLIC_KEYS: {kid}'s key isn't 32 bytes");
-        anyhow::ensure!(!kid.is_empty() && kid.len() <= 32, "TICKET_PUBLIC_KEYS: {kid:?} isn't a key id");
-        anyhow::ensure!(kid != DEV_KEY_ID, "TICKET_PUBLIC_KEYS: the key id {DEV_KEY_ID:?} is --dev's own");
-        anyhow::ensure!(!small_order(&key), "TICKET_PUBLIC_KEYS: {kid}'s key is of small order (no signer's)");
-        anyhow::ensure!(keys.insert(kid.to_string(), key).is_none(), "TICKET_PUBLIC_KEYS: the key id {kid:?} twice");
+            .ok_or_else(|| anyhow::anyhow!("TICKET_PUBLIC_KEYS: key entry {n} isn't \"KID BASE64\""))?;
+        let key = STANDARD
+            .decode(b64.trim())
+            .map_err(|_| anyhow::anyhow!("TICKET_PUBLIC_KEYS: key entry {n} isn't base64"))?;
+        anyhow::ensure!(key.len() == 32, "TICKET_PUBLIC_KEYS: key entry {n}'s key isn't 32 bytes");
+        anyhow::ensure!(!kid.is_empty() && kid.len() <= 32, "TICKET_PUBLIC_KEYS: key entry {n}'s id isn't 1-32 bytes");
+        anyhow::ensure!(kid != DEV_KEY_ID, "TICKET_PUBLIC_KEYS: key entry {n} has the id {DEV_KEY_ID:?}, --dev's own");
+        anyhow::ensure!(!small_order(&key), "TICKET_PUBLIC_KEYS: key entry {n} is of small order (no signer's)");
+        anyhow::ensure!(keys.insert(kid.to_string(), key).is_none(), "TICKET_PUBLIC_KEYS: key entry {n} repeats an id");
     }
     Ok(keys)
 }
 
-/// A verified ticket's claims, each in its form: what it says, its one-time id and when it was issued; None for a
-/// malformed one (a rejoin's has its match and no seat; a seat's its match and a seat in its playlist's roster at a
-/// named server; anything else refused)
-fn read(claims: Claims) -> Option<(Ticket, [u8; 16], i64)> {
+/// A verified ticket's claims, each in its form; None for a malformed one (a rejoin's has its match and no seat; a seat's
+/// its match and a seat in its playlist's roster at a named server; anything else refused)
+fn read(claims: Claims) -> Option<Ticket> {
     let account = hex_bytes::<16>(&claims.sub)?;
     let nonce: [u8; 16] = URL_SAFE_NO_PAD.decode(&claims.jti).ok()?.try_into().ok()?;
     let match_id = u64::from_be_bytes(hex_bytes::<8>(&claims.match_id)?);
@@ -379,7 +416,7 @@ fn read(claims: Claims) -> Option<(Ticket, [u8; 16], i64)> {
         _ => return None,
     };
     let ratings = claims.ratings.map(|[rating, deviation]| Shown { rating, deviation });
-    Some((Ticket { account, name: claims.name, expires: claims.exp, ratings, purpose }, nonce, claims.iat))
+    Some(Ticket { account, name: claims.name, issued: claims.iat, expires: claims.exp, nonce, ratings, purpose })
 }
 
 /// `N` bytes from `2N` hex digits (either case, as the API reads them); None for anything else (a sign too)
@@ -457,7 +494,8 @@ mod tests {
             let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
             assert_eq!(hex(&ticket.account), s("account"));
             assert_eq!(ticket.name, s("name"));
-            assert_eq!(ticket.expires, n("expires"));
+            assert_eq!((ticket.issued, ticket.expires), (n("issued"), n("expires")));
+            assert_eq!(hex(&ticket.nonce), s("nonce"), "its one-time id (RV-959)");
             let ratings: Vec<(u16, u16)> = ticket.ratings.iter().map(|r| (r.rating, r.deviation)).collect();
             let want: Vec<(u16, u16)> = v["ratings"]
                 .as_array()
@@ -544,7 +582,9 @@ mod tests {
             Ticket {
                 account,
                 name: "Made Up".into(),
+                issued: NOW,
                 expires: NOW + LIFETIME,
+                nonce: ticket.nonce,
                 ratings: [DEFAULT_RATING; 3],
                 purpose: Purpose::Rejoin(0xa1)
             }
@@ -553,6 +593,76 @@ mod tests {
         assert_eq!(tickets.check(&dev(), NOW + LIFETIME + SKEW), Err(Refusal::OutOfTime), "past its time and the skew");
         assert_eq!(tickets.check(&dev(), NOW - SKEW - 1), Err(Refusal::OutOfTime), "before it was issued");
         assert!(tickets.check(&dev(), NOW + LIFETIME + SKEW - 1).is_ok(), "within the skew");
+        // (the skew pinned, and a one-time id kept to the end of its ticket's time and the skew: a replay a second before
+        // refused as used, at that end as out of its time (RV-952's R5, R7))
+        assert_eq!(SKEW, 30);
+        let replayed = dev();
+        assert!(tickets.check(&replayed, NOW).is_ok());
+        assert_eq!(
+            tickets.check(&replayed, NOW + LIFETIME + SKEW - 1),
+            Err(Refusal::Reused),
+            "a second before the end"
+        );
+        assert_eq!(tickets.check(&replayed, NOW + LIFETIME + SKEW), Err(Refusal::OutOfTime), "at the end");
+    }
+
+    /// A header with anything but alg EdDSA, kid and typ JWT (crit, b64, x5c, jku; no typ; a member twice), a claim
+    /// jsonwebtoken would have taken (an unknown one, one twice, a null aud, a float time): refused (RV-947, RV-954); an
+    /// unknown key id with a key listed: refused as unknown (RV-952's R8); a validly signed ticket past MAX_BYTES:
+    /// refused for its length (RV-952's R1)
+    #[test]
+    fn a_ticket_says_what_the_apis_say_and_no_more() {
+        let (k, tickets) = key(6);
+        let raw = |header: &str, payload: &str| {
+            let message = format!("{}.{}", URL_SAFE_NO_PAD.encode(header), URL_SAFE_NO_PAD.encode(payload));
+            let signature = jsonwebtoken::crypto::sign(message.as_bytes(), &k, Algorithm::EdDSA).unwrap();
+            format!("{message}.{signature}")
+        };
+        let head = r#"{"alg":"EdDSA","kid":"test","typ":"JWT"}"#;
+        let body = serde_json::to_string(&rejoin_claims(NOW, NOW + 120, 1)).unwrap();
+        assert!(tickets.check(&raw(head, &body), NOW).is_ok(), "the hand-made ticket itself");
+        let swap = |from: &str, to: &str| body.replacen(from, to, 1);
+        for (what, header, payload) in [
+            ("crit", r#"{"alg":"EdDSA","kid":"test","typ":"JWT","crit":["exp"]}"#, body.clone()),
+            ("b64", r#"{"alg":"EdDSA","kid":"test","typ":"JWT","b64":false}"#, body.clone()),
+            ("x5c", r#"{"alg":"EdDSA","kid":"test","typ":"JWT","x5c":["AAAA"]}"#, body.clone()),
+            ("jku", r#"{"alg":"EdDSA","kid":"test","typ":"JWT","jku":"https://x.example"}"#, body.clone()),
+            ("no typ", r#"{"alg":"EdDSA","kid":"test"}"#, body.clone()),
+            ("kid twice", r#"{"alg":"EdDSA","kid":"test","kid":"test","typ":"JWT"}"#, body.clone()),
+            ("an unknown claim", head, swap(r#""iss""#, r#""admin":true,"iss""#)),
+            ("a claim twice", head, swap(r#""iss":"carball""#, r#""iss":"carball","iss":"carball""#)),
+            ("a null aud", head, swap(r#""iss""#, r#""aud":null,"iss""#)),
+            ("a float time", head, swap(&format!(r#""iat":{NOW}"#), &format!(r#""iat":{NOW}.5"#))),
+        ] {
+            assert_eq!(tickets.check(&raw(header, &payload), NOW), Err(Refusal::Malformed), "{what}");
+        }
+        let listed = Tickets::from_list(&format!("other {}", STANDARD.encode([9u8; 32]))).unwrap().started_at(NOW);
+        assert_eq!(listed.check(&raw(head, &body), NOW), Err(Refusal::UnknownKey), "a key listed, not its id");
+        // (the longest a key id, a server and a name can make it: each character one JSON writes as 6 bytes)
+        let escaped = |n: usize| r"\u003c".repeat(n);
+        let long_kid = "<".repeat(32);
+        let (long_key, _) = key(7);
+        let long_list = format!(
+            "{long_kid} {}",
+            STANDARD.encode(Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap().public_key().as_ref())
+        );
+        let long_tickets = Tickets::from_list(&long_list).unwrap().started_at(NOW);
+        let long_head = format!(r#"{{"alg":"EdDSA","kid":"{}","typ":"JWT"}}"#, escaped(32));
+        let long_body = format!(
+            r#"{{"iss":"carball","sub":"{}","aud":"{}:4433","iat":{NOW},"exp":{},"jti":"{}","name":"{}","ratings":[[1,1],[1,1],[1,1]],"purpose":"seat","match":"00000000000000a1","playlist":3,"seat":5,"roster":6}}"#,
+            "ab".repeat(16),
+            escaped(58),
+            NOW + 30,
+            URL_SAFE_NO_PAD.encode([1u8; 16]),
+            escaped(32)
+        );
+        let message = format!("{}.{}", URL_SAFE_NO_PAD.encode(&long_head), URL_SAFE_NO_PAD.encode(&long_body));
+        let long = format!(
+            "{message}.{}",
+            jsonwebtoken::crypto::sign(message.as_bytes(), &long_key, Algorithm::EdDSA).unwrap()
+        );
+        assert!(long.len() > MAX_BYTES, "{}", long.len());
+        assert_eq!(long_tickets.check(&long, NOW), Err(Refusal::Malformed), "past MAX_BYTES");
     }
 
     /// A match ticket: its seat read back, at its server, its header the API's (EdDSA, its key's id, typ JWT); the
@@ -619,6 +729,12 @@ mod tests {
         assert_eq!(tickets.key_ids(), ["k1", "k2"]);
         assert!(Tickets::from_list("k1").is_err(), "no key");
         assert!(Tickets::from_list("k1 c2hvcnQ=").is_err(), "not 32 bytes");
+        // (an error names the entry, never its text: RV-953)
+        let secret = "c2VlZC1vZi1hLWtleS1uZXZlci10by1iZS1sb2dnZWQhIQ==";
+        for list in [secret.to_string(), format!("k1 {secret}"), format!("k1 {b64}, k1 {secret}")] {
+            let err = Tickets::from_list(&list).unwrap_err().to_string();
+            assert!(!err.contains(secret) && err.contains("entry"), "{err}");
+        }
         assert!(Tickets::from_list("").unwrap().is_empty());
         assert_eq!(account_key(&[0; 16]), 1, "never 0");
         assert_eq!(account_key(&[0, 0, 0, 0, 0, 0, 0, 2, 9, 9, 9, 9, 9, 9, 9, 9]), 2);
@@ -633,7 +749,20 @@ mod tests {
         let at = |issued: i64, expires: i64, nonce: u8| signed(&k, &rejoin_claims(issued, expires, nonce));
         assert_eq!(tickets.check(&at(NOW, i64::MAX, 1), NOW), Err(Refusal::Malformed), "a lifetime to the end");
         assert_eq!(tickets.check(&at(NOW, NOW - 1, 2), NOW), Err(Refusal::Malformed), "ends before it begins");
-        assert_eq!(tickets.check(&at(NOW, NOW + MAX_LIFETIME + 1, 3), NOW), Err(Refusal::Malformed));
+        assert_eq!(
+            tickets.check(&at(NOW, NOW + LIFETIME + 1, 3), NOW),
+            Err(Refusal::Malformed),
+            "past a rejoin's life"
+        );
+        // (a seat's life its own: 30 s, RV-950)
+        let mut seat = rejoin_claims(NOW, NOW + SEAT_LIFETIME + 1, 8);
+        seat["purpose"] = "seat".into();
+        seat["aud"] = "game.example:4433".into();
+        (seat["playlist"], seat["seat"], seat["roster"]) = (1.into(), 0.into(), 2.into());
+        assert_eq!(tickets.check(&signed(&k, &seat), NOW), Err(Refusal::Malformed), "past a seat's life");
+        seat["exp"] = (NOW + SEAT_LIFETIME).into();
+        seat["jti"] = URL_SAFE_NO_PAD.encode([9u8; 16]).into();
+        assert!(tickets.check(&signed(&k, &seat), NOW).is_ok(), "a seat's 30 s");
         assert!(tickets.check(&at(NOW, NOW + LIFETIME, 4), NOW + 1).is_ok(), "the checks after: sound");
         assert_eq!(
             tickets.check(&at(NOW - SKEW - 1, NOW + 60, 5), NOW + 10),

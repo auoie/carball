@@ -87,10 +87,11 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 	if until, on := ranked.BannedUntil(ban, banned, s.Now()); on {
 		body["queueBanUntil"] = until.UTC().Format(time.RFC3339)
 	}
-	// (a no-show's cooldown (a match it stalled): its end, the Play page's line as the ban's)
+	// (a no-show's cooldown (a match it stalled): its seconds left, the Play page's line as the ban's, its end taken on
+	// the page's own clock (an absolute time would be off by the clocks' difference, RV-983)
 	if s.Matchmaker != nil {
 		if until, on := s.Matchmaker.CooldownOf(id, s.Now()); on {
-			body["searchCooldownUntil"] = until.UTC().Format(time.RFC3339)
+			body["searchCooldownSeconds"] = secondsUntil(until, s.Now())
 		}
 	}
 	writeJSON(w, status, body)

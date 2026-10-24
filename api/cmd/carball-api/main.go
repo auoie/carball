@@ -117,6 +117,25 @@ func helpWord(arg string) bool {
 }
 
 // run runs the command the arguments name (serve when the first is a flag or none); its exit status
+// loadTicketKeys: the signer of the key `keyID` (its seed, base64) and the keys tickets are checked with: its own and
+// the previous ones (TICKET_PREVIOUS_KEYS, by the game server's rules: ticket.ParsePublic), none of them its id (a
+// previous key silently taking the signer's place would refuse its every ticket: RV-948)
+func loadTicketKeys(keyID, seed, previous string) (*ticket.Signer, map[string]ed25519.PublicKey, error) {
+	signer, err := ticket.NewSigner(keyID, seed)
+	if err != nil {
+		return nil, nil, fmt.Errorf("TICKET_SIGNING_KEY_FILE: %w", err)
+	}
+	keys, err := ticket.ParsePublic(previous)
+	if err != nil {
+		return nil, nil, fmt.Errorf("TICKET_PREVIOUS_KEYS: %w", err)
+	}
+	if _, taken := keys[signer.KeyID]; taken {
+		return nil, nil, fmt.Errorf("TICKET_PREVIOUS_KEYS lists the signing key's id %q (TICKET_KEY_ID): a previous key has its own", signer.KeyID)
+	}
+	keys[signer.KeyID] = signer.PublicKey()
+	return signer, keys, nil
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && helpWord(args[0]) {
 		usage(stdout)
@@ -279,13 +298,9 @@ func serve(args []string, out io.Writer) error {
 	var signer *ticket.Signer
 	var ticketKeys map[string]ed25519.PublicKey
 	if cfg.TicketKeyID != "" {
-		if signer, err = ticket.NewSigner(cfg.TicketKeyID, cfg.TicketSeed); err != nil {
-			return fmt.Errorf("TICKET_SIGNING_KEY_FILE: %w", err)
+		if signer, ticketKeys, err = loadTicketKeys(cfg.TicketKeyID, cfg.TicketSeed, cfg.TicketPreviousKeys); err != nil {
+			return err
 		}
-		if ticketKeys, err = ticket.ParsePublic(cfg.TicketPreviousKeys); err != nil {
-			return fmt.Errorf("TICKET_PREVIOUS_KEYS: %w", err)
-		}
-		ticketKeys[signer.KeyID] = signer.PublicKey()
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

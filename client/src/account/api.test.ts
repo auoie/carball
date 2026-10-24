@@ -17,13 +17,18 @@ const ACCOUNT = {
     { playlist: 2, rating: 1500, deviation: 500, provisional: true, games: 0 },
   ],
   queueBanUntil: "2026-10-18T12:05:00Z",
-  searchCooldownUntil: "2026-10-18T12:02:00Z",
+  searchCooldownSeconds: 120,
 };
 
 describe("the accounts service's calls", () => {
   it("reads the signed-in account, null signed out; writes carry the API's header, JSON with a body", async () => {
     const { call, api: a } = api(reply(200, ACCOUNT), reply(401, { error: "signed-out" }), reply(200, ACCOUNT), reply(204));
-    expect(await a.me()).toEqual({
+    const before = Date.now();
+    const me = await a.me();
+    // (the cooldown's seconds left taken on this page's clock: RV-983)
+    expect(me?.searchCooldownUntil).toBeGreaterThanOrEqual(before + 120_000);
+    expect(me?.searchCooldownUntil).toBeLessThanOrEqual(Date.now() + 120_000);
+    expect(me).toEqual({
       id: ACCOUNT.id,
       name: "Ziggy",
       providers: ["steam"],
@@ -32,7 +37,7 @@ describe("the accounts service's calls", () => {
         { playlist: 2, rating: 1500, provisional: true, games: 0 },
       ],
       queueBanUntil: Date.parse("2026-10-18T12:05:00Z"),
-      searchCooldownUntil: Date.parse("2026-10-18T12:02:00Z"),
+      searchCooldownUntil: me?.searchCooldownUntil,
     });
     expect(await a.me()).toBeNull();
     // (each with its time limit's signal, RX31)

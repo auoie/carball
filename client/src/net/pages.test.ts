@@ -185,9 +185,9 @@ describe("the pages' handoffs", () => {
     const post = vi.fn<typeof fetch>();
     post
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }))
-      .mockResolvedValue(new Response(JSON.stringify({ ticket: "VGlja2V0" })));
+      .mockResolvedValue(new Response(JSON.stringify({ ticket: "VGlj.a2V0.c2ln" })));
     vi.stubGlobal("fetch", post);
-    expect(await address.ticket?.(5n)).toBe("VGlja2V0");
+    expect(await address.ticket?.(5n)).toBe("VGlj.a2V0.c2ln");
     expect(post).toHaveBeenCalledTimes(2);
     // (a ban is an answer: asked once)
     post.mockReset();
@@ -323,8 +323,8 @@ describe("the pages' handoffs", () => {
     expect(takeClaim(storage)?.server).toBeUndefined();
     storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, server: "eu <script>" }));
     expect(takeClaim(storage)?.server).toBeUndefined();
-    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "dGlj-_0", playlists: [2, 3] }, storage);
-    expect(takeClaim(storage)).toMatchObject({ ticket: "dGlj-_0", playlists: [2, 3] });
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "dGlj.-_0.c2ln", playlists: [2, 3] }, storage);
+    expect(takeClaim(storage)).toMatchObject({ ticket: "dGlj.-_0.c2ln", playlists: [2, 3] });
     // (a match ticket is a JWT: its dots kept, 1024 characters at most, the claim then made with it, not a fetched one)
     storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "eyJh.eyJz.c2ln" }, storage);
     expect(takeClaim(storage)?.ticket).toBe("eyJh.eyJz.c2ln");
@@ -437,9 +437,9 @@ describe("the pages' handoffs", () => {
       ticket: expect.any(Function) as unknown,
     });
     // (its tickets the accounts service's: a rejoin's for that match, which a ban from it doesn't stop: RV-702, RX31)
-    const post = vi.fn<typeof fetch>(() => Promise.resolve(new Response(JSON.stringify({ ticket: "UmVq" }))));
+    const post = vi.fn<typeof fetch>(() => Promise.resolve(new Response(JSON.stringify({ ticket: "UmVq.b2lu.c2ln" }))));
     vi.stubGlobal("fetch", post);
-    expect(await deployedAddress.ticket?.(0xabcn)).toBe("UmVq");
+    expect(await deployedAddress.ticket?.(0xabcn)).toBe("UmVq.b2lu.c2ln");
     expect(String((post.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=0000000000000abc");
     // ?queue= wins: the development server's info, its certificate by hash, config.json not even read (RX13's C7)
     const info = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ port: 14439, certHash: "ab".repeat(32) }))));
@@ -451,8 +451,8 @@ describe("the pages' handoffs", () => {
     expect(info).toHaveBeenCalledWith("http://127.0.0.1:14440/info", { cache: "no-store" });
     expect(notRead).not.toHaveBeenCalled();
     // (its tickets the development server's own: from its info server, for this browser's key and the settings' name)
-    info.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ticket: "AbC-_9" }))));
-    expect(await address.ticket?.(0xabcn)).toBe("AbC-_9");
+    info.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ticket: "AbC.-_9.c2ln" }))));
+    expect(await address.ticket?.(0xabcn)).toBe("AbC.-_9.c2ln");
     expect(info).toHaveBeenLastCalledWith(
       expect.stringMatching(/^http:\/\/127\.0\.0\.1:14440\/dev-ticket\?name=[^&]*&id=[0-9a-f]{32}&rejoin=0000000000000abc$/),
       {

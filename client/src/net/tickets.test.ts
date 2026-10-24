@@ -5,8 +5,8 @@ const answer = (body: unknown, status = 200) => vi.fn(() => Promise.resolve(new 
 
 describe("rejoin tickets", () => {
   it("asks the accounts service with its write's header, signed out on 401", async () => {
-    const post = answer({ ticket: "AQIDBAUG-_" });
-    expect(await accountTicket(1n, post)).toBe("AQIDBAUG-_");
+    const post = answer({ ticket: "AQID.BAUG.-_" });
+    expect(await accountTicket(1n, post)).toBe("AQID.BAUG.-_");
     expect(post).toHaveBeenCalledWith("/api/ticket?rejoin=0000000000000001", {
       method: "POST",
       headers: { "X-Carball": "1" },
@@ -28,21 +28,23 @@ describe("rejoin tickets", () => {
     await expect(banned).rejects.toThrow(/search again in 15 minutes/);
     expect(queueBanText(1000, 990)).toMatch(/in 1 minute$/);
     // (a rejoin's: for its match, 16 hex digits)
-    const rejoin = answer({ ticket: "UmVqb2lu" });
-    expect(await accountTicket(0xa1n, rejoin)).toBe("UmVqb2lu");
+    const rejoin = answer({ ticket: "UmVq.b2lu.c2ln" });
+    expect(await accountTicket(0xa1n, rejoin)).toBe("UmVq.b2lu.c2ln");
     expect(String((rejoin.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=00000000000000a1");
-    // (a ticket is a JWT, base64url parts and dots, 1024 characters at most (the Hello's cap): anything else isn't sent on)
+    // (a ticket is a JWT, three base64url parts, 1024 characters at most (the Hello's cap): anything else isn't sent on)
     await expect(accountTicket(1n, answer({ ticket: "has space" }))).rejects.toThrow(/malformed/);
     expect(await accountTicket(1n, answer({ ticket: "eyJh.eyJz.c2ln" }))).toBe("eyJh.eyJz.c2ln");
-    expect(await accountTicket(1n, answer({ ticket: "A".repeat(1024) }))).toHaveLength(1024);
-    await expect(accountTicket(1n, answer({ ticket: "A".repeat(1025) }))).rejects.toThrow(/malformed/);
+    const longest = `${"A".repeat(510)}.${"A".repeat(511)}.A`;
+    expect(await accountTicket(1n, answer({ ticket: longest }))).toHaveLength(1024);
+    await expect(accountTicket(1n, answer({ ticket: `${longest}A` }))).rejects.toThrow(/malformed/);
+    await expect(accountTicket(1n, answer({ ticket: "A".repeat(100) }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(1n, answer({}))).rejects.toThrow(/malformed/);
   });
 
   it("asks a development server's info server for one on this browser's key", async () => {
-    const get = answer({ ticket: "Zm9v" });
+    const get = answer({ ticket: "Zm9v.YmFy.c2ln" });
     const source = devTicket("127.0.0.1", 4434, get);
-    expect(await source(0xfedcba9876543210n)).toBe("Zm9v");
+    expect(await source(0xfedcba9876543210n)).toBe("Zm9v.YmFy.c2ln");
     const url = String((get.mock.calls[0] as unknown[])[0]);
     const id = /&id=([0-9a-f]{32})&rejoin=fedcba9876543210$/.exec(url)?.[1] ?? "";
     expect(url.startsWith("http://127.0.0.1:4434/dev-ticket?name=")).toBe(true);

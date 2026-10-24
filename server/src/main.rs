@@ -196,8 +196,8 @@ struct Cli {
     /// The game server's token for the accounts service, its file
     #[arg(long, env = "GAME_SERVER_TOKEN_FILE")]
     game_server_token_file: Option<String>,
-    /// The tunnel's Access service token: its id
-    #[arg(long, env = "CF_ACCESS_CLIENT_ID")]
+    /// The tunnel's Access service token: its id (not shown in --help: RV-943)
+    #[arg(long, env = "CF_ACCESS_CLIENT_ID", hide_env_values = true)]
     cf_access_client_id: Option<String>,
     /// And its secret's file
     #[arg(long, env = "CF_ACCESS_CLIENT_SECRET_FILE")]
@@ -279,7 +279,8 @@ impl Cli {
         if let Some(list) = &self.allowed_origin {
             limits.allowed_origins = Some(origins(list)?);
         }
-        let public_port = match set(self.public_port) {
+        // (a blank PUBLIC_PORT an error, as before clap: a port can't be left out by a blank, RV-943)
+        let public_port = match self.public_port {
             Some(port) => Some(number("PUBLIC_PORT (--public-port)", &port)?),
             None => None,
         };
@@ -545,8 +546,14 @@ async fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.iter().any(|a| a == "--healthcheck") {
         use clap::Parser;
-        let check = HealthCheckArgs::try_parse_from(std::iter::once("carball-server".to_string()).chain(argv))
-            .unwrap_or_else(|e| e.exit());
+        // (its own bad arguments: unhealthy, exit 1, Docker's one failure code, not clap's 2: RV-943)
+        let check = match HealthCheckArgs::try_parse_from(std::iter::once("carball-server".to_string()).chain(argv)) {
+            Ok(check) => check,
+            Err(e) => {
+                let _ = e.print();
+                std::process::exit(if e.use_stderr() { 1 } else { 0 });
+            }
+        };
         std::process::exit(if net::health_check(check.health_port).await { 0 } else { 1 });
     }
     // (the log: one line per event, its time and level, on stderr; ours info and up, the other crates' errors alone)
@@ -646,7 +653,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    tokio::spawn(net::serve_health(args.health_port, heartbeat, start));
+    tokio::spawn(net::serve_health(net::bind_health(args.health_port).await?, heartbeat, start));
     if let Some((cert, key)) = args.cert.clone() {
         tokio::spawn(reload_certificates(server.clone(), cert, key, args.port, hangups()?));
     }
@@ -737,6 +744,17 @@ mod tests {
 
     fn parse(args: &[&str]) -> anyhow::Result<Args> {
         parse_with(args, &[])
+    }
+
+    /// A blank PUBLIC_PORT an error, as before clap; --help shows no Access client id's value (RV-943)
+    #[test]
+    fn a_blank_public_port_is_refused_and_help_hides_the_access_id() {
+        use clap::CommandFactory;
+        let e = parse_with(&[], &[("PUBLIC_PORT", " ")]).err().expect("a blank PUBLIC_PORT");
+        assert!(e.to_string().contains("PUBLIC_PORT"), "{e}");
+        let help =
+            with_env(&[("CF_ACCESS_CLIENT_ID", "made-up-access-id")], || Cli::command().render_long_help().to_string());
+        assert!(help.contains("CF_ACCESS_CLIENT_ID") && !help.contains("made-up-access-id"), "{help}");
     }
 
     /// A flag given twice takes its last value, as before clap (RV-935); a blank MESHES_DIR the default meshes, blank

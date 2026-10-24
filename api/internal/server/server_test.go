@@ -749,7 +749,6 @@ func TestCookiesAndTokens(t *testing.T) {
 	}
 }
 
-// A flow lives FlowTTL: its callback after it fails, Google never asked (AP-11)
 // A sign-in flow is taken once: its callback replayed, even after it succeeded and with the flow's cookie kept (a copy
 // of it, the browser's own cleared), is refused, the code never exchanged again (AC1-flow-not-single-use, the mutation
 // suite's security case kept as a test)
@@ -1131,8 +1130,9 @@ func (e *env) rating(b *http.Client, playlist int) map[string]any {
 // once, the winners up (a quitter too) and the losers down
 func TestResults(t *testing.T) {
 	e := setup(t, nil)
-	ba, _, ta := e.player("sub-ra")
-	bb, _, tb := e.player("sub-rb")
+	ba, ida, ta := e.player("sub-ra")
+	bb, idb, _ := e.player("sub-rb")
+	tb := e.seat(idb, testMatch, 1)
 	if got := e.rating(ba, 1); got["rating"].(float64) != 1500 || got["provisional"] != true || got["games"].(float64) != 0 {
 		t.Errorf("a new account's rating: %v", got)
 	}
@@ -1141,7 +1141,7 @@ func TestResults(t *testing.T) {
 		for i, tk := range tickets {
 			players = append(players, map[string]any{"ticket": tk, "team": i % 2, "quitter": i == 1, "seconds": 300})
 		}
-		return map[string]any{"match": match, "server": "game.example", "playlist": len(tickets) / 2, "winningTeam": 0, "players": players}
+		return map[string]any{"match": match, "server": "game.example:4433", "playlist": len(tickets) / 2, "winningTeam": 0, "players": players}
 	}
 	if resp := e.gameCall(http.MethodPost, "/api/results", "", result(testMatch, ta, tb)); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("no credential: %d", resp.StatusCode)
@@ -1151,6 +1151,26 @@ func TestResults(t *testing.T) {
 	}
 	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken[:len(gameToken)-1], result(testMatch, ta, tb)); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("the credential's prefix: %d", resp.StatusCode)
+	}
+	// (the seat tickets' bindings, RV-951: a seat twice or a team not its seat's refused as malformed; a ticket for
+	// another server or playlist refused as not for this result)
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result(testMatch, ta, e.seat(idb, testMatch, 0))); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("seat 0 twice: %d", resp.StatusCode)
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result(testMatch, tb, ta)); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("each on the other's team: %d", resp.StatusCode)
+	}
+	elsewhere := result(testMatch, ta, tb)
+	elsewhere["server"] = "game-us.example:4433"
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, elsewhere); resp.StatusCode != http.StatusForbidden || decode(t, resp)["error"] != "ticket" {
+		t.Errorf("another server's result: %d", resp.StatusCode)
+	}
+	var account [16]byte
+	raw, _ := hex.DecodeString(strings.ReplaceAll(ida, "-", ""))
+	copy(account[:], raw)
+	twos, _, _ := e.s.Tickets.IssueSeat(account, "Seated", [3]ticket.Shown{}, ticket.Seat{Match: 0xa1, Server: "game.example:4433", Playlist: 2, Seat: 0, Roster: 4}, e.clock.Now())
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result(testMatch, twos, tb)); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a 2v2 seat's ticket in a 1v1's result: %d", resp.StatusCode)
 	}
 	resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result(testMatch, ta, tb))
 	if resp.StatusCode != http.StatusOK || decode(t, resp)["recorded"] != true {
@@ -1390,8 +1410,9 @@ func (r refusingStore) ChangeQueueBan(context.Context, string, *store.SpentTicke
 func TestDataErrorsAreRefusedOtherFailuresUnavailable(t *testing.T) {
 	e := setup(t, nil)
 	_, _, ta := e.player("sub-da")
-	_, _, tb := e.player("sub-db")
-	result := map[string]any{"match": testMatch, "server": "game.example", "playlist": 1, "winningTeam": 0, "players": []map[string]any{
+	_, idb, _ := e.player("sub-db")
+	tb := e.seat(idb, testMatch, 1)
+	result := map[string]any{"match": testMatch, "server": "game.example:4433", "playlist": 1, "winningTeam": 0, "players": []map[string]any{
 		{"ticket": ta, "team": 0, "quitter": false, "seconds": 300},
 		{"ticket": tb, "team": 1, "quitter": false, "seconds": 300},
 	}}
