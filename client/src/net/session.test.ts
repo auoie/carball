@@ -121,6 +121,7 @@ describe("play over a network path (in process)", () => {
       [144, 1, 5],
       [59.94, 2, 3],
       [59.94, 2, 5],
+      [59.94, 2, 10],
     ] as const) {
       const r = netRun(engine, host, { seconds: 30, up: REALISTIC, down: REALISTIC, seed, frameHz, frameJitterMs });
       report(`realistic, ${String(frameHz)} Hz ± ${String(frameJitterMs)} ms, seed ${String(seed)}`, r);
@@ -128,12 +129,13 @@ describe("play over a network path (in process)", () => {
       expect(r.serverInput?.neverConsumed).toBe(0);
       expect(r.errors.local.length).toBeGreaterThan(0);
       // (59.94 Hz drifts against the server's 120: now and then a frame's input repeated or skipped, its correction a
-      // little larger than 60 Hz's: p95 4.1, mean up to 0.98 and 11.0 uu a second moved (seed 5): the bounds about a third
-      // over, RV-1079)
+      // little larger than 60 Hz's: p95 up to 4.1, mean up to 0.98 (seeds 5, 10; 1.33 at 144 Hz seed 1, RX57), 11.0 uu a
+      // second moved, mispredictions up to 37 (seed 10): moved and mispredictions bounded a quarter to a third over, the
+      // mean half again over, RV-1079, RV-1089)
       expect(r.local.p95).toBeLessThanOrEqual(6);
       expect(r.local.mean).toBeLessThanOrEqual(1.5);
       expect(r.movedPerSecond.local).toBeLessThanOrEqual(15);
-      expect(r.localMispredictions).toBeLessThanOrEqual(30);
+      expect(r.localMispredictions).toBeLessThanOrEqual(46);
       expect(r.ball.p95).toBe(0);
     }
   }, 300_000);

@@ -167,6 +167,20 @@ test("free play's ball commands from their keys: 4 launches the ball, 1 takes po
   const backs = (): Promise<number> =>
     page.evaluate(() => (window as unknown as { carballAudio: () => { played: Record<string, number> } }).carballAudio().played["menu-back"] ?? 0);
   await place({ x: 3950, y: 0, yaw: 0 }, { x: 0, y: 1500, z: 93 });
+  // (3950 is on the floor's curve up to the wall: placed flat there, the car pops up for about a quarter of a second
+  // before it settles nose up, and in the air Take Possession's spot is the air one, inside the field, allowed. The key
+  // pressed only once it has settled (on the curve, z about 35, at rest): pressed at once, a slow frame met the hop)
+  const car = (): Promise<{ pos: { z: number }; speed: number }> =>
+    page.evaluate(() => (window as unknown as { carballFreeplay: { car: () => { pos: { z: number }; speed: number } } }).carballFreeplay.car());
+  await expect
+    .poll(
+      async () => {
+        const c = await car();
+        return c.pos.z > 30 && c.speed < 10;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
   const refusals = await backs();
   await page.keyboard.press("Digit1");
   await expect.poll(backs, { timeout: 10_000 }).toBe(refusals + 1);

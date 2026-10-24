@@ -15,7 +15,7 @@ interface Stats {
   corrections: number;
   localMispredictions: number;
   kickoffCountdown: number;
-  phases: { phase: string; at: number; frame: number }[];
+  phases: { phase: string; at: number; waited: number; frame: number }[];
   replaying: boolean;
   goal: { frame: number | null; explodedFrame: number | null; minDilation: number; firstTick: number | null; offsetSpread: number };
 }
@@ -199,9 +199,13 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   const replay = phases.findLast((p) => p.phase === "replay");
   expect(goal && replay).toBeTruthy();
   if (!goal || !replay) return;
-  // 360 ticks after the goal, slowed at first: 3.53 s of real time (the server's clock)
-  expect((replay.at - goal.at) / 1000).toBeGreaterThan(3.25);
-  expect((replay.at - goal.at) / 1000).toBeLessThan(3.85);
+  // 360 ticks after the goal, slowed at first: 3.53 s of real time (the server's clock), as this page saw the two
+  // phases: each handled at a frame's start, up to `waited` after it came (a long frame's: the goal's explosion drawn in
+  // software under load once held the goal's 0.4 s), so the span's bounds widened by those waits alone
+  const span = (replay.at - goal.at) / 1000;
+  const seen = JSON.stringify({ goal, replay });
+  expect(span + goal.waited / 1000, seen).toBeGreaterThan(3.25);
+  expect(span - replay.waited / 1000, seen).toBeLessThan(3.85);
   // This client's clock slowed with it, keyed to the server's goal tick: the frame its corrected history has the goal in
   // (how many frames it ran depends on its frame rate: under 24 fps, the game's 5 ticks a frame fall behind real time, as
   // software rendering here does). The curve read at each tick it ran (which a slow page's frames don't step past, RX31),

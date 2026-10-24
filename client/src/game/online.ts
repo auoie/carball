@@ -117,7 +117,11 @@ interface CarEntry {
 
 export interface PhaseChange {
   readonly phase: MatchState["phase"];
+  /** When this page handled it (ms, performance.now: at a frame's start) */
   readonly at: number;
+  /** How long before that the page last handled its messages (ms): the longest it can have waited in the queue (a long
+   *  frame's, a stalled page's), so its arrival lies within `at - waited` and `at` (the browser tests' slack) */
+  readonly waited: number;
   readonly frame: number;
   readonly winner: number | null;
   readonly forfeit: boolean;
@@ -182,6 +186,8 @@ export class Online {
   #serverExploded = false; // the server's goal event exploded the ball, until the next ball
   readonly #padsView: PadsView;
   readonly #controlMessages: ControlMessage[] = [];
+  /** When the control messages were last handled (ms, performance.now) */
+  #handledAt = performance.now();
   /** The match's state, from the server */
   #match: MatchState | null = null;
   #held: HeldActions = NO_HELD_ACTIONS;
@@ -688,6 +694,9 @@ export class Online {
   }
 
   #handleControlMessages(): void {
+    const handled = performance.now();
+    const waited = handled - this.#handledAt;
+    this.#handledAt = handled;
     for (const m of this.#controlMessages.splice(0)) {
       if (m.type === "world") {
         // (the set of cars changed: the cars in both worlds are smoothed from where they were drawn, as any correction)
@@ -703,7 +712,7 @@ export class Online {
           for (const { view } of this.#cars.values()) view.teleport(); // (live again: RV-597)
         }
         if (m.phase !== this.#match?.phase) {
-          this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
+          this.#phases.push({ phase: m.phase, at: handled, waited, frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
           if (this.#phases.length > 16) this.#phases.shift();
           this.#enterPhase(m.phase, this.#match === null);
           if (matchOver(m.phase) && !matchOver(this.#match?.phase)) this.#tellMatchOver();
