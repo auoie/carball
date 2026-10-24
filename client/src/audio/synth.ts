@@ -10,6 +10,12 @@ function envelope(param: AudioParam, when: number, attack: number, peak: number,
   param.exponentialRampToValueAtTime(0.0001, when + attack + decay);
 }
 
+/** An explosion's roar and boom peaks (the demolition's) */
+export const EXPLOSION = { roar: 0.42, boom: 0.5 } as const;
+/** The goal's: about 4.7 dB under the demolition's at its loudest (K-weighted), most of it the sub-bass boom's (-8 dB),
+ *  the roar's a little (-2.9 dB), so the fanfare stays clear (the user's "a little" quieter, 2026-10-24) */
+export const GOAL_EXPLOSION = { roar: 0.3, boom: 0.2 } as const;
+
 /** The menus' cues (MENU-18) */
 export type MenuCue = "move" | "select" | "confirm" | "back" | "tab";
 
@@ -146,22 +152,23 @@ export class Synth {
     this.#sweep("sine", 105, 48, 0.12, out, when, 0.2 + 0.4 * s, 0.17);
   }
 
-  /** An explosion: a crunchy roar sweeping down, and a sub-bass boom (`size` 1: a goal). */
-  explosion(out: AudioNode, when: number, size: number): void {
+  /** An explosion: a crunchy roar sweeping down, and a sub-bass boom (`size` 1: a goal); `level` the roar's and the
+   *  boom's peaks */
+  explosion(out: AudioNode, when: number, size: number, level: { readonly roar: number; readonly boom: number } = EXPLOSION): void {
     const roar = this.gain(0, out);
-    envelope(roar.gain, when, 0.006, 0.42, 1.3 * size);
+    envelope(roar.gain, when, 0.006, level.roar, 1.3 * size);
     const shaper = new WaveShaperNode(this.ctx, { curve: softClip(2.5), oversample: "2x" });
     shaper.connect(roar);
     const f = this.filter("lowpass", 5200, 0.8, shaper);
     f.frequency.setValueAtTime(5200, when);
     f.frequency.exponentialRampToValueAtTime(140, when + 1.3 * size);
     this.noise(f, when, 1.5 * size);
-    this.#sweep("sine", 75, 28, 0.6 * size, out, when, 0.5, 1.0 * size);
+    this.#sweep("sine", 75, 28, 0.6 * size, out, when, level.boom, 1.0 * size);
   }
 
-  /** A goal: the explosion, then a short brassy fanfare. */
-  goal(out: AudioNode, when: number): void {
-    this.explosion(out, when, 1);
+  /** A goal: the explosion, quieter than a demolition's (GOAL_EXPLOSION), then a short brassy fanfare. */
+  goal(out: AudioNode, when: number, explosion: { readonly roar: number; readonly boom: number } = GOAL_EXPLOSION): void {
+    this.explosion(out, when, 1, explosion);
     const notes: [number, number, number][] = [
       [392, 0.25, 0.12],
       [523.25, 0.37, 0.12],
