@@ -34,6 +34,8 @@ clap = { version = "4", features = ["derive", "env"], optional = true }
 jsonwebtoken = { version = "9.3.1", default-features = false, optional = true }
 governor = { version = "0.10.4", default-features = false, features = ["std"], optional = true }
 tracing-appender = { version = "0.2", optional = true }
+# (the benchmark's counters, `GET /metrics` on the development info server alone: Prometheus text, notes/benchmarks.md)
+prometheus-client = { version = "0.25.1", optional = true }
 
 [features]
 default = ["net"]
@@ -53,6 +55,7 @@ net = [
     "dep:tracing-subscriber",
     "dep:clap",
     "dep:jsonwebtoken",
+    "dep:prometheus-client",
 ]
 # The browser tests' hooks (the Dockerfile's game-e2e image and the local browser tests' builds, never a release's):
 # --test-goal-after, --forfeit-vote-wait, and an e2e stack's accounts service over plain http (API_URL http://HOST:PORT,

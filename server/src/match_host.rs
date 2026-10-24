@@ -257,6 +257,14 @@ impl Hosted {
     }
 }
 
+/// A `MatchHost::tick`'s work: the match ticks it ran, and how many slipped (run a period or more late: a match caught up,
+/// a whole tick behind; or skipped, too far behind to catch up)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ticked {
+    pub ticks: u32,
+    pub slipped: u32,
+}
+
 pub struct MatchHost {
     matches: BTreeMap<MatchId, Hosted>,
     /// The match each player is in
@@ -745,15 +753,22 @@ impl MatchHost {
     }
 
     /// When the next match tick is due (s); None without matches
+    /// The matches hosted and the players in them
+    pub fn counts(&self) -> (usize, usize) {
+        (self.matches.len(), self.players.len())
+    }
+
     pub fn next_tick(&self) -> Option<f64> {
         self.matches.values().map(|m| m.next_tick).min_by(f64::total_cmp)
     }
 
     /// Each match's ticks due by `now` (s), at most a few to catch up; then the matches cancelled (reservations
     /// expired), over or empty let go. A match whose tick panics is let go alone, its players' sessions ended; the
-    /// others play on (SEC-7: they share the game thread); an open match starts afresh
-    pub fn tick(&mut self, now: f64) {
+    /// others play on (SEC-7: they share the game thread); an open match starts afresh. The ticks run, and how many of
+    /// them slipped (the benchmark's counters)
+    pub fn tick(&mut self, now: f64) -> Ticked {
         self.now = now;
+        let mut ticked = Ticked::default();
         let mut done = Vec::new();
         let mut restart = Vec::new();
         let mut started = Vec::new();
@@ -769,7 +784,12 @@ impl MatchHost {
                     m.next_tick += game.next_tick_seconds();
                     ticks += 1;
                 }
+                // (a tick past the first a catch-up: the match fell a whole tick behind; past the cap, the ticks it
+                // couldn't catch up skipped)
+                ticked.ticks += ticks;
+                ticked.slipped += ticks.saturating_sub(1);
                 if ticks == MAX_CATCH_UP_TICKS && m.next_tick < now {
+                    ticked.slipped += ((now - m.next_tick) / game.next_tick_seconds()).ceil() as u32;
                     m.next_tick = now;
                 }
                 if ticks > 0 {
@@ -863,6 +883,7 @@ impl MatchHost {
             self.open_match(playlist, now);
         }
         self.closed.retain(|_, until| *until > now);
+        ticked
     }
 
     /// The match is cancelled before it started: its players are told, then their sessions end; the matchmaker is told
@@ -1055,6 +1076,34 @@ mod tests {
             .map(|p| p.team)
             .collect();
         assert_eq!((teams.iter().filter(|&&t| t == 0).count(), teams.len()), (2, 4));
+    }
+
+    /// The benchmark's counts (`Ticked`): a tick each period on time; a pass a period or more late catches up, its extra
+    /// ticks slipped; one past the catch-up's cap skips the rest, those slipped too; the matches and players hosted
+    #[test]
+    fn each_pass_tells_its_ticks_and_those_that_slipped() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[0; 4], 0.0).tokens;
+        let mut rxs = Vec::new();
+        for (i, &token) in tokens.iter().enumerate() {
+            let (tx, rx) = channel(OUT_QUEUE);
+            assert!(host.claim(token, i as PlayerId + 1, request(), tx));
+            rxs.push(rx);
+        }
+        assert_eq!(host.counts(), (1, 4));
+        let period = 1.0 / 120.0;
+        assert_eq!(host.tick(0.0), Ticked { ticks: 1, slipped: 0 });
+        assert_eq!(host.tick(period), Ticked { ticks: 1, slipped: 0 });
+        // (a pass 2.5 periods late: the ticks due at 2, 3 and 4 periods, two of them caught up)
+        assert_eq!(host.tick(period * 4.5), Ticked { ticks: 3, slipped: 2 });
+        // (half a period on: nothing due)
+        assert_eq!(host.tick(period * 4.9), Ticked::default());
+        // (20 periods late: the cap's 5 run, 4 of them caught up, and the 15 left skipped)
+        let late = host.tick(period * 25.0);
+        assert_eq!((late.ticks, late.slipped), (5, 4 + 15), "{late:?}");
+        // (its clock from that pass on: the tick due then run half a period later, on time)
+        assert_eq!(host.tick(period * 25.5), Ticked { ticks: 1, slipped: 0 }, "on time again");
     }
 
     #[test]

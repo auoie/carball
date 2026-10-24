@@ -677,6 +677,9 @@ async fn run() -> anyhow::Result<()> {
     } else {
         None
     };
+    // (the benchmark's counters: on with the development info server, which serves them, from the start)
+    let dev_info = dev_info_on(&args);
+    let metrics = dev_info.then(carball_server::metrics::install);
     let game = std::thread::Builder::new()
         .name("game".into())
         .spawn(move || game_loop::run_with_reports(messages, mode, test_goal_after, game_heartbeat, start, reports))?;
@@ -695,7 +698,6 @@ async fn run() -> anyhow::Result<()> {
     if let Some((cert, key)) = args.cert.clone() {
         tokio::spawn(reload_certificates(server.clone(), cert, key, args.port, hangups()?));
     }
-    let dev_info = dev_info_on(&args);
     let mode = if args.queue { "the queue's matches" } else { "one open match" };
     let origins = args.limits.allowed_origins.as_ref().map_or("any origin (development)".to_string(), |o| o.join(", "));
     let host = args.public_host.as_deref().unwrap_or("this machine");
@@ -704,9 +706,12 @@ async fn run() -> anyhow::Result<()> {
         args.port,
         args.health_port
     );
+    if dev_info {
+        tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, dev_hash, metrics));
+        tracing::info!("the benchmark's counters on http://{}:{}/metrics", args.info_bind, args.info_port);
+    }
     match (dev_info, dev_hash) {
-        (true, Some(hash)) => {
-            tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, hash));
+        (true, Some(_)) => {
             tracing::info!("dev info on http://{}:{}/info (self-signed certificate)", args.info_bind, args.info_port);
             let query = if args.info_port == 4434 {
                 "server".to_string()
@@ -718,7 +723,7 @@ async fn run() -> anyhow::Result<()> {
             );
         }
         (true, None) => {
-            tracing::warn!("--dev-info: no development info with a real certificate (the client connects by name)")
+            tracing::warn!("--dev-info: no /info with a real certificate (the client connects by name): /metrics alone")
         }
         _ => {}
     }
@@ -1190,6 +1195,8 @@ mod tests {
             ("OUTBOX_DIR", "/o"),
         ];
         assert!(!dev_info_on(&parse_with(&[], &env).unwrap()), "SEC-6: off with a certificate");
+        // (asked for: its /metrics alone, the benchmark's, on 127.0.0.1 unless --info-bind says otherwise)
+        assert!(dev_info_on(&parse_with(&["--dev-info", "on"], &env).unwrap()), "asked: on");
         assert!(dev_info_on(&parse(&[]).unwrap()));
         assert!(!dev_info_on(&parse(&["--dev-info", "off"]).unwrap()));
         assert!(dev_info_on(&parse(&["--dev"]).unwrap()));

@@ -61,8 +61,10 @@ npm run e2e:local              #   load, drive, ball cam, reset, settings, two p
 npm run e2e:services           #   the specs that search, against the deployment's services in Docker (e2e/services:
                                #   Postgres, the accounts service, game servers, the web image, built from the working
                                #   tree first; CARBALL_E2E_IMAGES=TAG runs images already built; needs docker compose)
-# One services run at a time on the machine (its lock: $XDG_RUNTIME_DIR/carball-e2e-stacks.lock). A run that's stopped
-# takes its stacks down (Ctrl-C, SIGTERM); one killed outright leaves them to the next run, or:
+# Don't start two services runs at once, from one checkout or two: they share the stacks' names and ports, and the
+# lock that refuses a second run ($XDG_RUNTIME_DIR/carball-e2e-stacks.lock, else the temporary directory's) isn't
+# watertight (RV-1070..1074). A run that's stopped takes its stacks down (Ctrl-C, SIGTERM); one killed outright leaves
+# them to the next run, or:
 #  for s in queue edges regions flows; do docker compose -p carball-e2e-$s down -v; done
 ```
 - **TypeScript** (`tsconfig.app.json`): `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no unused

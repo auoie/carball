@@ -19,8 +19,8 @@ are a public server's alone, with the accounts service: the browser tests run th
 Development identity: a self-signed certificate (valid 14 days, the WebTransport limit for certificate hashes) made at
 start-up. The info endpoint (127.0.0.1 unless `--info-bind`, e.g. 0.0.0.0 for another machine) publishes its SHA-256 so
 the browser can connect with `serverCertificateHashes`. A public server runs with a real certificate (`CERT_PATH` and
-`KEY_PATH`, or `--cert` and `--key`; a key that isn't the certificate's is refused): no info endpoint, reloaded when its
-files change or on SIGHUP; it needs `ALLOWED_ORIGIN` (empty or blank is an error, not "any"). A queue server needs a
+`KEY_PATH`, or `--cert` and `--key`; a key that isn't the certificate's is refused): no info endpoint unless asked
+(`--dev-info on`: the counters' `/metrics` alone, notes/benchmarks.md), reloaded when its files change or on SIGHUP; it needs `ALLOWED_ORIGIN` (empty or blank is an error, not "any"). A queue server needs a
 certificate (`--dev`, the open match's, is refused with it: RV-381), the tickets' public keys, `TICKET_PUBLIC_KEYS`
 (notes/accounts.md §3: a claim and a rejoin are a signed-in account's, its ticket, a JWT, checked offline in the
 session's hello), and the accounts service for the rated matches' calls, `API_URL` and `GAME_SERVER_TOKEN_FILE`
@@ -68,6 +68,7 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | `src/queue.rs` | who plays together: each playlist's searchers, the oldest with those within a rating window (wider as they wait), teams by a snake draft |
 | `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over; the ranked bookkeeping (each seat's first ticket, the leave penalty's latch, results; a seat held for a rejoin) |
 | `src/net.rs` | WebTransport sessions (a claim's and a rejoin's ticket checked), development identity and info endpoint |
+| `src/metrics.rs` | the counters the info endpoint serves at `/metrics` (game-loop passes, ticks and slipped ticks, matches, players, datagrams, each thread's CPU, memory: notes/benchmarks.md) |
 | `src/ticket.rs` | the tickets: the accounts service's JWTs (EdDSA alone, jsonwebtoken), keys by id, each one-time id once, the time rules; `--dev`'s own key |
 | `src/outbox.rs` | the ranked calls to the accounts service (results, quitters, refills), kept on disk and retried for up to 24 h (`API_URL`) |
 | `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates; two searches make a match |

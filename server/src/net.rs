@@ -813,6 +813,8 @@ async fn session(
     // way the session ends, RV-334; none counted once it's closed)
     let unsent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let writer_unsent = unsent.clone();
+    // (the benchmark's counters, when they're on)
+    let metrics = crate::metrics::get();
     let mut writer = tokio::spawn(async move {
         while let Some(message) = out_rx.recv().await {
             match message {
@@ -822,8 +824,13 @@ async fn session(
                     }
                 }
                 // Unreliable: a datagram that doesn't fit or can't be queued is simply lost, like a lost packet (counted)
-                Outgoing::Datagram(bytes) => match writer_connection.send_datagram(bytes) {
-                    Ok(()) | Err(wtransport::error::SendDatagramError::NotConnected) => {}
+                Outgoing::Datagram(bytes) => match writer_connection.send_datagram(&bytes) {
+                    Ok(()) => {
+                        if let Some(m) = metrics {
+                            m.sent(bytes.len());
+                        }
+                    }
+                    Err(wtransport::error::SendDatagramError::NotConnected) => {}
                     Err(_) => {
                         writer_unsent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -890,6 +897,9 @@ async fn session(
             }
             datagram = connection.receive_datagram() => match datagram {
                 Ok(d) => {
+                    if let Some(m) = metrics {
+                        m.received(d.len());
+                    }
                     if !inputs.take(Instant::now()) {
                         if !input_overruns.take(Instant::now()) {
                             tracing::warn!("{label}: input datagrams over the rate, session ends");
@@ -970,15 +980,37 @@ fn dev_answer(body: String) -> axum::response::Response {
     (open, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
-/// Development helper: `GET /info` on plain HTTP returns the WebTransport port and the certificate hash, so a browser
-/// on this machine can connect to the self-signed server (the direct `--dev` server's alone, SEC-6): on `bind`
-/// (127.0.0.1 unless asked), 64 connections at once, 2 s for a request's headers
-pub async fn serve_info(bind: IpAddr, port: u16, webtransport_port: u16, cert_hash: [u8; 32]) -> anyhow::Result<()> {
+/// Development helper: `GET /info` on plain HTTP returns the WebTransport port and the self-signed certificate's hash
+/// (`cert_hash`), so a browser on this machine can connect to it (the direct `--dev` server's, SEC-6); `GET /metrics`
+/// the benchmark's counters when they're on (`metrics`: notes/benchmarks.md; a server with a real certificate serves
+/// these alone, and only when asked). On `bind` (127.0.0.1 unless asked), 64 connections at once, 2 s for a request's
+/// headers
+pub async fn serve_info(
+    bind: IpAddr,
+    port: u16,
+    webtransport_port: u16,
+    cert_hash: Option<[u8; 32]>,
+    metrics: Option<&'static crate::metrics::Metrics>,
+) -> anyhow::Result<()> {
     use axum::routing::get;
-    let hex: String = cert_hash.iter().map(|b| format!("{b:02x}")).collect();
-    let info = serde_json::json!({ "port": webtransport_port, "certHash": hex }).to_string();
-    let app = axum::Router::new().route("/info", get(move || std::future::ready(dev_answer(info.clone()))));
+    let mut app = axum::Router::new();
+    if let Some(hash) = cert_hash {
+        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        let info = serde_json::json!({ "port": webtransport_port, "certHash": hex }).to_string();
+        app = app.route("/info", get(move || std::future::ready(dev_answer(info.clone()))));
+    }
+    if let Some(metrics) = metrics {
+        app = app.route("/metrics", get(move || std::future::ready(metrics_answer(metrics.encode()))));
+    }
     serve_http(tokio::net::TcpListener::bind((bind, port)).await?, app, 64, Duration::from_secs(2)).await
+}
+
+/// The counters' answer: OpenMetrics text (prometheus-client's), never cached
+fn metrics_answer(body: String) -> axum::response::Response {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let kind = "application/openmetrics-text; version=1.0.0; charset=utf-8";
+    ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, "no-store")], body).into_response()
 }
 
 /// The health endpoint's port bound, on 127.0.0.1 (the start fails if it's taken: another process's /healthz would
@@ -1083,7 +1115,7 @@ mod tests {
     async fn the_info_server_answers_its_routes_as_http() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        tokio::spawn(serve_info([127, 0, 0, 1].into(), port, 4433, [0xab; 32]));
+        tokio::spawn(serve_info([127, 0, 0, 1].into(), port, 4433, Some([0xab; 32]), None));
         tokio::time::sleep(Duration::from_millis(100)).await;
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let get = |path: &str| client.get(format!("http://127.0.0.1:{port}{path}")).send();
@@ -1101,6 +1133,7 @@ mod tests {
             404,
             "no tickets here: the accounts service issues them"
         );
+        assert_eq!(get("/metrics").await.unwrap().status(), 404, "no counters unless they're on");
         // (a request in two writes, apart: read whole, answered)
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         stream.write_all(b"GET /info HTTP/1.1\r\nHo").await.unwrap();
@@ -1119,6 +1152,23 @@ mod tests {
             "an idle connection held {:?}",
             started.elapsed()
         );
+    }
+
+    /// With a real certificate (no hash) and the counters on: `/metrics` alone, never cached; no `/info`
+    #[tokio::test]
+    async fn the_info_server_of_a_real_certificate_serves_the_counters_alone() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        tokio::spawn(serve_info([127, 0, 0, 1].into(), port, 4433, None, Some(crate::metrics::install())));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let get = |path: &str| client.get(format!("http://127.0.0.1:{port}{path}")).send();
+        let metrics = get("/metrics").await.unwrap();
+        assert_eq!(metrics.status(), 200);
+        assert_eq!(metrics.headers()["cache-control"], "no-store");
+        assert!(metrics.headers()["content-type"].to_str().unwrap().starts_with("application/openmetrics-text"));
+        let text = metrics.text().await.unwrap();
+        assert!(text.contains("\ncarball_ticks_total ") && text.ends_with("# EOF\n"), "{text}");
+        assert_eq!(get("/info").await.unwrap().status(), 404, "no self-signed certificate to tell of");
     }
 
     /// The plain HTTP endpoints' limits applied, not configured only (RV-939's H1, H3; RV-940): one request a connection

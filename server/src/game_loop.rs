@@ -70,7 +70,10 @@ pub fn run_with_reports(
     if let Mode::Direct(playlist) = mode {
         host.open_match(playlist, 0.0);
     }
+    // (the benchmark's counters, when they're on: each pass's busy time and ticks, notes/benchmarks.md)
+    let metrics = crate::metrics::get();
     loop {
+        let pass = Instant::now();
         heartbeat.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
         host.observe(seconds(Instant::now()));
         for _ in 0..MESSAGES_PER_LOOP {
@@ -145,7 +148,7 @@ pub fn run_with_reports(
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
             }
         }
-        host.tick(seconds(Instant::now()));
+        let ticked = host.tick(seconds(Instant::now()));
         // (the accounts service's: results, quitters, refills and the matchmaker's events, sent by the outbox)
         for report in host.take_reports() {
             match &reports {
@@ -154,6 +157,10 @@ pub fn run_with_reports(
                 }
                 None => tracing::info!("ranked report (no outbox): {}", report.summary()),
             }
+        }
+        if let Some(m) = metrics {
+            let (matches, players) = host.counts();
+            m.pass(pass.elapsed(), ticked.ticks, ticked.slipped, matches, players);
         }
         // (until the next tick is due, a millisecond at most: the messages are read meanwhile)
         let wait = host.next_tick().map_or(0.001, |next| (next - seconds(Instant::now())).clamp(0.0, 0.001));

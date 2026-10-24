@@ -10,6 +10,8 @@ pub mod game_loop;
 pub mod input_buffer;
 pub mod match_host;
 #[cfg(feature = "net")]
+pub mod metrics;
+#[cfg(feature = "net")]
 pub mod net;
 #[cfg(all(test, feature = "net"))]
 mod net_tests;
