@@ -317,6 +317,23 @@ server-only forcing (FUN_140eed780 needs NetMode 1 or 2).
    within 1000 uu of the ball; ball at 100 Hz nominal, forced on car hits. Ours sends more, which is better for
    prediction. Product decision.
 
+### Packet loss as the game counts it (RV-1154, WHEEL1, 2026-10-24)
+- **In:** `UNetConnection::ReceivedPacket` (0x140ba5ea0): `id = MakeRelative(ReadInt(0x4000), InPacketId, 0x4000)`; a
+  newer id adds `id − InPacketId − 1` to InPacketsLost (+0x35c; the driver's +0x188) at once and becomes InPacketId; an
+  older one is still processed, counted out of order (+0x364), never taken off the lost count; no reorder window (RL's
+  addition: with a flag at +0x1030, a 30-slot window drops packets more than 30 behind and exact duplicates).
+- **Out:** UE3's virtual NAKs: a newer ack (`OutAckPacketId` +0x1028) NAKs each skipped id (ReceivedNak 0x140ba5da0)
+  and counts it in OutPacketsLost (+0x360); a later older ack ignored; the peer acks every packet twice (SendAck
+  0x140ba9100, PurgeAcks 0x140ba1790), so one lost return doesn't count, two in a row do.
+- **The HUD's rows** (`NetStatGraph_TA.Construct`, TA 70878; fed once a second from the connection's Tick, 0x140bad250,
+  FUN_140f1f6e0): Out Loss is the client's own OutPacketsLost (from the server's ack gaps), In Loss its InPacketsLost;
+  counts per second. The connection-quality percentage (`ClientConnectionTracker_TA.ComputeRollingPacketLossPercent`,
+  TA 567) is both directions' lost over both directions' packets, measured at the client.
+- **Carball counts the same way** (`InputBuffer::note_sequence`: a gap past the newest counted at once, a late one
+  not taken back), so reordering counted as loss is the game's too. Differences, kept: Carball's Out Loss is the
+  server's input-datagram gaps reported back, the game's the client's ack gaps (the same on a normal path); a jump of
+  1000 or more is taken as the client's count starting again, where the game's 14-bit ids count any gap within ±8192.
+
 ### Open
 - ~~Whether anything forces the victim's net update on a demolish (N-4e)~~: **settled, nothing does** (see
   "Correction smoothing (live build)" → N-4e).

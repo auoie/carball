@@ -61,5 +61,26 @@ ticks 120 a second, none slipped.
 A pass a tick holds a session's input datagrams for up to a tick (8.33 ms; 44 ms in a goal's slow motion): its slot
 keeps every one that came, in order, each with its arrival time, all of them into the jitter buffer at the pass, as
 the game dispatches every packet before its world's tick (RV-1151; at most eight a pass, a flood's oldest let go past
-that and not counted as lost).
+that and not counted as lost). PERF2 (40b443d against a2af2a3): no measurable difference to either side's cost; the
+queue's own on the network threads about 0.06 % of a core; three players' process 4.67 % of a core, the game thread
+1.38 % (an idle open match 0.23 %).
+
+## Link-time optimisation (2026-10-24, after PERF1)
+The server's release profile: thin LTO, one codegen unit (`server/Cargo.toml`). Measured in a scratch copy (this
+machine, its usual background load; the game-thread benchmark run quiet, the three interleaved, 3 rounds: a 3v3's 7200
+ticks, six players driving, steering, boosting and jumping, their updates encoded):
+
+| release profile | clean build | one-file rebuild | binary | 3v3 tick |
+|---|---|---|---|---|
+| as before (no LTO, 16 units) | 58.8 s | 9.0 s | 67.9 MB | 25.7 us |
+| thin LTO, 1 unit (now) | 73.3 s | 33.6 s | 45.0 MB | 25.3 us |
+| fat LTO, 1 unit | 94.3 s | 59.0 s | 42.0 MB | 25.3 us |
+
+The game thread's tick is mostly the C++ engine's physics, which Rust's LTO doesn't reach (about 1.6 % faster, inside
+the spread); its gain, if any, is the network threads' (quinn, tokio, wtransport: 63 % of a match's CPU in PERF1),
+measured on the browser tests' specs by PERF2. Fat measured no better than thin for nearly twice the link. The engine's
+C++ IPO (CMake's INTERPROCEDURAL_OPTIMIZATION, GCC `-flto`): its test programs' output bit-identical (the determinism
+hash dd0f56c02d85870e, the smoke test, rollback, net state, the patches, the stats), its physics within noise (300 s of
+the scripted 2v2: 0.42–0.44 s against 0.43–0.49 s), and the server's link failing under rust-lld (GCC's slim LTO
+objects unread: undefined engine symbols); not used.
 

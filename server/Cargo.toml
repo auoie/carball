@@ -94,3 +94,8 @@ cmake = "0.1"
 
 [profile.release]
 debug = 1
+# (link-time optimisation across the Rust crates, the network's quinn, tokio and wtransport most of all: thin, one
+# codegen unit; the user's, 2026-10-24: fat measured no better for twice the link (notes/benchmarks.md); the C++ engine
+# not in it: GCC's LTO objects aren't rust-lld's)
+lto = "thin"
+codegen-units = 1
