@@ -670,6 +670,8 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
     return {
       dots: document.querySelectorAll("#ballcam .rec-dot").length,
       icon: document.querySelectorAll(".ballcam-icon svg mask[id^='ballcam-icon']").length,
+      // (its mask's id this HUD's own, the ball's fill drawn through that very mask: RV-1142, RV-1150)
+      ids: [document.querySelector(".ballcam-icon svg mask")?.id ?? "", document.querySelector(".ballcam-icon svg circle[mask]")?.getAttribute("mask") ?? ""],
       label: box.textContent.trim(),
       look: [style.borderTopColor, style.borderTopWidth, style.borderTopLeftRadius, style.color],
       hint: { left: h.left - b.left, below: h.top - b.bottom },
@@ -677,6 +679,8 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   });
   expect(shown?.dots).toBe(0);
   expect(shown?.icon).toBe(1);
+  expect(shown?.ids[0]).toMatch(/^ballcam-icon\d+-mask$/);
+  expect(shown?.ids[1]).toBe(`url(#${shown?.ids[0] ?? ""})`);
   expect(shown?.label).toBe("BALL CAM");
   // (the border's 2.5 px as drawn: Chromium snaps a border's width to whole device pixels, 2 at a ratio of 1)
   expect([shown?.look[0], shown?.look[2], shown?.look[3]]).toEqual(["rgba(191, 227, 255, 0.9)", "8px", "rgb(191, 227, 255)"]);

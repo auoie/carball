@@ -12,11 +12,13 @@ import type { InputDevices } from "../input/devices";
 import {
   AirPitchSafety,
   ButtonLatch,
+  type CommandAction,
   EMPTY_INPUT,
   type HeldActions,
   JumpLatch,
   type LookInput,
   NO_HELD_ACTIONS,
+  presses,
   readControls,
   readHeldActions,
 } from "../input/mapping";
@@ -403,7 +405,7 @@ export class Freeplay {
   }
 
   #handleActions(held: HeldActions, options: Options, ballCamToggle: boolean): void {
-    const pressed = (key: keyof HeldActions): boolean => held[key] && !this.#held[key];
+    const count = (key: CommandAction): number => presses(held[key], this.#held[key]);
     const next = updateSwitches({ ballCam: this.#ballCam, rear: this.#rear }, held, this.#held, {
       ballCamToggle,
       rearCameraToggle: options.rearCameraToggle,
@@ -417,16 +419,18 @@ export class Freeplay {
       this.#held = held;
       return;
     }
-    if (pressed("reset") && this.#sinceReset >= FREEPLAY_RESET_COOLDOWN) {
+    if (count("reset") > 0 && this.#sinceReset >= FREEPLAY_RESET_COOLDOWN) {
       this.#sinceReset = 0;
       this.#resetKickoff();
     }
-    // (the game's free-play ball commands, each once a press, the ball moving or not: FP3)
-    if (pressed("ballInFront")) this.#teleportBall("possession");
-    if (pressed("ballOnCar")) this.#teleportBall("dribble");
-    if (pressed("passBall")) this.#launchBall("pass");
-    if (pressed("launchBall")) this.#launchBall("pop");
-    if (pressed("defendShot")) this.#launchBall("defend");
+    // (the game's free-play ball commands, each once a press, the ball moving or not: FP3; N presses in a frame N times,
+    // the wheel's notches too: FreeplayCommand → HandleFreeplayCommand → ActivateFreeplayCommand, the TAGame dump's 77100
+    // and 29833, no cooldown, RV-1146)
+    for (let i = count("ballInFront"); i > 0; i--) this.#teleportBall("possession");
+    for (let i = count("ballOnCar"); i > 0; i--) this.#teleportBall("dribble");
+    for (let i = count("passBall"); i > 0; i--) this.#launchBall("pass");
+    for (let i = count("launchBall"); i > 0; i--) this.#launchBall("pop");
+    for (let i = count("defendShot"); i > 0; i--) this.#launchBall("defend");
     this.#held = held;
   }
 
@@ -843,9 +847,10 @@ export class Freeplay {
   #trainingCommands(held: HeldActions): boolean {
     const run = this.#training;
     if (!run) return false;
-    const pressed = (key: keyof HeldActions): boolean => held[key] === true && this.#held[key] !== true;
+    // (each command once a press, N in a frame N times: the toggles flip each, the shots step each; RV-1146)
+    const count = (key: CommandAction): number => presses(held[key], this.#held[key]);
     if (run.test) {
-      if (!pressed("reset")) return false;
+      if (count("reset") === 0) return false;
       run.retry();
       this.#replay?.dispose();
       this.#replay = null;
@@ -853,23 +858,26 @@ export class Freeplay {
       this.#resetKickoff();
       return true;
     }
-    if (pressed("trainingShuffle")) run.toggleShuffle();
-    if (pressed("trainingSelect")) this.#selectRequested = true;
+    for (let i = count("trainingShuffle"); i > 0; i--) run.toggleShuffle();
+    if (count("trainingSelect") > 0) this.#selectRequested = true;
     let restart = true;
-    if (pressed("reset") && (run.state === "active" || run.state === "ended") && this.onResetWarning && !resetWarned()) {
+    const [reset, next, previous, mirror] = [count("reset"), count("trainingNext"), count("trainingPrevious"), count("trainingMirror")];
+    if (reset > 0 && (run.state === "active" || run.state === "ended") && this.onResetWarning && !resetWarned()) {
       // (the first time ever: asked first, the shot retried on Yes)
       this.onResetWarning(() => {
         storeResetWarned();
         this.retryShot();
       });
       return false;
-    } else if (pressed("reset")) {
+    } else if (reset > 0) {
       if (run.state === "finished") run.restart();
       else run.retry();
-    } else if (pressed("trainingNext")) run.navigate(1);
-    else if (pressed("trainingPrevious")) run.navigate(-1);
-    else if (pressed("trainingMirror")) run.toggleMirror();
-    else restart = false;
+    } else if (next > 0 || previous > 0) {
+      for (let i = next; i > 0; i--) run.navigate(1);
+      for (let i = previous; i > 0; i--) run.navigate(-1);
+    } else if (mirror > 0) {
+      for (let i = mirror; i > 0; i--) run.toggleMirror();
+    } else restart = false;
     if (!restart) return false;
     this.#replay?.dispose();
     this.#replay = null;

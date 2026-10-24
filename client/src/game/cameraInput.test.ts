@@ -1,12 +1,17 @@
 // The camera switches and the input packets' clock (review findings RV-4, RV-9, RV-10).
 import { describe, expect, it } from "vitest";
 import { frameTimes, worldSeconds } from "../loop/fixedStep";
-import type { CameraButton } from "../input/mapping";
+import type { ActionButton } from "../input/mapping";
 import { SendClock, newCar, updateSwitches } from "./cameraInput";
 import { postGoalDilation } from "./goalSequence";
 
 /** A key's: `presses` this frame, held after them */
-const key = (presses: number, down: boolean): CameraButton => ({ keyPresses: presses, keyDown: down, padDown: false });
+/** A key's: `presses` this frame (taps, the last one still held when `down`), held after them */
+const key = (presses: number, down: boolean): ActionButton => ({
+  keyEvents: Array.from({ length: presses }, (_, i) => (down && i === presses - 1 ? [true] : [true, false])).flat(),
+  keyDown: down,
+  padDown: false,
+});
 const UP = { ballCam: key(0, false), rearCamera: key(0, false) };
 /** Pressed this frame, held */
 const BALL = { ...UP, ballCam: key(1, true) };
@@ -82,9 +87,22 @@ describe("camera switches", () => {
     expect(run({ ...OPTIONS, ballCamToggle: false }), "hold").toEqual([true, true, true, false]);
   });
 
+  it("RV-1144: held mode is one flag, the last press or release winning: letting go of one of two held inputs turns it off", () => {
+    const hold = { ...OPTIONS, ballCamToggle: false };
+    const keyAndPad = { ...UP, ballCam: { keyEvents: [], keyDown: true, padDown: true } };
+    const on = { ballCam: true, rear: false };
+    // (the key let go, the pad still held: off; and the other way round)
+    expect(updateSwitches(on, { ...UP, ballCam: { keyEvents: [false], keyDown: false, padDown: true } }, keyAndPad, hold).ballCam).toBe(false);
+    expect(updateSwitches(on, { ...UP, ballCam: { keyEvents: [], keyDown: true, padDown: false } }, keyAndPad, hold).ballCam).toBe(false);
+    // (the pad pressed while the key is held: on, the press winning)
+    const off = { ballCam: false, rear: false };
+    const keyHeld = { ...UP, ballCam: key(0, true) };
+    expect(updateSwitches(off, { ...UP, ballCam: { keyEvents: [], keyDown: true, padDown: true } }, keyHeld, hold).ballCam).toBe(true);
+  });
+
   it("the pad's button: a press its edge, once, held after", () => {
     const off = { ballCam: false, rear: false };
-    const pad = { ...UP, ballCam: { keyPresses: 0, keyDown: false, padDown: true } };
+    const pad = { ...UP, ballCam: { keyEvents: [], keyDown: false, padDown: true } };
     const on = updateSwitches(off, pad, UP, OPTIONS);
     expect(on.ballCam).toBe(true);
     expect(updateSwitches(on, pad, pad, OPTIONS).ballCam, "held: no new press").toBe(true);

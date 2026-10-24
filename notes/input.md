@@ -99,10 +99,23 @@ The client sends `DodgeInputThreshold`, `SteeringSensitivity`, `AirControlSensit
   each press (N taps, N flips), held mode nothing; a plain command once per tap; DoubleTap on two notches within 0.25 s.
 - **Carball** (`client/src/input/devices.ts` WheelTaps): one browser `wheel` event is one message; at least a notch (32
   px, or any lines or pages) taps in its direction, an event the browser merged several notches into that many taps
-  (against this device's smallest notch: a stand-in for separate messages, not a sum); Shift's sideways turn (Chromium's
-  Shift+wheel) the same turn, sideways without Shift none. The cameras count each press (`updateSwitches`). **Smaller
+  (against a fixed notch, Chromium's Windows 100 px or 3 lines, so every ordinary notch is one tap: a stand-in for
+  separate messages, not a sum; RV-1145, RV-1148); Shift's sideways turn (Chromium's Shift+wheel) the same turn,
+  sideways without Shift none. The cameras and free play's and training's commands count each press
+  (`ActionButton`: a toggle flips, a command runs, once a press, RV-1146: `ActivateFreeplayCommand`, TAGame dump 77100
+  and 29833, no cooldown); a held camera is one flag, the last press or release of any of its inputs winning
+  (`ReleaseSecondaryCamera`, 76995: one `bHoldingBallCamKey`, RV-1144). **Smaller
   than a notch: one tap in its own direction**, a deliberate difference from the exe (the user's choice, 2026-10-24: the
   game's truncated delta / 120 sign test makes every such piece MouseScrollUp, which isn't copied).
+- **A button held through a menu (RV-1149, WHEEL1):** the game flushes at the first menu's open
+  (`SetReceiveInput`/`SetCaptureAllInput` true, ProjectX dump 7245, 7261 → `PlayerInput.ResetInput` → `FlushPressedKeys`
+  0x1409cd290: a release per held key, its OnRelease commands run, the axes zeroed) and nothing at the close; the pad poll
+  and the keys' states keep their own, so no new press, but the first repeat after the flush is taken as a press
+  (`PlayerInput_X::InputKey` 0x140e3a2b0): a pad button still held is pressed again within its repeat interval (~0.1 s,
+  the delays config only, inferred) of the close, a key only while Windows still repeats it (the last pressed: not one
+  held under the Escape that opened the menu). Carball: empty input under a menu (everything released), a pad button
+  still held pressed on the close's frame (the game's re-press, up to ~0.1 s early), a key not until pressed again
+  (repeats ignored). Left as it is.
 - **Labels:** the HUD's prompts (the ball cam's hint, the respawn's, the replay's skip, quick chat) build their key
   names each frame they're shown, so a layout switched mid-play shows at their next frame; the open Controls screen
   redraws on the layout change itself (RV-1132, RV-1143).

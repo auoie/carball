@@ -11,7 +11,7 @@ import {
   setKeyboardLayout,
   takesBrowserKey,
 } from "./bindings";
-import { ButtonLatch, type InputSnapshot, JumpLatch, readControls, readHeldActions } from "./mapping";
+import { ButtonLatch, type InputSnapshot, JumpLatch, NO_HELD_ACTIONS, presses, readControls, readHeldActions } from "./mapping";
 
 const bound = (code: string): boolean => keyBound(DEFAULT_BINDINGS, code);
 const press = (code: string, mods: { ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean } = {}) => ({
@@ -135,9 +135,9 @@ describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
       releasedKeys: new Set(["WheelUp"]),
       gamepad: null,
     };
-    expect(readHeldActions(turned, bindings, 0.2).launchBall).toBe(true);
+    expect(presses(readHeldActions(turned, bindings, 0.2).launchBall, NO_HELD_ACTIONS.launchBall)).toBe(1);
     const after = { keys: new Set<string>(), mouseButtons: new Set<number>(), gamepad: null };
-    expect(readHeldActions(after, bindings, 0.2).launchBall, "the next frame: not held").toBe(false);
+    expect(readHeldActions(after, bindings, 0.2).launchBall.keyDown, "the next frame: not held").toBe(false);
   });
 });
 
@@ -186,6 +186,6 @@ describe("a wheel's taps as the game's actions take them (WHEEL1, RV-1137): each
     const bindings = withKey(withKey(DEFAULT_BINDINGS, "ballCam", up), "rearCamera", { kind: "key", code: "WheelDown" });
     const frame = { ...taps("WheelUp", 3), events: [...(taps("WheelUp", 3).events ?? []), ...(taps("WheelDown", 1).events ?? [])] };
     const held = readHeldActions(frame, bindings, 0.2);
-    expect([held.ballCam.keyPresses, held.ballCam.keyDown, held.rearCamera.keyPresses]).toEqual([3, false, 1]);
+    expect([held.ballCam.keyEvents, held.ballCam.keyDown, held.rearCamera.keyEvents]).toEqual([[true, false, true, false, true, false], false, [true, false]]);
   });
 });

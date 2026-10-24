@@ -41,37 +41,52 @@ export const BUTTON_PRESS_THRESHOLD = 30 / 255;
 
 /** Held state of the non-driving actions; the caller detects presses. */
 export interface HeldActions {
-  readonly ballCam: CameraButton;
-  readonly rearCamera: CameraButton;
-  readonly reset: boolean;
-  readonly ballInFront: boolean;
-  readonly ballOnCar: boolean;
-  readonly passBall: boolean;
-  readonly launchBall: boolean;
-  readonly defendShot: boolean;
+  readonly ballCam: ActionButton;
+  readonly rearCamera: ActionButton;
+  readonly reset: ActionButton;
+  readonly ballInFront: ActionButton;
+  readonly ballOnCar: ActionButton;
+  readonly passBall: ActionButton;
+  readonly launchBall: ActionButton;
+  readonly defendShot: ActionButton;
   /** The scoreboard's binding held (OpenScoreboard | OnRelease CloseScoreboard) */
   readonly scoreboard: boolean;
   /** The goal replay's skip (ReadyUp) */
   readonly readyUp: boolean;
   /** Custom training's commands: the previous and next shot, shuffle, mirror */
-  readonly trainingPrevious: boolean;
-  readonly trainingNext: boolean;
-  readonly trainingShuffle: boolean;
-  readonly trainingMirror: boolean;
-  readonly trainingSelect: boolean;
+  readonly trainingPrevious: ActionButton;
+  readonly trainingNext: ActionButton;
+  readonly trainingShuffle: ActionButton;
+  readonly trainingMirror: ActionButton;
+  readonly trainingSelect: ActionButton;
   /** The quick-chat keys (ChatPreset1-4): a key's press since the last frame (each tap, in back-to-back frames too: a
    *  press is a command, not a state), and the pad button held now (its press is its edge) */
   readonly chat: readonly ChatKey[];
 }
 
-/** A camera switch's inputs this frame (PressSecondaryCamera / PressRearCamera and their releases: each press a command,
- *  so a toggle flips once a press, N taps in a frame N times, the wheel's notches too, RV-1137): the keys' and mouse
- *  buttons' presses since the last frame, whether one is held after them, and the pad's button held now (its press is
- *  its edge) */
-export interface CameraButton {
-  readonly keyPresses: number;
+/** A command action's inputs this frame (the cameras' PressSecondaryCamera / PressRearCamera and their releases, free
+ *  play's and training's commands: each press a command, run as it comes, so N taps in a frame are N, the wheel's notches
+ *  too, RV-1137, RV-1146): the keys' and mouse buttons' presses (true) and releases since the last frame, in order,
+ *  whether one is held after them, and the pad's button held now (its press and release are its edges) */
+export interface ActionButton {
+  readonly keyEvents: readonly boolean[];
   readonly keyDown: boolean;
   readonly padDown: boolean;
+}
+
+/** The actions run as commands, each press (their ActionButton) */
+export type CommandAction = { [K in keyof HeldActions]: HeldActions[K] extends ActionButton ? K : never }[keyof HeldActions];
+
+/** An action's presses this frame: its keys' and mouse buttons' (each tap), and the pad's edge */
+export function presses(now: ActionButton, was: ActionButton): number {
+  return now.keyEvents.filter((down) => down).length + (now.padDown && !was.padDown ? 1 : 0);
+}
+
+/** An action's presses (true) and releases this frame in their order: the keys' and mouse buttons', then the pad's edge
+ *  (its poll's, after them, as the latch takes it); a key let go with no list of events, its release */
+export function actionEvents(now: ActionButton, was: ActionButton): boolean[] {
+  const keys = now.keyEvents.length > 0 ? now.keyEvents : was.keyDown && !now.keyDown ? [false] : [];
+  return [...keys, ...(now.padDown === was.padDown ? [] : [now.padDown])];
 }
 
 export interface ChatKey {
@@ -85,24 +100,24 @@ const NO_CHAT_KEY: ChatKey = { keyPressed: false, padDown: false };
 export function chatPresses(keys: readonly ChatKey[], previous: readonly ChatKey[]): number[] {
   return keys.flatMap((k, i) => (k.keyPressed || (k.padDown && !(previous[i]?.padDown ?? false)) ? [i] : []));
 }
-const NO_CAMERA_BUTTON: CameraButton = { keyPresses: 0, keyDown: false, padDown: false };
+const NO_ACTION_BUTTON: ActionButton = { keyEvents: [], keyDown: false, padDown: false };
 
 export const NO_HELD_ACTIONS: HeldActions = {
-  ballCam: NO_CAMERA_BUTTON,
-  rearCamera: NO_CAMERA_BUTTON,
-  reset: false,
-  ballInFront: false,
-  ballOnCar: false,
-  passBall: false,
-  launchBall: false,
-  defendShot: false,
+  ballCam: NO_ACTION_BUTTON,
+  rearCamera: NO_ACTION_BUTTON,
+  reset: NO_ACTION_BUTTON,
+  ballInFront: NO_ACTION_BUTTON,
+  ballOnCar: NO_ACTION_BUTTON,
+  passBall: NO_ACTION_BUTTON,
+  launchBall: NO_ACTION_BUTTON,
+  defendShot: NO_ACTION_BUTTON,
   scoreboard: false,
   readyUp: false,
-  trainingPrevious: false,
-  trainingNext: false,
-  trainingShuffle: false,
-  trainingMirror: false,
-  trainingSelect: false,
+  trainingPrevious: NO_ACTION_BUTTON,
+  trainingNext: NO_ACTION_BUTTON,
+  trainingShuffle: NO_ACTION_BUTTON,
+  trainingMirror: NO_ACTION_BUTTON,
+  trainingSelect: NO_ACTION_BUTTON,
   chat: [NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY],
 };
 
@@ -285,32 +300,29 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
 export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): HeldActions {
   // (held, or pressed since the last frame: a tap still toggles, as the game's press commands do)
   const held = (action: Action): boolean => buttonInputs(input, bindings, stickDeadzone, action).some((i) => i.down || i.pressed);
-  // (the cameras' presses counted from the frame's ordered events, without them one if pressed)
-  const camera = (action: "ballCam" | "rearCamera"): CameraButton => {
+  // (the commands' presses and releases from the frame's ordered events; without them, a press, and a tap's release)
+  const command = (action: Action): ActionButton => {
     const [key, pad] = buttonInputs(input, bindings, stickDeadzone, action);
     const events = orderedKeyEvents(input, bindings, [action]);
-    return {
-      keyPresses: events ? events.filter((down) => down).length : key?.pressed === true ? 1 : 0,
-      keyDown: key?.down ?? false,
-      padDown: pad?.down ?? false,
-    };
+    const pressed = key?.pressed === true ? (key.down ? [true] : [true, false]) : [];
+    return { keyEvents: events ?? pressed, keyDown: key?.down ?? false, padDown: pad?.down ?? false };
   };
   return {
-    ballCam: camera("ballCam"),
-    rearCamera: camera("rearCamera"),
-    reset: held("reset"),
-    ballInFront: held("ballInFront"),
-    ballOnCar: held("ballOnCar"),
-    passBall: held("passBall"),
-    launchBall: held("launchBall"),
-    defendShot: held("defendShot"),
+    ballCam: command("ballCam"),
+    rearCamera: command("rearCamera"),
+    reset: command("reset"),
+    ballInFront: command("ballInFront"),
+    ballOnCar: command("ballOnCar"),
+    passBall: command("passBall"),
+    launchBall: command("launchBall"),
+    defendShot: command("defendShot"),
     scoreboard: held("scoreboard"),
     readyUp: held("readyUp"),
-    trainingPrevious: held("trainingPrevious"),
-    trainingNext: held("trainingNext"),
-    trainingShuffle: held("trainingShuffle"),
-    trainingMirror: held("trainingMirror"),
-    trainingSelect: held("trainingSelect"),
+    trainingPrevious: command("trainingPrevious"),
+    trainingNext: command("trainingNext"),
+    trainingShuffle: command("trainingShuffle"),
+    trainingMirror: command("trainingMirror"),
+    trainingSelect: command("trainingSelect"),
     chat: (["chatPreset1", "chatPreset2", "chatPreset3", "chatPreset4"] as const).map((a) => {
       const [key, pad] = buttonInputs(input, bindings, stickDeadzone, a);
       return { keyPressed: key?.pressed ?? false, padDown: pad?.down ?? false };

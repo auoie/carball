@@ -1,7 +1,7 @@
 // The pads as the game reads them (src/input/devices.ts): a browser without the Gamepad API (turned off, a privacy
 // setting) has none, the game going on without them (the loading screen once stuck behind a first frame that threw)
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InputDevices, WheelTaps, gamepads, padUnmapped, readGamepad } from "./devices";
+import { InputDevices, gamepads, padUnmapped, readGamepad, wheelTaps } from "./devices";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -50,40 +50,37 @@ describe("a pad the browser doesn't map (RV-1124)", () => {
 
 describe("the wheel's taps, as the game's messages (WHEEL1, RV-1137; Shift RV-1126, RV-1131)", () => {
   const wheel = (deltaY: number, deltaX = 0, { deltaMode = 0, shift = false } = {}) => ({ deltaX, deltaY, deltaMode, shiftKey: shift });
+  const counts = (...events: ReturnType<typeof wheel>[]) => events.map((e) => wheelTaps(e)?.count ?? 0);
 
-  it("each notch one tap in its direction, however close together (no window, nothing carried)", () => {
-    const w = new WheelTaps();
-    expect([w.turn(wheel(-100)), w.turn(wheel(-100)), w.turn(wheel(100)), w.turn(wheel(-100))]).toEqual([
-      { code: "WheelUp", count: 1 },
+  it("each event its own taps in its direction, however close together (no window, nothing carried)", () => {
+    expect([wheelTaps(wheel(-100)), wheelTaps(wheel(100)), wheelTaps(wheel(-53))]).toEqual([
       { code: "WheelUp", count: 1 },
       { code: "WheelDown", count: 1 },
       { code: "WheelUp", count: 1 },
     ]);
   });
 
-  it("an event the browser merged several notches into: that many taps, counted by this device's notch", () => {
-    const chromium = new WheelTaps();
-    expect([chromium.turn(wheel(100)), chromium.turn(wheel(300))].map((t) => t?.count)).toEqual([1, 3]);
-    const linux = new WheelTaps();
-    expect([linux.turn(wheel(53)), linux.turn(wheel(106)), linux.turn(wheel(-53))].map((t) => t?.count)).toEqual([1, 2, 1]);
-    const lines = new WheelTaps();
-    expect([lines.turn(wheel(3, 0, { deltaMode: 1 })), lines.turn(wheel(6, 0, { deltaMode: 1 }))].map((t) => t?.count)).toEqual([1, 2]);
-    expect(new WheelTaps().turn(wheel(1, 0, { deltaMode: 2 }))).toEqual({ code: "WheelDown", count: 1 });
+  it("every ordinary notch one tap: Chromium's 100 and 53 px, Firefox's 48, a 1-line notch's 33, 1 to 3 lines, a page", () => {
+    expect(
+      counts(wheel(100), wheel(53), wheel(48), wheel(33.3), wheel(3, 0, { deltaMode: 1 }), wheel(1, 0, { deltaMode: 1 }), wheel(1, 0, { deltaMode: 2 })),
+    ).toEqual([1, 1, 1, 1, 1, 1, 1]);
+  });
+
+  it("a merged event: its notches against Chromium's 100 px (3 lines), the first event too (RV-1148); a piece before never skews a notch after (RV-1145)", () => {
+    expect(counts(wheel(200), wheel(300), wheel(6, 0, { deltaMode: 1 }), wheel(2, 0, { deltaMode: 2 }))).toEqual([2, 3, 2, 2]);
+    expect(counts(wheel(50), wheel(35), wheel(100), wheel(100)), "pieces, then the mouse's notches").toEqual([1, 1, 1, 1]);
   });
 
   it("smaller than a notch (a precision wheel's or a trackpad's pieces): one tap each in its own direction, the user's choice over the game's every-piece-up bug", () => {
-    const w = new WheelTaps();
-    expect([w.turn(wheel(12.5)), w.turn(wheel(-12.5)), w.turn(wheel(4))]).toEqual([
+    expect([wheelTaps(wheel(12.5)), wheelTaps(wheel(-12.5)), wheelTaps(wheel(4))]).toEqual([
       { code: "WheelDown", count: 1 },
       { code: "WheelUp", count: 1 },
       { code: "WheelDown", count: 1 },
     ]);
-    expect(w.turn(wheel(100)), "a notch after: one, the pieces never its measure").toEqual({ code: "WheelDown", count: 1 });
   });
 
   it("Shift's turn, which Chromium sends sideways, the same turn; sideways without Shift none; nothing, none", () => {
-    const w = new WheelTaps();
-    expect([w.turn(wheel(0, -100, { shift: true })), w.turn(wheel(0, 100)), w.turn(wheel(0))]).toEqual([{ code: "WheelUp", count: 1 }, null, null]);
+    expect([wheelTaps(wheel(0, -100, { shift: true })), wheelTaps(wheel(0, 100)), wheelTaps(wheel(0))]).toEqual([{ code: "WheelUp", count: 1 }, null, null]);
   });
 });
 
@@ -128,6 +125,17 @@ describe("the keyboard's and the wheel's taps in play (RV-1096, RV-1100, RV-1127
     expect([tapped.pressedKeys?.has("WheelUp"), tapped.releasedKeys?.has("WheelUp"), tapped.keys.has("WheelUp")]).toEqual([true, true, false]);
     input.bound = (code) => code === "WheelUp";
     expect(turn(), "bound, in play").toBe(true);
+    input.snapshot();
+    // (a merged event of three notches: three taps, each a press and release in order: RV-1150)
+    surface.dispatchEvent(event("wheel", { deltaY: -300, deltaX: 0, deltaMode: 0 }));
+    expect(input.snapshot().events?.map((e) => (e.kind === "key" ? `${e.code}:${String(e.down)}` : ""))).toEqual([
+      "WheelUp:true",
+      "WheelUp:false",
+      "WheelUp:true",
+      "WheelUp:false",
+      "WheelUp:true",
+      "WheelUp:false",
+    ]);
     input.menuOpen = () => true;
     expect(turn(), "bound, a menu up").toBe(false);
     input.dispose();
