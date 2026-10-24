@@ -514,6 +514,8 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   await box.uncheck();
   await closeMenus(page);
   await expect.poll(async () => (await pads()).boost, { timeout: 5_000 }).toBeCloseTo(100 / 3, 3);
+  // (the boost ring a third full: its filled arc 33 of the ring's 100, from 12 o'clock)
+  await expect(page.locator("#boost .ring-fill")).toHaveAttribute("stroke-dasharray", "33.00 67.00");
 
   // The pad lit, from behind it; then onto it (taken, +12 boost); then the same look again
   const region = { x: 540, y: 340, width: 200, height: 140 };
@@ -621,10 +623,14 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   // The main menu over the arena: Play, then Free Play
   await expect(page.locator("#main-menu")).toBeVisible();
   await freePlay(page);
-  // The boost meter: freeplay's unlimited boost, full, its "max" look (the fuel gauge's glow); no scoreboard in training (HUD-4)
+  // The boost meter: freeplay's unlimited boost, the ring full round its number, nothing else (the user's design,
+  // 2026-10-24); no scoreboard in training (HUD-4)
   await expect(page.locator("#boost")).toBeVisible();
   await expect(page.locator("#boost-value")).toHaveText("100");
-  await expect(page.locator("#boost")).toHaveClass(/max/);
+  await expect(page.locator("#boost .ring-fill")).toHaveAttribute("stroke-dasharray", "none");
+  // (circles alone, and the number in ice blue: no ticks, needle or label)
+  await expect(page.locator("#boost svg :is(path, line, polyline, text)")).toHaveCount(0);
+  await expect(page.locator("#boost-value")).toHaveCSS("color", "rgb(191, 227, 255)");
   // (#score the board's 0 x 0 anchor: its digits and clock)
   await expect(page.locator("#score-blue")).toBeHidden();
   await expect(page.locator("#clock")).toBeHidden();
@@ -634,12 +640,12 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   await page.mouse.down({ button: "middle" });
   await expect(page.locator("#ballcam")).toHaveClass(/shown/);
   await expect(page.locator("#ballcam-toggle")).toHaveText("");
-  // (BALL CAM's capitals as tall as Bourgeois Medium's at its 32: 0.5679 em, whatever font stands in for it here)
-  const cap = await page.locator(".ballcam-head > span:not(.rec-dot)").evaluate((el) => {
-    const style = getComputedStyle(el);
+  // (the header face's capitals as tall as Bourgeois Medium's at its 32: 0.5679 em, whatever font stands in for it here)
+  const cap = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
     const ctx = document.createElement("canvas").getContext("2d");
     if (!ctx) return 0;
-    ctx.font = `${style.fontSize} ${style.fontFamily}`;
+    ctx.font = `${String(32 * (Number(root.getPropertyValue("--hud-header-scale")) || 1))}px ${root.getPropertyValue("--hud-header")}`;
     return ctx.measureText("H").actualBoundingBoxAscent;
   });
   expect(cap / 32).toBeCloseTo(0.5679, 1);
@@ -653,25 +659,31 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   }));
   expect(fonts.loaded).toEqual(expect.arrayContaining(["Orbitron", "Rajdhani Light", "Rajdhani SemiBold"]));
   expect(fonts.zero).toBeGreaterThan(0.5);
-  // (HUD-12, the user's findings 13, 16 and 26: the dot's centre on the label's capitals' middle, in any font; the hint's box
-  // starting where the label's does; in stage px)
-  const place = await page.evaluate(() => {
-    const head = document.querySelector(".ballcam-head");
-    const dot = head?.querySelector(".rec-dot");
-    const label = head?.querySelector("span:not(.rec-dot)");
-    const hint = document.querySelector("#ballcam-toggle");
-    if (!head || !dot || !label || !hint) return null;
-    const probe = document.createElement("span"); // (an empty inline box: its bottom is the line's baseline)
-    probe.style.display = "inline-block";
-    label.append(probe);
-    const baseline = probe.getBoundingClientRect().bottom;
-    probe.remove();
-    const d = dot.getBoundingClientRect();
-    const scale = d.width / 32;
-    return { above: (baseline - (d.top + d.height / 2)) / scale, hint: (hint.getBoundingClientRect().left - label.getBoundingClientRect().left) / scale };
+  // (HUD-12, ours since 2026-10-24, the user's design: no red dot; a soccer ball and BALL CAM in a glass box with an ice
+  // border; the hint's row starting at the box's left, under it)
+  const shown = await page.evaluate(() => {
+    const box = document.querySelector(".ballcam-box");
+    const hint = document.querySelector(".ballcam-hint");
+    if (!box || !hint) return null;
+    const style = getComputedStyle(box);
+    const [b, h] = [box.getBoundingClientRect(), hint.getBoundingClientRect()];
+    return {
+      dots: document.querySelectorAll("#ballcam .rec-dot").length,
+      icon: document.querySelectorAll(".ballcam-icon svg mask#ballcam-icon-mask").length,
+      label: box.textContent.trim(),
+      look: [style.borderTopColor, style.borderTopWidth, style.borderTopLeftRadius, style.color],
+      hint: { left: h.left - b.left, below: h.top - b.bottom },
+    };
   });
-  expect(Math.abs((place?.above ?? 0) - cap / 2)).toBeLessThan(0.5);
-  expect(Math.abs(place?.hint ?? 99)).toBeLessThan(0.5);
+  expect(shown?.dots).toBe(0);
+  expect(shown?.icon).toBe(1);
+  expect(shown?.label).toBe("BALL CAM");
+  // (the border's 2.5 px as drawn: Chromium snaps a border's width to whole device pixels, 2 at a ratio of 1)
+  expect([shown?.look[0], shown?.look[2], shown?.look[3]]).toEqual(["rgba(191, 227, 255, 0.9)", "8px", "rgb(191, 227, 255)"]);
+  expect(parseFloat(shown?.look[1] ?? "0")).toBeGreaterThanOrEqual(2);
+  expect(parseFloat(shown?.look[1] ?? "0")).toBeLessThanOrEqual(2.5);
+  expect(Math.abs(shown?.hint.left ?? 99)).toBeLessThan(0.5);
+  expect(shown?.hint.below ?? -1).toBeGreaterThanOrEqual(0);
   await page.mouse.up({ button: "middle" });
   await expect(page.locator("#ballcam")).not.toHaveClass(/shown/);
   // The pause menu: the boost meter goes under it (HUD-16); Resume Game (no Show Controls in a match: HT-4)
@@ -686,13 +698,12 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
     .click();
   await expect(page.locator("#pause-menu")).toBeHidden();
   await expect(page.locator("#boost")).toBeVisible();
-  // The Interface tab: the plain boost meter, then the HUD hidden
+  // The Interface tab: no Team-Colored Boost Meter (the ring always ice blue: the user's design, 2026-10-24); the HUD hidden
   await openSettings(page);
   await page.locator('.settings-tab[data-tab="interface"]').click();
-  await page.locator('[data-setting="teamColoredBoost"]').uncheck();
+  await expect(page.locator('[data-setting="teamColoredBoost"]')).toHaveCount(0);
   await page.locator('[data-setting="hideHud"]').check();
   await closeMenus(page);
-  await expect(page.locator("#boost")).toHaveClass(/plain/);
   await expect(page.locator("#hud")).toHaveClass(/hud-hidden/);
   await expect(page.locator("#hud-stage")).toBeHidden();
   // Exit to Main Menu, its question answered (HT-4)

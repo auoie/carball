@@ -236,19 +236,18 @@ body {
 }
 
 /* Flip indicator (ours: whether the car can dodge, src/game/flipTracker.ts) as a flat dashboard tell-tale (the user's
-   choices, 2026-10-16; src/ui/flipLamp.ts): the pictogram glowing amber in a thin flat ring, its 100 x 100 box on the HUD's
-   stage, scaled with it, just left of the boost meter (200 x 200, 10 in from the right and the bottom), level with its
-   centre, so they never overlap; the window's seconds under it in the boost number's style. The states set its colour:
-   lit amber, dim on the wheels, very dim once spent, gold from a flip reset */
+   choices, 2026-10-16; src/ui/flipLamp.ts): the pictogram in a thin ring over a glass disc, the visor look's ice blue with
+   its glow (2026-10-24), its 100 x 100 box on the HUD's stage, scaled with it, just left of the boost meter (200 x 200, 10
+   in from the right and the bottom), level with its centre, so they never overlap; the window's seconds under it. The
+   states: lit, at 0.55 on the wheels, at 0.25 once spent with no glow, and gold from a flip reset (its own colour) */
 #flip {
   position: absolute;
   right: 220px;
   bottom: 60px;
   width: 100px;
   height: 100px;
-  --lamp: 255, 168, 38;
+  --lamp: var(--hud-ice);
   --lamp-alpha: 1;
-  --lamp-glow: 0.75;
 }
 
 .flip-lamp {
@@ -256,16 +255,15 @@ body {
   inset: 0;
   overflow: visible;
   opacity: var(--lamp-alpha);
-  /* (a soft flat glow, as the meter's bars', and a black one under it to hold it over a bright floor) */
-  filter: drop-shadow(0 0 5px rgba(var(--lamp), var(--lamp-glow))) drop-shadow(0 0 2px rgba(0, 0, 0, 0.7));
+  filter: var(--hud-glow);
   transition:
     opacity 0.15s,
     filter 0.15s;
 }
 
 .flip-ring {
-  fill: none;
-  stroke: rgba(var(--lamp), 0.55);
+  fill: rgba(var(--hud-glass), 0.14);
+  stroke: rgb(var(--lamp));
 }
 
 .flip-icon {
@@ -275,11 +273,11 @@ body {
 .flip-icon .flip-icon-arc {
   fill: none;
   stroke: rgb(var(--lamp));
-  stroke-width: 3.6;
+  stroke-width: 3;
   stroke-linecap: round;
 }
 
-/* (the seconds under the lamp: the boost number's digits, smaller, in the lamp's colour) */
+/* (the seconds under the lamp: the HUD's number digits, small, in the lamp's colour) */
 .flip-seconds {
   --numbers-size: 22px;
   --numbers-gap: 0px;
@@ -309,18 +307,19 @@ body {
 }
 
 #flip[data-state="ground"] {
-  --lamp-alpha: 0.4;
-  --lamp-glow: 0.2;
+  --lamp-alpha: 0.55;
 }
 
 #flip[data-state="spent"] {
-  --lamp-alpha: 0.12;
-  --lamp-glow: 0;
+  --lamp-alpha: 0.25;
+}
+
+#flip[data-state="spent"] .flip-lamp {
+  filter: none;
 }
 
 #flip[data-state="reset"] {
-  --lamp: 255, 192, 56;
-  --lamp-glow: 0.9;
+  --lamp: 255, 206, 84;
 }
 
 /* (text for the page's readers and the tests, not shown) */
@@ -983,6 +982,14 @@ body {
   --hud-thin: "Rajdhani Light", "Bahnschrift Light SemiCondensed", "Arial Narrow", sans-serif;
   --hud-numbers: Orbitron, "Bahnschrift", "Arial", sans-serif;
   --hud-small: "Arial Narrow", Arial, sans-serif;
+  /* (ours: the visor look of the boost ring, the ball cam box and the flip lamp, the user's design after their reference
+     HUD, 2026-10-24: pale ice-blue lines and text, translucent glass fills, a soft glow) */
+  --hud-ice: 191, 227, 255;
+  --hud-ice-fill: 143, 208, 255;
+  --hud-glass: 110, 170, 225;
+  --hud-fill-top: #e4f3ff;
+  --hud-fill-bottom: #8fd0ff;
+  --hud-glow: drop-shadow(0 0 4px rgba(143, 208, 255, 0.55));
 }
 
 .scoreboard-layer,
@@ -1831,8 +1838,7 @@ body {
    field: 2 px (its gutter) + the font's ascent 0.7775 em below the field's top, so they sit the same in any font (a row
    aligning an empty strut's bottom with the cells' baseline, their lines 0 high) */
 .score-digits,
-#clock,
-#boost-value {
+#clock {
   --numbers-gap: 0px;
   display: flex;
   align-items: baseline;
@@ -1841,8 +1847,7 @@ body {
 }
 
 .score-digits::before,
-#clock::before,
-#boost-value::before {
+#clock::before {
   content: "";
   flex: none;
   height: calc(2px + 0.7775 * var(--numbers-size));
@@ -2020,24 +2025,14 @@ body {
      dot's centre (the user's decision, 2026-10-14: with HT-12's Flash baseline, 11.2, the dot looked too high); the hint's 15.4 under
      the label's, as the movie's fields are) */
   --rec-label-baseline: calc(32px * var(--hud-header-scale, 1) * var(--hud-header-cap, 0.5679) / 2);
-  --rec-hint-baseline: calc(var(--rec-label-baseline) + 15.4px);
   /* (where the origin is in a head row: x 16, y 32 less the label's baseline under the dot) */
   --rec-origin-y: calc(var(--rec-dot) - var(--rec-label-baseline));
 }
 
-.rec-head,
-.rec-hint {
+.rec-head {
   display: flex;
   align-items: baseline;
   white-space: nowrap;
-}
-
-/* (the hint's row: its text from the label's left, its baseline 16 below the label's: a spacer that tall) */
-.rec-hint::before {
-  content: "";
-  flex: none;
-  width: calc(var(--rec-dot) / 2 + var(--rec-text-x));
-  height: calc(var(--rec-hint-baseline) - var(--rec-label-baseline));
 }
 
 .rec-dot {
@@ -2077,8 +2072,7 @@ body {
   }
 }
 
-#replay-label,
-.ballcam-head {
+#replay-label {
   font: calc(32px * var(--hud-header-scale, 1))/0 var(--hud-header);
   color: #ff7752;
   text-shadow: 0 0 8px #ff4343;
@@ -2193,12 +2187,13 @@ body {
   color: #ff4343;
 }
 
-/* HUD-12: the ball-cam indicator, the dot's centre at (50, H - 48) shown: slides 20 in as it shows (0.2 s), out in
-   0.3 s. (Its rows: the head's 32 and the hint's 16, the origin 21 below the top) */
+/* HUD-12, ours since 2026-10-24 (the user's design after their reference HUD): the ball cam's box (a soccer ball and BALL
+   CAM in a glass box with an ice border and a soft glow, no red dot) and its toggle's hint under it; the box's left 32 in
+   and the hint's row 44 up once shown: slides 20 in as it shows (0.2 s), out in 0.3 s, as the game's */
 #ballcam {
   position: absolute;
-  left: calc(50px - 20px - var(--rec-dot) / 2);
-  bottom: calc(48px + var(--rec-origin-y) - var(--rec-dot) - (var(--rec-hint-baseline) - var(--rec-label-baseline)));
+  left: 12px;
+  bottom: 44px;
   opacity: 0;
   transform: translateX(0);
   transition:
@@ -2212,199 +2207,125 @@ body {
   transition-duration: 0.2s;
 }
 
+.ballcam-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  padding: 6px 14px 4px 10px;
+  border: 2.5px solid rgba(var(--hud-ice), 0.9);
+  border-radius: 8px;
+  background: rgba(var(--hud-glass), 0.16);
+  box-shadow:
+    0 0 6px rgba(var(--hud-ice-fill), 0.35),
+    inset 0 0 6px rgba(var(--hud-ice-fill), 0.25);
+  font: 24px var(--hud-header);
+  letter-spacing: 1.5px;
+  color: rgb(var(--hud-ice));
+  text-shadow: 0 0 6px rgba(var(--hud-ice-fill), 0.55);
+  white-space: nowrap;
+}
+
+.ballcam-icon,
+.ballcam-icon svg {
+  display: block;
+}
+
+/* (the hint's row a fixed height, its text on a fixed baseline: the box never moves, nor the text, whatever its prompt
+   shows, a word, a mouse or a pad's badge (their lines 0 high, a badge's text smaller: centring the line would move it, the
+   user's finding, 2026-10-24). The baseline an empty strut's bottom, where the 16 px capitals sit in the row's middle) */
+.ballcam-hint {
+  display: flex;
+  align-items: baseline;
+  height: 18px;
+  margin-top: 6px;
+  white-space: nowrap;
+}
+
+.ballcam-hint::before {
+  content: "";
+  flex: none;
+  height: calc(9px + 8px * var(--hud-header-scale, 1) * var(--hud-header-cap, 0.5679));
+}
+
 #ballcam-toggle {
   font: calc(16px * var(--hud-header-scale, 1))/0 var(--hud-header);
   color: #fff;
   text-transform: uppercase;
 }
 
-/* The boost meter as a fuel gauge (ours, src/ui/fuelGauge.ts: the user's design, 2026-10-17; one dashboard with the flip
-   lamp beside it): a flat semicircular dial on a dark translucent face, thin ticks, E and F, an amber needle; the number
-   under the hub, BOOST under it; the arc's band glowing calmly when full, a soft red cue near E while low */
+/* The boost meter as a visor ring (ours, src/ui/boostRing.ts: the user's design after their reference HUD, 2026-10-24;
+   one dashboard with the flip lamp beside it): a glass disc, the track between two thin outlines, the filled arc in the
+   pale gradient with the glow; the number inside it in ice blue */
 #boost {
   position: absolute;
   right: 10px;
   bottom: 10px;
   width: 200px;
   height: 200px;
-  --gauge-amber: 255, 176, 58;
 }
 
-.gauge-art {
+.ring-art {
   position: absolute;
   inset: 0;
   overflow: visible;
 }
 
-.gauge-face {
-  fill: rgba(6, 10, 18, 0.62);
-  stroke: rgba(255, 255, 255, 0.14);
-  stroke-width: 1.2;
+.ring-glass-in {
+  stop-color: rgb(var(--hud-glass));
+  stop-opacity: 0.26;
 }
 
-.gauge-track {
+.ring-glass-out {
+  stop-color: rgb(var(--hud-glass));
+  stop-opacity: 0.1;
+}
+
+.ring-fill-top {
+  stop-color: var(--hud-fill-top);
+}
+
+.ring-fill-bottom {
+  stop-color: var(--hud-fill-bottom);
+}
+
+.ring-disc {
+  stroke: rgba(var(--hud-ice), 0.22);
+  stroke-width: 1;
+}
+
+.ring-track,
+.ring-outline,
+.ring-fill {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.16);
-  stroke-width: 2;
 }
 
-.gauge-low {
-  fill: none;
-  stroke: rgba(255, 74, 58, 0.32);
-  stroke-width: 3;
-  transition: stroke 0.3s;
+.ring-track {
+  stroke: rgba(var(--hud-ice), 0.1);
 }
 
-#boost.low .gauge-low {
-  stroke: rgba(255, 88, 66, 0.85);
-}
-
-.gauge-full,
-.gauge-full-glow {
-  fill: none;
-  stroke: rgb(var(--gauge-amber));
-  stroke-width: 2.5;
-  opacity: 0;
-  transition: opacity 0.4s;
-}
-
-.gauge-full-glow {
-  stroke-width: 7;
-}
-
-#boost.max .gauge-full {
-  opacity: 0.9;
-}
-
-#boost.max .gauge-full-glow {
-  opacity: 0.5;
-}
-
-.gauge-tick {
-  stroke: rgba(255, 222, 176, 0.6);
-  stroke-width: 1.4;
-  stroke-linecap: round;
-}
-
-.gauge-tick.major {
-  stroke: rgba(255, 222, 176, 0.92);
-  stroke-width: 2.2;
-}
-
-.gauge-letter {
-  font: 600 15px var(--hud-header);
-  fill: rgba(235, 238, 245, 0.85);
-}
-
-#boost.low .gauge-e {
-  fill: rgb(255, 112, 92);
-}
-
-.gauge-needle-line {
-  stroke: rgb(var(--gauge-amber));
-  stroke-width: 3.2;
-  stroke-linecap: round;
-}
-
-#boost.max .gauge-needle {
-  filter: drop-shadow(0 0 3px rgba(var(--gauge-amber), 0.85));
-}
-
-.gauge-hub {
-  fill: #141a24;
-  stroke: rgb(var(--gauge-amber));
-  stroke-width: 2;
-}
-
-/* (the fuel pump: dim, nearly unseen; lit amber with a soft glow at 15 or under, pulsing once as it lights) */
-.gauge-pump-body {
-  fill: rgba(235, 238, 245, 0.1);
-}
-
-.gauge-pump-hose {
-  fill: none;
-  stroke: rgba(235, 238, 245, 0.1);
+.ring-outline {
+  stroke: rgba(var(--hud-ice), 0.6);
   stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
-#boost.low .gauge-pump-body {
-  fill: rgb(var(--gauge-amber));
+.ring-fill {
+  stroke-linecap: butt;
+  opacity: 0.95;
+  filter: var(--hud-glow);
 }
 
-#boost.low .gauge-pump-hose {
-  stroke: rgb(var(--gauge-amber));
-}
-
-#boost.low .gauge-pump {
-  filter: drop-shadow(0 0 3px rgba(var(--gauge-amber), 0.8));
-  animation: gauge-pump-on 0.9s ease-out;
-}
-
-@keyframes gauge-pump-on {
-  0% {
-    opacity: 0.3;
-  }
-
-  20% {
-    opacity: 1;
-  }
-
-  45% {
-    opacity: 0.4;
-  }
-
-  70%,
-  100% {
-    opacity: 1;
-  }
-}
-
-.gauge-flash {
-  opacity: 0;
-}
-
-.gauge-flash-arc {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 6;
-}
-
+/* (the number in the ring's middle, plain text in the header face: the mockup's 62 px, a little below the centre) */
 #boost-value {
-  --numbers-size: 40px;
   position: absolute;
-  left: 40px;
-  top: 114px;
-  width: 120px;
-  height: 44px;
-  font: calc(var(--numbers-size) * var(--hud-numbers-scale, 1))/0 var(--hud-numbers);
-  color: rgb(102, 147, 255);
-  text-shadow: 0 0 6px #000;
-}
-
-#boost-label {
-  position: absolute;
-  left: 40px;
-  top: 152px;
-  width: 120px;
-  font: calc(13px * var(--hud-header-scale, 1))/16px var(--hud-header);
-  letter-spacing: 0.12em;
-  text-align: center;
-  color: rgba(var(--gauge-amber), 0.9);
-}
-
-#boost.team-1 #boost-value {
-  color: rgb(255, 163, 102);
-}
-
-#boost.plain #boost-value {
-  color: rgb(var(--gauge-amber));
-}
-
-#boost.max #boost-value {
-  color: #fff;
-  text-shadow: 0 0 8px #000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-top: 4px;
+  font: 62px/1 var(--hud-header);
+  letter-spacing: 1px;
+  color: rgb(var(--hud-ice));
+  text-shadow: 0 0 8px rgba(var(--hud-ice-fill), 0.6);
 }
 
 /* MENU-4: the pause menu, a column of buttons at the left (MidGameMenu), the match's buttons and the players with it */

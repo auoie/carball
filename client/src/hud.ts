@@ -10,7 +10,8 @@ import { respawnShown } from "./game/matchSequence";
 import type { MatchState } from "./net/protocol";
 import { type KeyGlyph, clearPrompt, glyphElement, renderPrompt } from "./ui/keyGlyph";
 import { FlipLamp } from "./ui/flipLamp";
-import { FuelGaugeArt } from "./ui/fuelGauge";
+import { BoostRing } from "./ui/boostRing";
+import BALL_ICON from "./ui/ballIcon.svg?raw";
 import { SCOREBUG_REST, SCORE_INTRO_END, ScorebugArt, scoreIntroPose } from "./ui/scorebug";
 import { setNumberText } from "./ui/numberCells";
 
@@ -59,11 +60,6 @@ export function respawnView(
 /** Whether the bars are orange (RH1: from 60 % down, at it too) */
 export function respawnLate(pct: number): boolean {
   return pct <= RESPAWN_LATE_PCT;
-}
-
-/** The meter's "low" cue: its shown number at 15 or under */
-export function boostLow(shown: number): boolean {
-  return shown <= 15;
 }
 
 /** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
@@ -189,7 +185,7 @@ export class Hud {
   readonly #stage: HTMLElement;
   readonly #stageFit = { key: "" };
   readonly #boostValue: HTMLElement;
-  readonly #boostArt: FuelGaugeArt;
+  readonly #boostRing: BoostRing;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
   readonly #scoreBox: HTMLElement;
@@ -230,7 +226,7 @@ export class Hud {
     this.#root = root;
     this.#stage = element(root, "#hud-stage", HTMLElement);
     this.#boostValue = element(root, "#boost-value", HTMLElement);
-    this.#boostArt = new FuelGaugeArt(element(root, "#boost", HTMLElement));
+    this.#boostRing = new BoostRing(element(root, "#boost", HTMLElement));
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
     this.#scoreBox = element(root, "#score", HTMLElement);
@@ -248,6 +244,8 @@ export class Hud {
     this.#replayWaiting = element(root, "#replay-waiting", HTMLElement);
     this.#ballCam = element(root, "#ballcam", HTMLElement);
     this.#ballCamToggle = element(root, "#ballcam-toggle", HTMLElement);
+    // (the ball cam's icon: a soccer ball, the user's (2026-10-24), its own SVG)
+    element(root, ".ballcam-icon", HTMLElement).innerHTML = BALL_ICON;
     this.#fps = element(root, "#fps", HTMLElement);
     this.#net = element(root, "#net", HTMLElement);
     this.#flip = element(root, "#flip", HTMLElement);
@@ -301,7 +299,7 @@ export class Hud {
     const menuOpen = s.menuOpen ?? false;
     const team = s.localTeam === 1 ? 1 : 0;
     this.#updateScoreboard(s, team);
-    this.#updateBoost(s.boost, team, (s.parts?.boost ?? true) && carView && !menuOpen, now);
+    this.#updateBoost(s.boost, (s.parts?.boost ?? true) && carView && !menuOpen, now);
     this.#updateMessage(s.message, now, stage.width);
     this.#updateReplay(s.replay ?? null);
     const ballCam = (this.#ui?.ballCamIndicator ?? true) && s.ballCam && carView && !menuOpen && (s.parts?.ballCamIndicator ?? true);
@@ -383,27 +381,21 @@ export class Hud {
   #boostFrom = 0;
   #boostSince = 0;
 
-  /** The fuel gauge (ours, src/ui/fuelGauge.ts): the number tweens to its new value over 0.2 s, the needle following on
-   *  its damped spring; an increase brightens the needle and the arc; the number team-coloured or plain; "full" glowing
-   *  at 100 (the class `max`), "low" at 15 or under */
-  #updateBoost(boost: number, team: 0 | 1, shown: boolean, now: number): void {
+  /** The boost ring (ours, src/ui/boostRing.ts): the number tweens to its new value over 0.2 s (HUD-6), the ring with it,
+   *  so it fills and empties smoothly; the number in the ring's ice blue, plain text in the HUD's header face */
+  #updateBoost(boost: number, shown: boolean, now: number): void {
     this.#boostBox.hidden = !shown;
     const target = boostShown(boost);
     const displayedNow = this.#boostDisplayed(now);
     if (target !== this.#boostTarget) {
-      if (this.#boostTarget >= 0 && target > this.#boostTarget && shown) this.#boostArt.flash();
       this.#boostFrom = this.#boostTarget < 0 ? target : displayedNow;
       this.#boostTarget = target;
       this.#boostSince = now;
     }
-    const value = Math.round(this.#boostDisplayed(now));
-    setNumberText(this.#boostValue, String(value));
-    this.#boostArt.set(target, now);
-    const teamColoured = this.#ui?.teamColoredBoost ?? true;
-    this.#boostBox.classList.toggle("team-1", teamColoured && team === 1);
-    this.#boostBox.classList.toggle("plain", !teamColoured);
-    this.#boostBox.classList.toggle("max", value >= 100);
-    this.#boostBox.classList.toggle("low", boostLow(value));
+    const displayed = this.#boostDisplayed(now);
+    const text = String(Math.round(displayed));
+    if (this.#boostValue.textContent !== text) this.#boostValue.textContent = text;
+    this.#boostRing.set(displayed);
   }
 
   #boostDisplayed(now: number): number {
@@ -537,7 +529,7 @@ export class Hud {
   #updateFlip(dodge: Dodge | null, reset: boolean): void {
     this.#flip.hidden = dodge === null;
     if (dodge === null) return;
-    // The lamp: lit while a dodge is there (amber; gold from a flip reset), dim on the wheels, dark once spent; the
+    // The lamp: lit while a dodge is there (ice blue; gold from a flip reset), dimmer on the wheels, dim once spent; the
     // window's seconds on its readout (and in words, for the page's readers and the tests)
     const state = dodge.kind === "free" && dodge.reset ? "reset" : dodge.kind;
     if (this.#flip.dataset["state"] !== state) this.#flip.dataset["state"] = state;

@@ -73,7 +73,6 @@ const INTERFACE_TEXT = {
     speedShort: "Speed Graph (short)",
     speedLong: "Speed Graph (long)",
   },
-  teamColoredBoost: "Team-Colored Boost Meter",
   metric: "Metric",
   ballCamIndicator: "Ball Cam Indicator",
   ballArrow: "Ball Arrow",
@@ -822,7 +821,8 @@ export class SettingsPanel {
         },
       });
     const options = el("div", { className: "options" });
-    for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "ballArrow", "hideHud"] as const) {
+    // (no Team-Colored Boost Meter: the boost ring always the HUD's ice blue, the user's design, 2026-10-24)
+    for (const key of ["metric", "ballCamIndicator", "ballArrow", "hideHud"] as const) {
       options.append(
         checkbox({
           label: T[key],

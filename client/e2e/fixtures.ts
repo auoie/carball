@@ -31,30 +31,34 @@ export const test = base.extend({
 export { expect } from "@playwright/test";
 
 /** A scripted standard-layout pad for the page (after the fixture hid the real ones): `setPad(buttons down, axes)` from
- *  the test through `window.carballSetPad`; `mapping` "" a pad the browser doesn't map (never read: RV-1124) */
-export async function fakeGamepad(context: BrowserContext, mapping: "standard" | "" = "standard"): Promise<void> {
-  await context.addInitScript((padMapping) => {
-    const pad = { buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes: [0, 0, 0, 0] };
-    const w = window as unknown as { carballSetPad: (down: number[], axes?: number[]) => void };
-    w.carballSetPad = (down, axes = [0, 0, 0, 0]) => {
-      pad.buttons.forEach((b, i) => {
-        const on = down.includes(i);
-        b.pressed = on;
-        b.value = on ? 1 : 0;
+ *  the test through `window.carballSetPad`; `mapping` "" a pad the browser doesn't map (never read: RV-1124); `id` the
+ *  pad's as the browser names it (Sony's vendor id: a PlayStation pad's glyphs) */
+export async function fakeGamepad(context: BrowserContext, mapping: "standard" | "" = "standard", id = "test pad"): Promise<void> {
+  await context.addInitScript(
+    ([padMapping, padId]) => {
+      const pad = { buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes: [0, 0, 0, 0] };
+      const w = window as unknown as { carballSetPad: (down: number[], axes?: number[]) => void };
+      w.carballSetPad = (down, axes = [0, 0, 0, 0]) => {
+        pad.buttons.forEach((b, i) => {
+          const on = down.includes(i);
+          b.pressed = on;
+          b.value = on ? 1 : 0;
+        });
+        pad.axes = axes;
+      };
+      const gamepad = (): unknown => ({
+        id: padId,
+        index: 0,
+        connected: true,
+        mapping: padMapping,
+        timestamp: performance.now(),
+        buttons: pad.buttons,
+        axes: pad.axes,
       });
-      pad.axes = axes;
-    };
-    const gamepad = (): unknown => ({
-      id: "test pad",
-      index: 0,
-      connected: true,
-      mapping: padMapping,
-      timestamp: performance.now(),
-      buttons: pad.buttons,
-      axes: pad.axes,
-    });
-    Object.defineProperty(navigator, "getGamepads", { value: () => [gamepad()], configurable: true });
-  }, mapping);
+      Object.defineProperty(navigator, "getGamepads", { value: () => [gamepad()], configurable: true });
+    },
+    [mapping, id] as const,
+  );
 }
 
 /** The pad held for one of the page's frames, then let go for two (as e2e/padmenus.spec.ts's tap: never a fixed time; the scripted pad's: fakeGamepad) */

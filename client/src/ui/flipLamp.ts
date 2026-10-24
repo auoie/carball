@@ -1,8 +1,8 @@
-// Our flip indicator as a dashboard tell-tale, drawn flat (the user's choices, 2026-10-16: as the boost meter borrows a
-// rev gauge and the ball-cam indicator a camcorder's REC light, this one a car's warning lamp; flat as those two are, a
-// modern digital dashboard's glowing pictogram, no bezel or glass): our own pictogram (a side-view car tipped under a
-// curved rotation arrow, in the manner of a rollover lamp, copied from none) in flat fills, glowing amber, inside a thin
-// flat ring; lit amber, dim on the wheels, very dim once spent, gold after a flip reset (style.css: #flip's states).
+// Our flip indicator as a dashboard tell-tale, drawn flat (the user's choices, 2026-10-16: a car's warning lamp, flat as
+// the boost ring is, a modern digital dashboard's glowing pictogram, no bezel or glass): our own pictogram (a side-view car
+// tipped under a curved rotation arrow, in the manner of a rollover lamp, copied from none) in flat fills, in the visor
+// look's ice blue with its glow (the user's, 2026-10-24), inside a thin ring over a glass disc; lit, dimmer on the wheels,
+// dim once spent, gold after a flip reset (style.css: #flip's states).
 // Under it during the dodge window, the seconds left in the boost number's own style. All vector, sized by the HUD's stage.
 import { setNumberText } from "./numberCells";
 

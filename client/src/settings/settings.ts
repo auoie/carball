@@ -118,7 +118,6 @@ export interface InterfaceSettings {
   readonly matchNotifications: MatchNotifications;
   /** Stat Graphs: the overlay of the frame rate, the network or the speed (None: a clean screen, the game's default) */
   readonly statGraphs: StatGraphs;
-  readonly teamColoredBoost: boolean;
   /** Metric (else imperial): the replay's speed, the podium titles' units; on by default (GetMetricDefaultValue: on
    *  unless the build's region is the US) */
   readonly metric: boolean;
@@ -142,7 +141,6 @@ export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
   nameplateMode: "default",
   matchNotifications: "all",
   statGraphs: "none",
-  teamColoredBoost: true,
   metric: true,
   ballCamIndicator: true,
   ballArrow: true,
@@ -154,7 +152,7 @@ function readInterface(v: unknown): InterfaceSettings {
   const d = DEFAULT_INTERFACE_SETTINGS;
   const mode = src["nameplateMode"];
   const notifications = src["matchNotifications"];
-  const flag = (k: "teamColoredBoost" | "metric" | "ballCamIndicator" | "ballArrow" | "hideHud"): boolean => (typeof src[k] === "boolean" ? src[k] : d[k]);
+  const flag = (k: "metric" | "ballCamIndicator" | "ballArrow" | "hideHud"): boolean => (typeof src[k] === "boolean" ? src[k] : d[k]);
   return {
     scale: readNumber(src["scale"], d.scale, INTERFACE_LIMITS.scale),
     displayScale: readNumber(src["displayScale"], d.displayScale, INTERFACE_LIMITS.displayScale),
@@ -162,7 +160,6 @@ function readInterface(v: unknown): InterfaceSettings {
     nameplateMode: mode === "distanceFade" || mode === "default" || mode === "simplified" ? mode : d.nameplateMode,
     matchNotifications: notifications === "all" || notifications === "gameUpdates" || notifications === "kickoff" ? notifications : d.matchNotifications,
     statGraphs: STAT_GRAPHS.find((g) => g === src["statGraphs"]) ?? d.statGraphs,
-    teamColoredBoost: flag("teamColoredBoost"),
     metric: flag("metric"),
     ballCamIndicator: flag("ballCamIndicator"),
     ballArrow: flag("ballArrow"),

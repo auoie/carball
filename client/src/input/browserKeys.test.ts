@@ -105,6 +105,15 @@ describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
       expect(told, "the same map again").toBe(1);
       setKeyboardLayout(new Map([["KeyW", "w"]]));
       expect(told).toBe(2);
+      setKeyboardLayout(
+        new Map([
+          ["KeyW", "w"],
+          ["KeyQ", "q"],
+        ]),
+      );
+      expect(told, "a key more: changed (RV-1135)").toBe(3);
+      setKeyboardLayout(new Map([["KeyW", "w"]]));
+      expect(told, "a key fewer: changed").toBe(4);
     } finally {
       setKeyboardLayout(null);
       stop();

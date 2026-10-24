@@ -199,7 +199,6 @@ describe("chat settings (CHAT-5, 18)", () => {
       displayScale: 1,
       nameplateMode: "default",
       matchNotifications: "all",
-      teamColoredBoost: true,
       metric: true,
     });
     const parsed = parseSettings({
