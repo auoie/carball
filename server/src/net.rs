@@ -41,21 +41,44 @@ pub struct Inputs {
     pub at: std::time::Instant,
 }
 
-/// A session's newest input datagram, waiting for the game thread: one at a time, a newer one taking its place (each
-/// carries the newest frames, an older one's among them: the rest as if lost). The game's queue holds one note of it
-/// at most for each session, so neither a session's flood nor a stalled game thread drops another's inputs (RV-991)
+/// The most input datagrams a session's slot holds for one pass of the game thread: a pass a tick (8.33 ms; 44 ms in a
+/// goal's slow motion), a 60 Hz client's one or three, a jittery path's bunched: room for them all (RV-1151); past it a
+/// flood's oldest let go (RV-991)
+pub const INPUTS_PER_PASS: usize = 8;
+
+/// A session's input datagrams waiting for the game thread, in the order they came, each with its arrival time: the
+/// game takes them all at its next pass, every one into the jitter buffer, as the game dispatches every packet before
+/// its world's tick (RV-1151). At most `INPUTS_PER_PASS`: past it the oldest let go, the newest of those let go kept
+/// (`skipped`), so it isn't counted as lost on the network. The game's queue holds one note of it at most for each
+/// session, so neither a session's flood nor a stalled game thread drops another's inputs (RV-991)
 #[derive(Debug, Default)]
-pub struct InputSlot(Mutex<Option<Inputs>>);
+pub struct InputSlot(Mutex<Waiting>);
+
+/// What a session's slot held: its datagrams in the order they came, and the newest sequence let go past the bound
+#[derive(Debug, Default)]
+pub struct Waiting {
+    pub datagrams: std::collections::VecDeque<Inputs>,
+    pub skipped: Option<u16>,
+}
 
 impl InputSlot {
-    /// Puts `inputs` in, in place of any there: whether the slot was empty (a note of it then due)
-    fn put(&self, inputs: Inputs) -> bool {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replace(inputs).is_none()
+    /// Puts `inputs` in after any there, the oldest let go past the bound: whether the slot was empty (a note of it
+    /// then due)
+    pub(crate) fn put(&self, inputs: Inputs) -> bool {
+        let mut waiting = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let empty = waiting.datagrams.is_empty();
+        waiting.datagrams.push_back(inputs);
+        if waiting.datagrams.len() > INPUTS_PER_PASS
+            && let Some(oldest) = waiting.datagrams.pop_front()
+        {
+            waiting.skipped = Some(oldest.sequence);
+        }
+        empty
     }
 
-    /// The datagram waiting, taken out
-    pub fn take(&self) -> Option<Inputs> {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    /// What's waiting, taken out
+    pub fn take(&self) -> Waiting {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 }
 
@@ -1067,9 +1090,9 @@ mod tests {
 
     /// RV-1009: a client's text (a QUIC close's reason, with CR, LF or a line separator) stays on its session's line: it
     /// can't forge a line of its own (a "left: reported as a quitter" of another account)
-    /// RV-991: a session's inputs hold one place in the game's queue at most (its newest waiting): with the game thread
-    /// stalled and one session flooding, another's newest still arrive; the queue full, a datagram is lost, not stuck
-    /// (the next one noted); the game gone, said
+    /// RV-991: a session's inputs hold one place in the game's queue at most (its newest `INPUTS_PER_PASS` waiting, in
+    /// order: RV-1151): with the game thread stalled and one session flooding, another's still arrive; the queue full, a
+    /// datagram is lost, not stuck (the next one noted); the game gone, said
     #[test]
     fn a_floods_inputs_hold_one_place_and_another_sessions_newest_arrive() {
         let datagram =
@@ -1083,13 +1106,17 @@ mod tests {
         deliver_inputs(&to_game, 2, &honest, datagram(8)).unwrap();
         let mut got = Vec::new();
         while let Ok(ToGame::Inputs { id, slot }) = game.try_recv() {
-            got.push((id, slot.take().map(|i| i.sequence)));
+            let waiting = slot.take();
+            got.push((id, waiting.datagrams.iter().map(|i| i.sequence).collect::<Vec<_>>(), waiting.skipped));
         }
-        assert_eq!(got, [(1, Some(9999)), (2, Some(8))], "one note each, the newest of each");
+        // (one note each; the flood's newest INPUTS_PER_PASS kept in order, the newest let go said; the other's both:
+        // RV-1151)
+        let flood: Vec<u16> = (10_000 - INPUTS_PER_PASS as u16..10_000).collect();
+        assert_eq!(got, [(1, flood, Some(9999 - INPUTS_PER_PASS as u16)), (2, vec![7, 8], None)]);
         let (to_game, mut game) = channel(1);
         to_game.try_send(ToGame::Ping { id: 3, ms: 0 }).unwrap();
         deliver_inputs(&to_game, 2, &honest, datagram(9)).unwrap();
-        assert!(honest.take().is_none(), "the queue full: lost, the slot left empty");
+        assert!(honest.take().datagrams.is_empty(), "the queue full: lost, the slot left empty");
         game.try_recv().unwrap();
         deliver_inputs(&to_game, 2, &honest, datagram(10)).unwrap();
         assert!(matches!(game.try_recv(), Ok(ToGame::Inputs { id: 2, .. })), "the next one noted");

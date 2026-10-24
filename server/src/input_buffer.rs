@@ -167,6 +167,14 @@ impl InputBuffer {
         self.last_sequence = Some(sequence);
     }
 
+    /// Datagrams let go before the game read them (a session's slot past its bound, RV-991): their newest sequence, so
+    /// the next one's gap isn't counted as lost on the network (RV-1151)
+    pub fn skip_sequence(&mut self, sequence: u16) {
+        if self.last_sequence.is_none_or(|last| sequence.wrapping_sub(last) as i16 > 0) {
+            self.last_sequence = Some(sequence);
+        }
+    }
+
     /// The window since the last update (its queue now, if no tick sampled it), started again
     pub fn take_window(&mut self) -> BufferWindow {
         let queued = self.frames.len().min(255) as u8;
@@ -469,6 +477,16 @@ mod tests {
         b.note_sequence(65534);
         b.note_sequence(1);
         assert_eq!(b.take_window().lost, 2);
+        // (datagrams let go past a session's slot before the game read them: skipped, not lost; a gap after still counted;
+        // an older skip never moves the base back: RV-1151)
+        let mut b = InputBuffer::default();
+        b.note_sequence(1);
+        b.skip_sequence(9);
+        b.note_sequence(10);
+        assert_eq!(b.take_window().lost, 0);
+        b.skip_sequence(4);
+        b.note_sequence(12);
+        assert_eq!(b.take_window().lost, 1);
         // The queue's fewest and most frames after each tick, the ticks over and under
         let mut b = InputBuffer::default();
         b.receive(1, 1, &[frame(1); 3], 0.0);

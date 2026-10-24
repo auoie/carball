@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 
-use crate::game::Outgoing;
+use crate::game::{Game, Outgoing, PlayerId};
 use crate::match_host::{MatchHost, Playlist, Report};
-use crate::net::{Intent, ToGame};
+use crate::net::{Intent, ToGame, Waiting};
 use crate::protocol::{self, Control};
 
 /// What the server hosts: one open match anyone joins (development servers and the browser tests), or the matchmaker's
@@ -24,6 +24,19 @@ pub enum Mode {
 pub const TO_GAME_QUEUE: usize = 65_536;
 /// At most this many messages read between ticks: a flood waits in the queue instead of starving the matches (SEC-3)
 const MESSAGES_PER_LOOP: usize = 2048;
+
+/// A session's input datagrams since the last pass to its match: every one, in the order they came, each with its
+/// arrival time (`at`, the network's: s from the loop's start by `seconds`) into the jitter buffer, as the game dispatches
+/// every packet before its world's tick (RV-1151); those let go past the slot's bound first, as seen, not lost
+pub fn hand_inputs(game: &mut Game, id: PlayerId, waiting: Waiting, seconds: impl Fn(Instant) -> f64) {
+    if let Some(sequence) = waiting.skipped {
+        game.skip_input_sequence(id, sequence);
+    }
+    for inputs in waiting.datagrams {
+        game.note_input_sequence(id, inputs.sequence);
+        game.receive_inputs(id, inputs.timestamp, inputs.first_frame, &inputs.frames, seconds(inputs.at));
+    }
+}
 
 /// When the loop next wakes (s from its start): the next match's tick (`MatchHost::next_tick`), else, with no match, a
 /// tick's length from `now` (the matchmaker's claims waiting no longer than a match's messages)
@@ -48,8 +61,17 @@ pub fn sleep_until(deadline: Instant) {
             at.tv_sec += 1;
             at.tv_nsec -= 1_000_000_000;
         }
-        // (an interrupting signal: woken early, the loop reckons again and sleeps the rest)
-        unsafe { libc::clock_nanosleep(libc::CLOCK_MONOTONIC, libc::TIMER_ABSTIME, &at, std::ptr::null_mut()) };
+        // (an interrupting signal: woken early, the loop reckons again and sleeps the rest; any other error, none
+        // expected: std's sleep instead, said once, never a loop that spins (RV-1152))
+        let error =
+            unsafe { libc::clock_nanosleep(libc::CLOCK_MONOTONIC, libc::TIMER_ABSTIME, &at, std::ptr::null_mut()) };
+        if error != 0 && error != libc::EINTR {
+            static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !SAID.swap(true, Ordering::Relaxed) {
+                tracing::warn!("the game loop's deadline sleep failed (error {error}): sleeping with std's sleep");
+            }
+            std::thread::sleep(wait);
+        }
     }
     #[cfg(not(target_os = "linux"))]
     std::thread::sleep(wait);
@@ -156,15 +178,9 @@ pub fn run_with_reports(
                 }
                 Ok(ToGame::Leave { id, lost }) => host.leave(id, lost),
                 Ok(ToGame::Inputs { id, slot }) => {
-                    if let (Some(inputs), Some(game)) = (slot.take(), host.game_of(id)) {
-                        game.note_input_sequence(id, inputs.sequence);
-                        game.receive_inputs(
-                            id,
-                            inputs.timestamp,
-                            inputs.first_frame,
-                            &inputs.frames,
-                            seconds(inputs.at),
-                        );
+                    let waiting = slot.take();
+                    if let Some(game) = host.game_of(id) {
+                        hand_inputs(game, id, waiting, seconds);
                     }
                 }
                 Ok(ToGame::ResetInputBuffer { id }) => {

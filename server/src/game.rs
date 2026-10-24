@@ -1377,6 +1377,13 @@ impl Game {
         }
     }
 
+    /// Input datagrams let go before the game read them: their newest sequence, not counted as lost (RV-1151)
+    pub fn skip_input_sequence(&mut self, id: PlayerId, sequence: u16) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.input.skip_sequence(sequence);
+        }
+    }
+
     pub fn receive_inputs(&mut self, id: PlayerId, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) {
         if let Some(p) = self.players.get_mut(&id) {
             p.last_heard = Some(now);
@@ -2183,6 +2190,43 @@ mod tests {
 
     fn throttle_frames(n: usize) -> Vec<InputFrame> {
         vec![InputFrame { throttle: 127, ..InputFrame::default() }; n]
+    }
+
+    /// RV-1151: the game thread reads its sessions' inputs once a tick: every datagram that came in the tick reaches the
+    /// jitter buffer with its own arrival time, in order, and none is counted lost on a clean link
+    #[test]
+    fn a_ticks_input_datagrams_all_reach_the_jitter_buffer_with_their_times_and_none_count_lost() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        let slot = crate::net::InputSlot::default();
+        let start = std::time::Instant::now();
+        let arrivals = [0.0, 0.003, 0.006];
+        for (i, at) in arrivals.iter().enumerate() {
+            slot.put(crate::net::Inputs {
+                timestamp: i as u32 + 1,
+                sequence: i as u16 + 1,
+                first_frame: 1 + 2 * i as u32,
+                frames: throttle_frames(2),
+                at: start + std::time::Duration::from_secs_f64(*at),
+            });
+        }
+        let seconds = |at: std::time::Instant| at.saturating_duration_since(start).as_secs_f64();
+        crate::game_loop::hand_inputs(&mut game, 1, slot.take(), seconds);
+        // (the jitter estimate fed all three arrivals, as one fed them by hand)
+        let mut expected = crate::input_buffer::JitterBuffer::default();
+        for at in arrivals {
+            expected.received_packet(at);
+        }
+        let p = game.players.get_mut(&1).unwrap();
+        assert_eq!(
+            (p.input.jitter.buffer_time, p.input.jitter.buffer_size),
+            (expected.buffer_time, expected.buffer_size)
+        );
+        assert_eq!(p.echo.map(|(t, _)| t), Some(3), "the newest echoed");
+        assert!((p.echo.unwrap().1 - 0.006).abs() < 1e-9, "at its own arrival time");
+        assert_eq!(p.input.take_window().lost, 0, "a clean link: none lost");
     }
 
     #[test]

@@ -52,3 +52,14 @@ context switches over 10 s):
 | one deadline sleep, default slack (50 us) | 57 / 78 / 133 us | 120 |
 | one deadline sleep, slack 1 ns (now) | 7 / 17 / 23 us | 120 |
 
+On the browser tests' online and forfeit specs under perf (the static session's PERF2, a2af2a3 against a58a37a; the
+machine about twice as loaded for the second): the game thread's voluntary switches 938–955 → 120 a second in every
+window; an idle open match's process 0.74 → 0.28 % of a core (the game thread 0.71 → 0.24); two players' game thread
+1.57 → 1.02–1.17 %, three players' 1.73 → 1.49 % (its system time 0.55 → 0.18); the network threads within noise; the
+ticks 120 a second, none slipped.
+
+A pass a tick holds a session's input datagrams for up to a tick (8.33 ms; 44 ms in a goal's slow motion): its slot
+keeps every one that came, in order, each with its arrival time, all of them into the jitter buffer at the pass, as
+the game dispatches every packet before its world's tick (RV-1151; at most eight a pass, a flood's oldest let go past
+that and not counted as lost).
+

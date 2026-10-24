@@ -327,11 +327,10 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
       host.control(CLIENT, RESET_INPUT_BUFFER, at);
       resetsDone++;
     }
-    // (the server's game thread reads a session's inputs once a pass, a millisecond apart at most: of the datagrams that
-    // came within one, the newest alone, its InputSlot's, RV-991, RV-1033)
-    const passes = new Map<number, InFlight<Uint8Array>>();
-    for (const d of deliverTimed(toServer, clock)) passes.set(Math.floor(d.at * 1000), d);
-    for (const d of passes.values()) host.datagram(CLIENT, d.value, d.at);
+    // (the server's game thread reads a session's inputs once a pass, a pass a tick: every datagram that came since, in
+    // order, each with its arrival time, as the game takes every packet (its InputSlot's eight a pass, a bound only a
+    // flood reaches: RV-991, RV-1151))
+    for (const d of deliverTimed(toServer, clock)) host.datagram(CLIENT, d.value, d.at);
     host.tick(clock);
     if (measuring) measuredTicks++;
     if (late.from === null && clock >= options.seconds - 5) late.from = session.predictor.stats.localMispredictions;
