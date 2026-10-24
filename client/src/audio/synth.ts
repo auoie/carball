@@ -15,6 +15,9 @@ export const EXPLOSION = { roar: 0.42, boom: 0.5 } as const;
 /** The goal's: about 4.7 dB under the demolition's at its loudest (K-weighted), most of it the sub-bass boom's (-8 dB),
  *  the roar's a little (-2.9 dB), so the fanfare stays clear (the user's "a little" quieter, 2026-10-24) */
 export const GOAL_EXPLOSION = { roar: 0.3, boom: 0.2 } as const;
+/** The whole goal's level, its explosion and fanfare alike (their balance kept): 2.5 dB down (the user's "slightly
+ *  quieter" again, 2026-10-24) */
+export const GOAL_GAIN = 0.75;
 
 /** The menus' cues (MENU-18) */
 export type MenuCue = "move" | "select" | "confirm" | "back" | "tab";
@@ -166,16 +169,18 @@ export class Synth {
     this.#sweep("sine", 75, 28, 0.6 * size, out, when, level.boom, 1.0 * size);
   }
 
-  /** A goal: the explosion, quieter than a demolition's (GOAL_EXPLOSION), then a short brassy fanfare. */
-  goal(out: AudioNode, when: number, explosion: { readonly roar: number; readonly boom: number } = GOAL_EXPLOSION): void {
-    this.explosion(out, when, 1, explosion);
+  /** A goal: the explosion, quieter than a demolition's (GOAL_EXPLOSION), then a short brassy fanfare, both through the
+   *  goal's own level (GOAL_GAIN) */
+  goal(out: AudioNode, when: number, explosion: { readonly roar: number; readonly boom: number } = GOAL_EXPLOSION, level = GOAL_GAIN): void {
+    const goal = this.gain(level, out);
+    this.explosion(goal, when, 1, explosion);
     const notes: [number, number, number][] = [
       [392, 0.25, 0.12],
       [523.25, 0.37, 0.12],
       [659.25, 0.49, 0.12],
       [783.99, 0.61, 0.85],
     ];
-    for (const [f, start, length] of notes) this.#brass(out, when + start, f, length);
+    for (const [f, start, length] of notes) this.#brass(goal, when + start, f, length);
   }
 
   /** A demolition: a smaller explosion and a crunch. */
