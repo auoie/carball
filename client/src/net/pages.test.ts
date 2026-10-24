@@ -37,6 +37,7 @@ import {
   leaveMatchSeat,
   rankedSeat,
   searchGaveUpSeat,
+  seatKeptAfter,
   seatSearch,
   storeClaim,
   storeNotice,
@@ -484,6 +485,14 @@ describe("the pages' handoffs", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("keeps a rejoin's seat again when the matchmaker couldn't be asked, its join as it was; never for another failure (RV-1022's Q8)", () => {
+    const claim = { token: 7n, playlist: 2, searchedAt: 1, rejoin: true as const, seatJoinedAt: 1234, account: "acct", server: "eu" };
+    expect(seatKeptAfter({ modal: "rejoinUnconfirmed" }, claim)).toEqual({ matchId: 7n, teamSize: 2, joinedAt: 1234, account: "acct", server: "eu" });
+    expect(seatKeptAfter({ modal: "rejoinGone" }, claim)).toBeNull();
+    expect(seatKeptAfter({ modal: "lost" }, claim)).toBeNull();
+    expect(seatKeptAfter({ modal: "rejoinUnconfirmed" }, { token: 7n, playlist: 2, searchedAt: 1, rejoin: true })).toBeNull();
   });
 
   it("keeps a notice's playlists (1-3 team sizes, each once) and its reload and rejoin-refused modals (RV-887's P03, K09)", () => {

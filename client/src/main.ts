@@ -29,6 +29,7 @@ import {
   seatSearch,
   storeClaim,
   storeNotice,
+  seatKeptAfter,
   storeRankedSeat,
   takeClaim,
   takeNotice,
@@ -146,17 +147,9 @@ async function main(): Promise<void> {
   const claimFailed = (e: unknown): void => {
     if (!claim) return;
     const notice = claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone);
-    // (a rejoin the matchmaker couldn't be asked about: its seat kept again, offered once the modal's read, within its own
-    // 900 s, RV-1008)
-    if (notice.modal === "rejoinUnconfirmed" && claim.seatJoinedAt !== undefined) {
-      storeRankedSeat({
-        matchId: claim.token,
-        teamSize: claim.playlist,
-        joinedAt: claim.seatJoinedAt,
-        account: claim.account ?? null,
-        ...(claim.server === undefined ? {} : { server: claim.server }),
-      });
-    }
+    // (a rejoin the matchmaker couldn't be asked about: its seat kept again, offered once the modal's read, RV-1008)
+    const kept = seatKeptAfter(notice, claim);
+    if (kept) storeRankedSeat(kept);
     storeNotice(notice);
     location.replace(pageUrl("menu", location));
   };
@@ -534,7 +527,15 @@ async function main(): Promise<void> {
     const serverNames = new Map<string, string>();
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
     /** A region's ping from its answer, the name its Pong gives kept (pingAnswer) */
+    /** This page older than its servers (a ping refused on version: they updated since it loaded): said once, a reload's
+     *  modal, and its searches refused with it, not "no ticked region answered" (RV-1021) */
+    let outdated = false;
     const answered = (r: Region, answer: Awaited<ReturnType<typeof pingServer>>): number | null => {
+      if (answer === "outdated" && !outdated) {
+        outdated = true;
+        const text = refusalText(REFUSED_VERSION);
+        modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+      }
       const ping = pingAnswer(answer);
       if (ping?.name) serverNames.set(r.id, ping.name);
       return ping?.ms ?? null;
@@ -654,6 +655,7 @@ async function main(): Promise<void> {
             // the player's: the lowest of these pings, kept as the automatic pick, RX43C-1, RV-862, RV-879)
             const request = async (): Promise<SearchRequest> => {
               const measured = await freshPings(all, PING_WAIT_MS);
+              if (outdated) throw new Error(refusalText(REFUSED_VERSION));
               searchable = named(all);
               const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists);
               if (plan.automatic) {

@@ -430,6 +430,19 @@ export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNo
   return { modal: "lost" };
 }
 
+/** The seat a failed rejoin keeps again: one the matchmaker couldn't be asked about (its saved seat as it was, the offer
+ *  within its own 900 s from its join, RV-1008); none for any other failure */
+export function seatKeptAfter(notice: MenuNotice, claim: Claim): RankedSeat | null {
+  if (notice.modal !== "rejoinUnconfirmed" || claim.seatJoinedAt === undefined) return null;
+  return {
+    matchId: claim.token,
+    teamSize: claim.playlist,
+    joinedAt: claim.seatJoinedAt,
+    account: claim.account ?? null,
+    ...(claim.server === undefined ? {} : { server: claim.server }),
+  };
+}
+
 /** The Web Lock a match page holds while it plays its match (`navigator.locks`): another tab of this browser offers no
  *  rejoin of a match one of its tabs plays (RX30C) */
 export function matchLock(matchId: bigint): string {

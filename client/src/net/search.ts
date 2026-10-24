@@ -2,7 +2,7 @@
 // browser's key (a development page's player: its account the key twice). The search itself is the accounts service's
 // matchmaker's (net/matchmaker.ts).
 import { type ServerAddress } from "./connection";
-import { PROTOCOL_VERSION, decodeControl, encodeControl } from "./protocol";
+import { PROTOCOL_VERSION, REFUSED_VERSION, decodeControl, encodeControl } from "./protocol";
 
 const BROWSER_KEY = "carball.browserKey";
 /** This page's key when the browser keeps none (storage blocked) */
@@ -67,14 +67,22 @@ function transportTo(address: ServerAddress): WebTransport {
   return new WebTransport(address.url, address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined);
 }
 
+/** A ping refused on version: the servers speak a newer protocol than this page (it loaded before their update) */
+class OutdatedPageError extends Error {}
+
+/** A region's ping's answer: its round trip and the server's name; "outdated", the server refused it on version (this
+ *  page is older than the servers: it should reload, RV-1021); null, unreached */
+export type PingAnswer = { readonly ms: number; readonly server: string } | "outdated" | null;
+
 /** A region's ping (notes/matchmaking.md, Regions): the round trip in ms on an open session, from a hello with intent
  *  "ping" to the server's Pong, the better of `tries`, and the server's name as its Pong says it (the matchmaker's for
- *  it: RV-863; empty from a server from before the name); null if it can't be reached in time, or answers with anything
- *  but a Pong (a server of another protocol version refuses it: not one to match at, RV-864) */
-export async function pingServer(address: ServerAddress, tries = 2): Promise<{ readonly ms: number; readonly server: string } | null> {
+ *  it: RV-863; empty from a server from before the name); "outdated" if it refuses the ping on version (a page older
+ *  than its servers, RV-1021); null if it can't be reached in time, or answers with anything else (RV-864) */
+export async function pingServer(address: ServerAddress, tries = 2): Promise<PingAnswer> {
   let best: { ms: number; server: string } | null = null;
   for (let i = 0; i < tries; i++) {
-    const answer = await pingOnce(address).catch(() => null);
+    const answer = await pingOnce(address).catch((e: unknown) => (e instanceof OutdatedPageError ? "outdated" : null));
+    if (answer === "outdated") return answer;
     // (unreached: not tried again, its dash shown in one try's time, not two: RV-842)
     if (answer === null) break;
     if (best === null || answer.ms < best.ms) best = answer;
@@ -106,6 +114,7 @@ async function pingOnce(address: ServerAddress): Promise<{ ms: number; server: s
           if (buffer.byteLength >= 2 + n) {
             const ms = performance.now() - start;
             const answer = decodeControl(buffer.subarray(2, 2 + n));
+            if (answer.type === "refused" && answer.reason === REFUSED_VERSION) throw new OutdatedPageError("another protocol version");
             if (answer.type !== "pong") throw new Error(`answered with ${answer.type}, not a pong`);
             return { ms, server: answer.server };
           }

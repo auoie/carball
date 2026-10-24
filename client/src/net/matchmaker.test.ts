@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { type FoundMatch, type SearchHandlers } from "../game/matchmaking";
 import { MATCHMAKER_TEXT, MatchmakerSearchSession, type SearchRequest, devMatchmakerBase, foundMatch } from "./matchmaker";
 import { REFUSED_IN_MATCH } from "./protocol";
+import { queueBanText } from "./tickets";
 
 interface Reply {
   readonly status: number;
@@ -132,6 +133,20 @@ describe("the search with the matchmaker", () => {
       expect(got.slice(0, want.length)).toEqual(want);
       expect(notes).toEqual(noted);
     }
+  });
+
+  it("a ban's seconds left become its end on this page's clock, said in minutes rounded up (RV-1001, RV-1022's Q3)", async () => {
+    const { http } = service({ "POST /api/search": [{ status: 403, body: { error: "queue-banned", seconds: 90 } }] });
+    const { handlers, done } = answers();
+    const noted: { until: number | null } = { until: null };
+    const before = Date.now();
+    MatchmakerSearchSession.start({ base: "" }, request, handlers, { banned: (end) => (noted.until = end) }, http, noWait);
+    await done;
+    const until = noted.until;
+    if (until === null) throw new Error("no ban noted");
+    expect(until).toBeGreaterThanOrEqual(before + 90_000);
+    expect(until).toBeLessThanOrEqual(Date.now() + 90_000);
+    expect(queueBanText(until, before)).toMatch(/in 2 minutes$/);
   });
 
   it("an end the service says: replaced, a quitter's ban, a no-show's cooldown", async () => {

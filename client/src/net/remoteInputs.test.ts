@@ -8,8 +8,10 @@
 // raising the ball's.
 import { fileURLToPath } from "node:url";
 import createEngine from "@engine/carball_engine.mjs";
+import createHost from "@host/carball_host.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initEngine } from "../engine/world";
+import { LocalHost } from "../local/host";
 import { arenaMeshes } from "../testing/arena";
 import { type Driver, type Summary, netRun, summary } from "../testing/netRun";
 import { constantProfile } from "../testing/netsim";
@@ -18,10 +20,12 @@ import type { RemoteModel } from "./predictor";
 import type { InputFrame } from "./protocol";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
+let host: LocalHost;
 
 beforeAll(async () => {
   engine = await createEngine();
   initEngine(engine, arenaMeshes());
+  host = LocalHost.create(await createHost(), arenaMeshes());
 });
 
 const MODELS: readonly RemoteModel[] = ["fade", "game", "gameComponents"];
@@ -44,7 +48,7 @@ function compare(sources: readonly { readonly drive?: Driver; readonly seed: num
       const remote: number[] = [];
       const ball: number[] = [];
       for (const source of sources) {
-        const r = netRun(engine, {
+        const r = netRun(engine, host, {
           seconds: SECONDS,
           up: constantProfile(rtt / 2),
           down: constantProfile(rtt / 2),

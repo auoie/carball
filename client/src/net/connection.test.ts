@@ -10,8 +10,10 @@ import {
   REFUSED_CONCLUDED,
   REFUSED_IN_MATCH,
   REFUSED_QUEUE_BANNED,
+  REFUSED_REJOIN_GONE,
   REFUSED_TICKET,
   REFUSED_TOKEN,
+  REFUSED_UNCONFIRMED,
   decodeControl,
   decodeDatagram,
 } from "./protocol";
@@ -91,11 +93,13 @@ describe("a refused hello", () => {
     await expect(opened).rejects.toBeInstanceOf(RefusedError);
     await expect(opened).rejects.toMatchObject({ reason: REFUSED_TOKEN });
     // (each reason in words: the ticket's, a sign-in gone; anything unknown, full)
-    expect([REFUSED_TICKET, REFUSED_IN_MATCH, REFUSED_CONCLUDED, REFUSED_QUEUE_BANNED, 99].map(refusalText)).toEqual([
+    expect([REFUSED_TICKET, REFUSED_IN_MATCH, REFUSED_CONCLUDED, REFUSED_QUEUE_BANNED, REFUSED_REJOIN_GONE, REFUSED_UNCONFIRMED, 99].map(refusalText)).toEqual([
       "sign in again to play online",
       "you're in a match already",
       "that match has ended",
       "you left a ranked match: you can search again in a few minutes",
+      "that match can't be rejoined: you've searched or played another match since",
+      "the rejoin couldn't be confirmed: try again in a moment",
       "the server is full",
     ]);
   });

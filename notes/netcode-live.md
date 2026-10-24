@@ -379,8 +379,12 @@ the present, G5/G7). Remote cars recompute wheel contacts instead of reusing sto
   `predictor.correct()`'s depth into a histogram; |pre − post| per body class in `#smooth`; per-frame |eₖ − eₖ₋₁| in
   `#draw`; ack lag, RTT samples, serverTick/part gaps (loss), resim time p99, all via `window.rlOnline()`.
 - **Refactor for testability:** move online.ts's network core (`#sendInputs`, `#applyUpdates` / `#correct` / `#capture` /
-  `#smooth`, `#watchHitches`, ping) into a DOM-free `client/src/net/session.ts` so T3/T4 run production code; a TS port of
-  ServerConsume (`client/src/testing/serverConsume.ts`) kept in parity with `input_buffer.rs` through Rust-written JSON vectors.
+  `#smooth`, `#watchHitches`, ping) into a DOM-free `client/src/net/session.ts` so T3/T4 run production code; the
+  server side the server's own match since 2026-10-23 (design 5: the local host's module, `carball_host.wasm`, its input
+  buffer, replication and compact state compiled from `server/src`), the client paced as a page (online.ts: 60 Hz frames
+  of real time, the fixed step, the goal's slow motion), in place of a TS port of ServerConsume kept in parity through
+  JSON vectors, whose opposite tick parity had hidden the refill below (§6: a 60 Hz client whose packets land just before
+  odd ticks never ends its refill; the game's own rule).
 
 ### 13.1 Tests, ranked by value
 | # | Test | Setup / profile | Measure | Expected values or bounds |

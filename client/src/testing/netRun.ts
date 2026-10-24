@@ -1,24 +1,38 @@
-// A 1v1 over a simulated network path, in process (notes/netcode-live.md §13.0): the client's network core as it runs
+// A match over a simulated network path, in process (notes/netcode-live.md §13.0): the client's network core as it runs
 // in the game (src/net/session.ts: the predictor, corrections and their smoothing, the inputs sent, the ping) against
-// a server built from the same parts as the real one: the engine, its input buffer (serverConsume.ts, the Rust one's
-// port), updates every other tick with the actors due at the game's rates (server/src/replication.rs), the compact
-// network state. The local player and a server-side bot both chase the ball, so they meet it and each other.
+// the server's own match: the local host's module (carball_host.wasm, src/local/host.ts: the server's match, its input
+// buffer, its replication and the compact network state, compiled to WebAssembly), on a virtual clock. The local player
+// and the host's bots (players of its match whose controls the drivers give, from the match's whole state after each
+// tick, as the offline match's bots do) chase the ball, so they meet it and each other. The client joins as a page
+// does (its hello, the welcome, the world again as the bots join), and every message between them is the protocol's.
 import type createEngine from "@engine/carball_engine.mjs";
 import { type BodyState, type CarState, World } from "../engine/world";
+import { SendClock } from "../game/cameraInput";
+import { postGoalDilation } from "../game/goalSequence";
 import { Interpolated } from "../game/interpolated";
 import { SyncError } from "../game/syncError";
+import type { LocalHost } from "../local/host";
+import { FixedStep, frameTimes } from "../loop/fixedStep";
 import { type RemoteModel, inputControls } from "../net/predictor";
-import { BIT_BOOST, BIT_JUMP, type InputFrame, type Update, quantizeAxis } from "../net/protocol";
+import {
+  BIT_BOOST,
+  BIT_JUMP,
+  type InputFrame,
+  PROTOCOL_VERSION,
+  type Update,
+  decodeControl,
+  decodeDatagram,
+  encodeControl,
+  encodeDatagram,
+  quantizeAxis,
+} from "../net/protocol";
 import { NetSession, type SmoothedCar } from "../net/session";
-import { NetSim, Pcg32, type Profile } from "./netsim";
-import { ServerConsume } from "./serverConsume";
-import { UPDATE_HEADER_BYTES } from "../net/netStats";
+import { NetSim, type Profile } from "./netsim";
 
 type Engine = Awaited<ReturnType<typeof createEngine>>;
 
-const TICK = 1 / 120;
-/** An update datagram's bytes before its state (protocol 24: net/netStats.ts UPDATE_HEADER_BYTES) */
-const UPDATE_HEADER = UPDATE_HEADER_BYTES;
+/** The client's player in the host's match (the bots' 2 on) */
+const CLIENT = 1;
 
 /** count, mean, median, 95th and 99th percentiles, largest */
 export interface Summary {
@@ -57,14 +71,15 @@ export interface NetRunResult {
   readonly depth: Summary;
   /** The client's smoothed round trip at the end (ms) */
   readonly ping: number | null;
-  /** The server's input buffer: its target at the end, and per tick of the measured span */
+  /** The server's input buffer as its updates tell it (each update's window since the last, summed over the measured
+   *  span, HUD-21): its target at the end, the ticks it had no frame for (under), the frames it skipped (over), the
+   *  client's input datagrams it never got (lost, of `sent`), and the ticks measured */
   readonly buffer: {
     readonly target: number;
     readonly under: number;
     readonly over: number;
-    readonly repeated: number;
-    readonly zeroed: number;
-    readonly neverConsumed: number;
+    readonly lost: number;
+    readonly sent: number;
     readonly ticks: number;
   };
   /** Downstream, what the client received a second (KB, the update datagrams) */
@@ -76,6 +91,8 @@ export interface NetRunResult {
   readonly direct: number;
   /** Local mispredictions in the run's last 5 s */
   readonly lateMispredictions: number;
+  /** The match's phases as the client was told them, each with when (s) */
+  readonly phases: readonly { readonly at: number; readonly phase: string }[];
   /** Every correction's size, per class (uu) */
   readonly errors: { readonly local: readonly number[]; readonly remote: readonly number[]; readonly ball: readonly number[] };
   /** How far corrections moved each class a second, all summed (uu/s; the per-correction sizes depend on how often a
@@ -90,9 +107,6 @@ export interface NetRunOptions {
   readonly seed: number;
   /** Seconds not measured at the start (the buffer's warm-up, the client joining the server's timeline) */
   readonly warmUp?: number;
-  /** As before G1: the exact network state, the ball in every update, cars within 1000 uu of it too, the others and
-   *  the pads every 8 ticks */
-  readonly legacy?: boolean;
   /** Cars (the client's first, then the teams alternating): 2 by default */
   readonly players?: number;
   /** The cars' inputs (default: the client chases the ball, the others chase it with a weave) */
@@ -119,16 +133,8 @@ const chaseDriver: Driver = (player, frame, world, car) => {
   };
 };
 
-/** Before G1's schedule */
-function legacyChoice(world: World): { ball: boolean; cars: number[]; pads: boolean } {
-  const slow = world.tick % 8 === 0;
-  const ball = world.ball().pos;
-  const near = (id: number) => {
-    const p = world.car(id).pos;
-    return Math.hypot(p.x - ball.x, p.y - ball.y, p.z - ball.z) <= 1000;
-  };
-  return { ball: true, cars: world.carIds().filter((id) => slow || near(id)), pads: slow };
-}
+/** A driver that circles where it is, never near the ball: the network alone, no goal's sequence in the run (T7, T8) */
+export const circleDriver: Driver = () => ({ throttle: quantizeAxis(0.6), steer: quantizeAxis(1), pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 });
 
 /** Steer toward the ball (yaw error over 30°: full lock), boost when roughly facing it, jump when close */
 function chase(car: CarState, ball: BodyState, frame: number, jitter: number): { throttle: number; steer: number; boost: boolean; jump: boolean } {
@@ -141,90 +147,105 @@ function chase(car: CarState, ball: BodyState, frame: number, jitter: number): {
   return { throttle: 1, steer, boost: Math.abs(yaw) < 0.3 && car.boost > 10, jump: near && frame % 90 < 6 };
 }
 
-/** The server's replication schedule (server/src/replication.rs): the ball at 100 with the net tick's jitter, a car
- *  4 or 5 updates apart (the replays' 13.4 a second); the ball forced after a hit, a car on a placement; the pads on a
- *  change and once a second */
-class Schedule {
-  #ballNext = 0;
-  readonly #carNext = new Map<number, number>();
-  #touch = -1;
-  readonly #spawns = new Map<number, number>();
-  #pads = "";
-  #padsNext = 0;
-  readonly #rng: Pcg32;
-
-  constructor(seed: number) {
-    this.#rng = new Pcg32(BigInt(seed), 99n);
-  }
-
-  choose(world: World, t: number): { ball: boolean; cars: number[]; pads: boolean } {
-    const touch = Math.max(-1, ...world.carIds().map((id) => world.carLastBallTouchTick(id) ?? -1));
-    const ball = touch !== this.#touch || t >= this.#ballNext;
-    this.#touch = touch;
-    if (ball) this.#ballNext = t + 1 / 100 + this.#rng.uniform() / 57;
-    const cars: number[] = [];
-    for (const id of world.carIds()) {
-      const spawns = world.car(id).spawnCount;
-      if (spawns !== this.#spawns.get(id) || t >= (this.#carNext.get(id) ?? 0) - 1e-9) {
-        cars.push(id);
-        this.#carNext.set(id, t + (this.#rng.uniform() < 0.52 ? 8 : 10) / 120);
-      }
-      this.#spawns.set(id, spawns);
-    }
-    const padState = world
-      .boostPads()
-      .map((p) => (p.active ? "1" : "0"))
-      .join("");
-    const pads = padState !== this.#pads || t >= this.#padsNext;
-    if (pads) {
-      this.#pads = padState;
-      this.#padsNext = t + 1;
-    }
-    return { ball, cars, pads };
-  }
-}
-
 interface InFlight<T> {
   readonly at: number;
   readonly value: T;
 }
 
 function deliver<T>(queue: InFlight<T>[], now: number): T[] {
-  const due = queue.filter((d) => d.at <= now).sort((a, b) => a.at - b.at);
-  for (const d of due) queue.splice(queue.indexOf(d), 1);
-  return due.map((d) => d.value);
+  return deliverTimed(queue, now).map((d) => d.value);
 }
 
-export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
-  const server = World.create(engine);
+/** The same, each with the time it arrived */
+function deliverTimed<T>(queue: InFlight<T>[], now: number): InFlight<T>[] {
+  const due = queue.filter((d) => d.at <= now).sort((a, b) => a.at - b.at);
+  for (const d of due) queue.splice(queue.indexOf(d), 1);
+  return due;
+}
+
+/** A page's hello, joining the open match on `team` */
+function hello(team: number, name: string): Uint8Array {
+  return encodeControl({
+    type: "hello",
+    version: PROTOCOL_VERSION,
+    team,
+    model: 0,
+    dodgeDeadzone: 0.5,
+    steeringSensitivity: 1,
+    airControlSensitivity: 1,
+    autoSkipReplay: true,
+    key: 0n,
+    name,
+    quickChat: "everyone",
+    blockNonTactical: false,
+    intent: "join",
+    playlist: 0,
+    token: 0n,
+    ticket: "",
+  });
+}
+
+const RESET_INPUT_BUFFER = encodeControl({ type: "resetInputBuffer" });
+/** A frame's inputs while the match is frozen (online.ts: the replay, the podium, its end) */
+const NO_INPUT: InputFrame = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 };
+/** The client's rendered frames (s of real time) */
+const FRAME_SECONDS = 1 / 60;
+const NO_CONTROLS = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, handbrake: false };
+
+/** The run, on the host's match: `host` the local host's module set up (LocalHost.create), its match opened anew */
+export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions): NetRunResult {
   const players = options.players ?? 2;
   const drive = options.drive ?? chaseDriver;
-  const ids = Array.from({ length: players }, (_, i) => server.addCar(i % 2 === 0 ? 0 : 1));
-  const local = ids[0] ?? 0;
-  server.resetKickoff(options.seed % 5);
+  // (the match: as many a side as the players need; the client's player first, then the bots, the teams alternating)
+  host.open(Math.max(1, Math.ceil(players / 2)), options.seed);
+  const bots = Array.from({ length: players - 1 }, (_, i) => CLIENT + 1 + i);
+  host.connect(CLIENT);
+  host.control(CLIENT, hello(0, "Client"), 0);
+  bots.forEach((id, i) => {
+    host.connect(id);
+    host.control(id, hello((i + 1) % 2, `Bot ${String(i + 1)}`), 0);
+    host.bot(id, NO_CONTROLS);
+  });
+  const joined = host.drain().flatMap((m) => (m.id === CLIENT && m.kind === "control" ? [decodeControl(m.bytes.subarray(2))] : []));
+  const welcome = joined.find((m) => m.type === "welcome");
+  if (welcome?.type !== "welcome") throw new Error("the host didn't welcome the client");
   const client = World.create(engine);
-  client.loadState(server.saveState());
+  client.loadState(welcome.snapshot);
   client.setDemolitions(false); // (as online.ts: the server's demolitions only)
+  const local = welcome.carId;
+  const cars = new Map<number, SmoothedCar>();
+  /** The client's cars as its world has them (the world again: the bots' joined) */
+  const syncCars = (): void => {
+    for (const id of client.carIds()) if (!cars.has(id)) cars.set(id, { state: new Interpolated(client.car(id)), error: new SyncError() });
+    for (const id of [...cars.keys()]) if (!client.carIds().includes(id)) cars.delete(id);
+  };
+  syncCars();
+  /** The match's whole state after each tick, as the bots see it (the offline match's: src/local/bots.ts) */
+  const botWorld = World.create(engine);
 
-  const cars = new Map<number, SmoothedCar>(ids.map((id) => [id, { state: new Interpolated(client.car(id)), error: new SyncError() }]));
   let clock = 0; // virtual time (s)
   const upPath = new NetSim(options.up, options.seed);
   const downPath = new NetSim(options.down, options.seed + 1);
-  const toServer: InFlight<{ timestamp: number; first: number; frames: InputFrame[] }>[] = [];
+  const toServer: InFlight<Uint8Array>[] = [];
   const toClient: InFlight<Update>[] = [];
   const resets: number[] = []; // (the reset requests on their way up)
   let resetsDone = 0;
   const bufferTargets: number[] = [];
-  let lateFrom: number | null = null;
+  // (in an object: set in the host's tick, a closure, which the compiler's narrowing doesn't follow)
+  const late: { from: number | null } = { from: null };
   let lastFrameAt = 0;
+  let sequence = 0;
+  let sent = 0;
   const session = new NetSession(
     client,
     local,
-    0,
+    welcome.frame,
     cars,
     {
-      sendInputs: (timestamp, first, frames) => {
-        for (const at of upPath.send(clock)) toServer.push({ at, value: { timestamp, first, frames } });
+      sendInputs: (timestamp, firstFrame, frames) => {
+        const bytes = encodeDatagram({ type: "inputs", timestamp, sequence: sequence++ & 0xffff, firstFrame, frames });
+        if (clock >= (options.warmUp ?? 3)) sent++;
+        for (const at of upPath.send(clock)) toServer.push({ at, value: bytes });
       },
       // (a reliable control message: never lost, RV-337)
       resetInputBuffer: () => {
@@ -235,107 +256,116 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     options.model ?? "game",
   );
   session.replayEachUpdate = options.replayEachUpdate ?? false;
-  const consume = new ServerConsume();
-  const schedule = new Schedule(options.seed);
-  let echo: { timestamp: number; at: number } | null = null;
-  let heardAt = 0;
-  let explodedAt = -1;
   const warmUp = options.warmUp ?? 3;
   let downBytes = 0;
-  let measuredFrom: {
-    readonly under: number;
-    readonly over: number;
-    readonly repeated: number;
-    readonly zeroed: number;
-    readonly neverConsumed: number;
-  } | null = null;
+  const buffer = { target: 0, under: 0, over: 0, lost: 0 };
   let measuredTicks = 0;
   let mispredictionsFrom = 0;
   let correctionsFrom = 0;
+  let measuring = false;
+  const phases: { at: number; phase: string }[] = [];
 
-  const ticks = Math.round(options.seconds * 120);
-  for (let n = 1; n <= ticks; n++) {
-    clock = n * TICK;
-    const measuring = clock >= warmUp;
-    if (measuring && !measuredFrom) {
-      measuredFrom = { ...consume.stats };
+  // (the client paced as a page: a rendered frame each 1/60 s of real time, its ticks from the game's fixed step, slowed
+  // after a goal by its curve, its input packets at 60 Hz of real time: online.ts's #frame)
+  const fixedStep = new FixedStep();
+  const sendClock = new SendClock();
+  let goalTick: number | null = null;
+  let phase: string | null = null;
+  const clientFrame = (): void => {
+    const stalled = (options.clientStalls ?? []).some((st) => clock >= st.atS && clock < st.atS + st.seconds);
+    for (const u of deliver(toClient, clock)) session.receive(u);
+    if (stalled) return; // (no frame drawn: its updates queue, the next a hitch)
+    const raw = clock - lastFrameAt;
+    session.applyUpdates();
+    session.watchHitches(raw);
+    lastFrameAt = clock;
+    const goalFrame = goalTick === null ? null : session.frameAt(goalTick);
+    const dilation = goalFrame === null ? 1 : postGoalDilation(session.predictor.frame + 1 - goalFrame);
+    const { world } = frameTimes(raw, dilation);
+    const ticks = fixedStep.advance(world);
+    const frozen = phase === "prePodium" || phase === "finished" || phase === "replay";
+    for (let k = 0; k < ticks; k++) session.predictor.advance(frozen ? NO_INPUT : drive(0, session.predictor.frame + 1, client, local));
+    if (sendClock.due(world / dilation)) session.sendInputs();
+  };
+
+  // The host's tick: what arrived on the way up (each at its own time), the tick, its messages to the client on their
+  // way down; the bots' controls for the next tick from the match's state after this one
+  let second = 0;
+  const hostTick = (): void => {
+    if (clock >= warmUp && !measuring) {
+      measuring = true;
       mispredictionsFrom = session.predictor.stats.localMispredictions;
       correctionsFrom = session.predictor.stats.corrections;
-      session.measure = true;
     }
-
-    // The client: a rendered frame every other tick (60 fps): the updates in, two frames ahead, the inputs out (none
-    // while it stalls: its updates queue)
-    const stalled = (options.clientStalls ?? []).some((st) => clock >= st.atS && clock < st.atS + st.seconds);
-    if (stalled) for (const u of deliver(toClient, clock)) session.receive(u);
-    if (n % 2 === 0 && !stalled) {
-      for (const u of deliver(toClient, clock)) session.receive(u);
-      session.applyUpdates();
-      session.watchHitches(clock - lastFrameAt);
-      lastFrameAt = clock;
-      for (let k = 0; k < 2; k++) session.predictor.advance(drive(0, session.predictor.frame + 1, client, local));
-      session.sendInputs();
-    }
-
-    // The server's tick: the inputs that arrived, one frame consumed, the bot, the physics, an update every other tick
+    // (the corrections measured in play alone: a goal's slow motion, its countdown and the replay are the match's, not
+    // the prediction's)
+    session.measure = measuring && phase === "active";
     for (const at of resets.filter((r) => r <= clock)) {
       resets.splice(resets.indexOf(at), 1);
-      consume.jitter.reset();
+      host.control(CLIENT, RESET_INPUT_BUFFER, at);
       resetsDone++;
     }
-    if (n % 120 === 0) bufferTargets.push(consume.jitter.bufferSize);
-    if (lateFrom === null && clock >= options.seconds - 5) lateFrom = session.predictor.stats.localMispredictions;
-    for (const p of deliver(toServer, clock)) {
-      heardAt = clock;
-      if (consume.receive(p.timestamp, p.first, p.frames, clock)) echo = { timestamp: p.timestamp, at: clock };
-    }
-    const consumed = consume.tick(clock, server.tick % 2 === 1);
-    server.setControls(local, inputControls(consumed.frame));
-    ids.forEach((car, player) => {
-      if (player > 0) server.setControls(car, inputControls(drive(player, server.tick + 1, server, car)));
-    });
-    server.step();
-    // (a goal: the next kickoff a second later, a placement the updates carry)
-    if (server.ballExploded()) {
-      if (explodedAt < 0) explodedAt = server.tick;
-      else if (server.tick - explodedAt > 120) {
-        server.resetKickoff((server.tick % 4) + 1);
-        explodedAt = -1;
-      }
-    }
+    for (const d of deliverTimed(toServer, clock)) host.datagram(CLIENT, d.value, d.at);
+    host.tick(clock);
     if (measuring) measuredTicks++;
-    if (server.tick % 2 === 0) {
-      const chosen = options.legacy ? legacyChoice(server) : schedule.choose(server, server.tick / 120);
-      const state = server.writeNetState({ ball: chosen.ball, carIds: chosen.cars, pads: chosen.pads, exact: options.legacy ?? false });
-      const update: Update = {
-        serverTick: server.tick,
-        ackFrame: consume.ackFrame,
-        receivedFrame: consume.lastReceived,
-        echoTimestamp: echo?.timestamp ?? 0,
-        echoDelay: echo ? Math.round((clock - echo.at) * 1000) : 0,
-        bufferTarget: Math.min(255, consume.jitter.bufferSize),
-        bufferSize: Math.min(255, consume.length),
-        bufferLow: 0,
-        bufferHigh: 0,
-        bufferOver: 0,
-        bufferUnder: 0,
-        inputLoss: 0,
-        part: 0,
-        parts: 1,
-        state,
-      };
-      // (none to a client silent 1.5 s: the server's G8, RV-337)
-      if (clock - heardAt < 1.5) {
-        if (measuring) downBytes += state.length + UPDATE_HEADER;
-        for (const at of downPath.send(clock)) toClient.push({ at, value: update });
+    if (late.from === null && clock >= options.seconds - 5) late.from = session.predictor.stats.localMispredictions;
+    for (const m of host.drain()) {
+      if (m.id !== CLIENT || m.kind === "end") continue;
+      if (m.kind === "control") {
+        const c = decodeControl(m.bytes.subarray(2));
+        if (c.type === "world") session.reload(c.frame, c.snapshot, syncCars);
+        else if (c.type === "event" && c.event.kind === "goal") goalTick = c.serverTick;
+        else if (c.type === "match" && c.phase !== phase) {
+          phase = c.phase;
+          phases.push({ at: clock, phase: c.phase });
+        }
+        continue;
       }
+      const u = decodeDatagram(m.bytes);
+      if (u.type !== "update") continue;
+      buffer.target = u.bufferTarget;
+      if (measuring) {
+        buffer.under += u.bufferUnder;
+        buffer.over += u.bufferOver;
+        buffer.lost += u.inputLoss;
+        downBytes += m.bytes.byteLength;
+      }
+      for (const at of downPath.send(clock)) toClient.push({ at, value: u });
+    }
+    // (the server's buffer target each second of real time)
+    while (clock >= second + 1) {
+      second++;
+      bufferTargets.push(buffer.target);
+    }
+    if (bots.length > 0) {
+      botWorld.loadState(host.state(CLIENT));
+      bots.forEach((id, i) => {
+        const car = host.car(id);
+        if (car !== null) host.bot(id, inputControls(drive(i + 1, botWorld.tick + 1, botWorld, car)));
+      });
+    }
+  };
+
+  // (both on one virtual clock: the client's frame first when they fall together, as a page's frame before the server
+  // hears it)
+  for (let frames = 1; ;) {
+    const tickAt = host.nextTick();
+    const frameAt = frames * FRAME_SECONDS;
+    if (tickAt === null) break;
+    if (frameAt <= tickAt + 1e-9) {
+      if (frameAt > options.seconds + 1e-9) break;
+      clock = frameAt;
+      frames++;
+      clientFrame();
+    } else {
+      if (tickAt > options.seconds + 1e-9) break;
+      clock = tickAt;
+      hostTick();
     }
   }
 
   const measuredSeconds = Math.max(1e-9, options.seconds - warmUp);
   const sum = (values: readonly number[]): number => values.reduce((a, b) => a + b, 0);
-  const s = consume.stats;
-  const from = measuredFrom ?? { under: 0, over: 0, repeated: 0, zeroed: 0, neverConsumed: 0 };
   const result: NetRunResult = {
     local: summary(session.metrics.localErrors),
     remote: summary(session.metrics.remoteErrors),
@@ -345,28 +375,21 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     localMispredictions: session.predictor.stats.localMispredictions - mispredictionsFrom,
     depth: summary(session.metrics.depths),
     ping: session.ping,
-    buffer: {
-      target: consume.jitter.bufferSize,
-      under: s.under - from.under,
-      over: s.over - from.over,
-      repeated: s.repeated - from.repeated,
-      zeroed: s.zeroed - from.zeroed,
-      neverConsumed: s.neverConsumed - from.neverConsumed,
-      ticks: measuredTicks,
-    },
-    downKBps: downBytes / Math.max(1e-9, options.seconds - warmUp) / 1000,
+    buffer: { ...buffer, sent, ticks: measuredTicks },
+    downKBps: downBytes / measuredSeconds / 1000,
     errors: { local: session.metrics.localErrors, remote: session.metrics.remoteErrors, ball: session.metrics.ballErrors },
     bufferTargets,
+    phases,
     resets: resetsDone,
     direct: session.predictor.stats.direct,
-    lateMispredictions: session.predictor.stats.localMispredictions - (lateFrom ?? 0),
+    lateMispredictions: session.predictor.stats.localMispredictions - (late.from ?? 0),
     movedPerSecond: {
       local: sum(session.metrics.localErrors) / measuredSeconds,
       remote: sum(session.metrics.remoteErrors) / measuredSeconds,
       ball: sum(session.metrics.ballErrors) / measuredSeconds,
     },
   };
-  server.dispose();
+  botWorld.dispose();
   client.dispose();
   return result;
 }

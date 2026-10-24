@@ -30,11 +30,11 @@ indicator), the full §13 harness, free-play polish.
 - Per client, everyone driving (T6, `server/src/game.rs`): 1v1 22.5 → 3.3 KB/s, 2v2 33.7 → 4.4, 3v3 45.6 → 5.5
   (32–38 B a body; with cars by the ball before: 2v2 67.6, 3v3 97.0).
 - The loss/latency check (`client/src/net/session.test.ts`, `client/src/testing/netRun.ts`: the client's network core,
-  `src/net/session.ts`, against an in-process server from the same parts: the engine, the input buffer's port
-  `testing/serverConsume.ts`, the replication schedule) at 80 ms round trip, 20 ms jitter, 2 % loss: no input frame
-  lost, the server's buffer at 11, the local car's corrections p95 0 uu (a few a second at most), the bot's p95
-  ≈ 15 uu, the ball's p95 0; against before G1 on the same path: 42.9 → 3.9 KB/s, local mispredictions 97 → 32,
-  the bot's p95 11.8 → 14.3 uu (fewer updates: G2 is the fix).
+  `src/net/session.ts`, paced as a page, against the server's own match in process: the local host's module, since
+  2026-10-23's design 5; a TS port of the input buffer before it) at 80 ms round trip, 20 ms jitter, 2 % loss: the
+  buffer rarely dry, at 11, the local car's corrections p95 up to 3 uu, the bot's p95 ≈ 20 uu; the ball's p95 0 but for
+  seed 5's ~3 s of ball corrections by whole ticks' travel (a finding of design 5, to investigate). Before G1 (the port's
+  replication): 42.9 → 3.9 KB/s, local mispredictions 97 → 32.
 - Kept from the first harness step: `server/src/netsim.rs` (seeded paths; `client/src/testing/netsim.ts` its twin,
   checked against the vectors it writes), the input buffer's T2 tests (`server/src/net_tests.rs`).
 

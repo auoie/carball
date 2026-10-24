@@ -113,8 +113,8 @@ export function searchPlan(
 /** A region's ping from its server's answer (pingServer's): its ms and the name its Pong gives (the search sends it); a
  *  server naming itself outside the matchmaker's pattern counted as unanswered (no search can go there, RV-893), one
  *  naming none (from before the name) known by its URL: no name */
-export function pingAnswer(answer: { readonly ms: number; readonly server: string } | null): { ms: number; name: string | null } | null {
-  if (answer === null || (answer.server !== "" && !serverNameOk(answer.server))) return null;
+export function pingAnswer(answer: { readonly ms: number; readonly server: string } | "outdated" | null): { ms: number; name: string | null } | null {
+  if (answer === null || answer === "outdated" || (answer.server !== "" && !serverNameOk(answer.server))) return null;
   return { ms: answer.ms, name: answer.server === "" ? null : answer.server };
 }
 

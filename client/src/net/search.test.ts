@@ -38,9 +38,10 @@ describe("the pings and the browser's key", () => {
     const record: FakeTransportRecord = { sessions: [] };
     vi.stubGlobal("WebTransport", fakeTransport([{ type: "pong", server: "game-eu.example:4433" }], record));
     const answer = await pingServer({ url: "https://game-eu.example:4433/play", certHash: null, ticket: () => Promise.reject(new Error("not asked")) });
-    expect(answer !== null && answer.ms >= 0).toBe(true);
+    if (answer === null || answer === "outdated") throw new Error(`no pong: ${String(answer)}`);
+    expect(answer.ms).toBeGreaterThanOrEqual(0);
     // (the server's name as its Pong says it: the matchmaker's for it, RV-863)
-    expect(answer?.server).toBe("game-eu.example:4433");
+    expect(answer.server).toBe("game-eu.example:4433");
     expect(record.sessions.length).toBe(2);
     for (const session of record.sessions) {
       const hello = decodeControl((session.written[0] ?? new Uint8Array()).subarray(2));
@@ -73,7 +74,7 @@ describe("the pings and the browser's key", () => {
       }
     }
     vi.stubGlobal("WebTransport", OneChunk);
-    expect((await pingServer({ url: "https://b.example:4433/play", certHash: null }, 1))?.server).toBe("b.example:4433");
+    expect(await pingServer({ url: "https://b.example:4433/play", certHash: null }, 1)).toMatchObject({ server: "b.example:4433" });
     // (the first message read alone: a Pong followed by more bytes still answers, RV-887's K11)
     vi.stubGlobal(
       "WebTransport",
@@ -82,9 +83,15 @@ describe("the pings and the browser's key", () => {
         { type: "refused", reason: 1 },
       ]),
     );
-    expect((await pingServer({ url: "https://a.example:4433/play", certHash: null }, 1))?.server).toBe("a.example:4433");
-    // (anything but a Pong: a server of another protocol version refusing the hello is unreached, RV-864)
-    vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: 1 }]));
+    expect(await pingServer({ url: "https://a.example:4433/play", certHash: null }, 1)).toMatchObject({ server: "a.example:4433" });
+    // (refused on version: this page is older than the server, which updated since it loaded: "outdated", for the
+    // menu's reload modal, not an unreached region, RV-1021; not tried again)
+    const refusing: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: 1 }], refusing));
+    expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBe("outdated");
+    expect(refusing.sessions.length).toBe(1);
+    // (anything else but a Pong: unreached, RV-864)
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: 0 }]));
     expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBeNull();
   });
 });

@@ -33,8 +33,6 @@ pub struct Run {
     /// Ask for the server's reset after a hitch (the client does)
     pub hitch_reset: bool,
     pub seed: u64,
-    /// Record every receive and tick with its outcome (the TypeScript port's parity vectors)
-    pub trace: bool,
 }
 
 impl Run {
@@ -49,7 +47,6 @@ impl Run {
             taps_every: None,
             hitch_reset: true,
             seed: 1,
-            trace: false,
         }
     }
 }
@@ -77,8 +74,6 @@ pub struct Outcome {
     pub resets: Vec<f64>,
     /// The frames consumed, in order
     pub consumed: Vec<u32>,
-    /// With `trace`: each receive and tick, as JSON
-    pub trace: Vec<String>,
 }
 
 impl Outcome {
@@ -238,44 +233,15 @@ pub fn simulate(run: &Run) -> Outcome {
                 if newest {
                     out.newest_arrivals.push(t);
                 }
-                if run.trace {
-                    let list: Vec<String> = frames.iter().map(|f| format!("[{},{}]", f.throttle, f.bits)).collect();
-                    out.trace.push(format!("{{\"r\":[{timestamp},{first},[{}],{t:.9},{newest}]}}", list.join(",")));
-                }
             }
             // (the highest seen, as the client keeps it: online.ts `#applyUpdate`)
             Kind::Ack(frame) => ack = ack.max(frame),
             Kind::Reset => {
                 buffer.jitter.reset();
                 out.resets.push(t);
-                if run.trace {
-                    out.trace.push("{\"reset\":1}".to_string());
-                }
             }
             Kind::ServerTick(n) => {
                 let controls = buffer.tick(t, n % 2 == 1);
-                if run.trace {
-                    let st = buffer.stats;
-                    out.trace.push(format!(
-                        "{{\"t\":[{t:.9},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}]}}",
-                        n % 2 == 1,
-                        (controls.throttle * 127.0).round() as i32,
-                        controls.jump,
-                        buffer.repress_jump,
-                        buffer.ack_frame(),
-                        buffer.len(),
-                        buffer.jitter.buffer_size,
-                        buffer.filling(),
-                        st.under_buffer_frames,
-                        st.over_buffer_frames,
-                        st.repeated,
-                        st.zeroed,
-                        st.fill_skips,
-                        st.consumed,
-                        st.never_consumed,
-                        st.late_dropped + st.duplicates + st.trimmed
-                    ));
-                }
                 if buffer.stats.consumed > consumed_count {
                     consumed_count = buffer.stats.consumed;
                     out.consumed.push(buffer.last_consumed());
@@ -320,32 +286,6 @@ fn per_minute(count: u32, seconds: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::netsim::check_vectors;
-
-    /// The TypeScript port's parity vectors (client/src/testing/serverConsume.test.ts): a run through jitter, loss,
-    /// duplicates, a stall, an outage, a hitch and jump taps, every receive and tick with its outcome
-    #[test]
-    fn writes_the_port_s_vectors() {
-        let mut run = Run::new(
-            60.0,
-            13.0,
-            Profile {
-                jitter: Jitter::Normal { sigma_ms: 20.0 },
-                loss: Loss::Iid { p: 0.05 },
-                duplicate: 0.05,
-                stalls: vec![Stall { at_s: 3.0, ms: 150.0, every_s: 0.0 }],
-                ..Profile::constant(50.0)
-            },
-        );
-        run.outage = Some((6.0, 1.2));
-        run.hitches = vec![(9.0, 0.3)];
-        run.taps_every = Some(0.37);
-        run.seed = 21;
-        run.trace = true;
-        let out = simulate(&run);
-        let text = format!("[\n{}\n]\n", out.trace.join(",\n"));
-        check_vectors(concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/testing/serverConsume.vectors.json"), &text);
-    }
 
     fn normal(sigma_ms: f64) -> Profile {
         Profile { jitter: Jitter::Normal { sigma_ms }, ..Profile::constant(50.0) }
