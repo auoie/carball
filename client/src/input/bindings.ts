@@ -220,20 +220,51 @@ const AXIS_NAMES: Record<number, readonly [string, string]> = {
 };
 
 /** "KeyW" -> "W", "ShiftLeft" -> "Left Shift", "Digit1" -> "1", "ArrowUp" -> "Up arrow". */
+/** The keys a browser can still take from a page in a normal tab, whatever it cancels (Ctrl+W, Alt's menus, Escape):
+ *  the page's alone only in full screen with the keyboard locked (DisplayMode, RV-1091) */
+const BROWSER_HELD_KEYS = ["ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight", "Escape"];
+
+/** The bound keys a normal tab can lose to the browser: their inputs, each once (the Controls screen's Fullscreen notice) */
+export function browserHeldBinds(bindings: Bindings): KeyboardInput[] {
+  const codes = new Set<string>();
+  for (const b of Object.values<Binding>(bindings)) {
+    if (b.keyboard?.kind === "key" && BROWSER_HELD_KEYS.includes(b.keyboard.code)) codes.add(b.keyboard.code);
+  }
+  return BROWSER_HELD_KEYS.filter((c) => codes.has(c)).map((code) => ({ kind: "key", code }));
+}
+
 /** Whether any action is bound to the key `code` (KeyboardEvent.code) */
 export function keyBound(bindings: Bindings, code: string): boolean {
   return Object.values(bindings).some((b: Binding) => b.keyboard?.kind === "key" && b.keyboard.code === code);
 }
 
+/** The browser's own chords a held modifier bind never takes: page zoom (an accessibility setting) and the developer
+ *  tools, theirs unless that very key is bound (RV-1110) */
+const ZOOM_KEYS = ["Equal", "Minus", "Digit0", "NumpadAdd", "NumpadSubtract", "Numpad0"];
+const TOOLS_KEYS = ["KeyI", "KeyJ", "KeyC"];
+
 /** Whether a key press in play is the game's alone, its browser action never taken (RV-1092): a bound key (F5's reload,
- *  `/`'s quick find), or any key with a bound modifier held (Ctrl held as a bind: Ctrl+D, Ctrl+S; Alt: Alt+D, Alt+E).
- *  Ctrl+W, T and N reach the page only in full screen with the keyboard locked (RV-1091) */
+ *  `/`'s quick find), or any key with a bound modifier held (Ctrl held as a bind: Ctrl+D, Ctrl+S; Alt: Alt+D, Alt+E),
+ *  but the zoom and developer tools' chords. Ctrl+W, T and N reach the page only in full screen with the keyboard locked
+ *  (RV-1091) */
 export function takesBrowserKey(
-  e: { readonly code: string; readonly ctrlKey: boolean; readonly altKey: boolean; readonly metaKey: boolean },
+  e: { readonly code: string; readonly ctrlKey: boolean; readonly altKey: boolean; readonly metaKey: boolean; readonly shiftKey?: boolean },
   bound: (code: string) => boolean,
 ): boolean {
+  if (bound(e.code)) return true;
+  if ((e.ctrlKey || e.metaKey) && (ZOOM_KEYS.includes(e.code) || (e.shiftKey === true && TOOLS_KEYS.includes(e.code)))) return false;
   const held = (side: string): boolean => bound(`${side}Left`) || bound(`${side}Right`);
-  return bound(e.code) || (e.ctrlKey && held("Control")) || (e.altKey && held("Alt")) || (e.metaKey && held("Meta"));
+  return (e.ctrlKey && held("Control")) || (e.altKey && held("Alt")) || (e.metaKey && held("Meta"));
+}
+
+/** The keys the browser's keyboard lock takes in full screen: the bound keys, Escape (the pause menu's, not full
+ *  screen's end: a long press still ends it), W, T and N (Ctrl+W, T, N); never Tab nor the system key, so Alt+Tab and
+ *  the Windows key stay the system's (RV-1112) */
+export function lockedKeys(bindings: Bindings): string[] {
+  const codes = new Set(["Escape", "KeyW", "KeyT", "KeyN"]);
+  for (const b of Object.values<Binding>(bindings)) if (b.keyboard?.kind === "key") codes.add(b.keyboard.code);
+  for (const never of ["Tab", "MetaLeft", "MetaRight", "OSLeft", "OSRight"]) codes.delete(never);
+  return [...codes];
 }
 
 export function keyName(code: string): string {

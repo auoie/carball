@@ -76,7 +76,7 @@ test("a browser without every bind (Firefox's name, no keyboard lock): its limit
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   const notice = page.locator("#main-menu .browser-notice");
   await expect(notice).toBeVisible();
-  await expect(notice.locator("li")).toHaveCount(3);
+  await expect(notice.locator("li")).toHaveCount(2);
   await expect(notice).toContainText("Chrome or another Chromium browser (Edge, Brave)");
   await notice.getByRole("button", { name: "Got it" }).click();
   await expect(notice).toHaveCount(0);
@@ -91,7 +91,9 @@ test("a browser without every bind (Firefox's name, no keyboard lock): its limit
     .click();
   await page.locator(".settings-tab", { hasText: "Controls" }).click();
   const inline = page.locator("#settings .browser-notice.inline");
-  await expect(inline.locator("li")).toHaveCount(3);
+  await expect(inline.locator("li")).toHaveCount(2);
   await expect(inline.getByRole("button")).toHaveCount(0);
+  // (no Fullscreen notice there: no keyboard lock to keep a bind with, the browser's notice says so)
+  await expect(page.locator("#settings .fullscreen-notice")).toHaveCount(0);
   await context.close();
 });

@@ -34,7 +34,7 @@ export interface Options {
   readonly rearCameraToggle: boolean; // bToggleRearCamera
   readonly cameraShake: boolean; // bEnableCameraShake: on with the Default camera preset, off with Modern
   readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
-  readonly muted: boolean; // all sound off (M)
+  readonly muted: boolean; // all sound off
   readonly autoSkipReplay: boolean; // bAutoSkipGoalReplay: always ready to skip goal replays
   readonly unlimitedBoost: boolean; // Unlimited boost in free play (MENU-9): on, the tank stays full (and a full car takes no pads)
   readonly bloom: boolean; // the video option Bloom (system setting Bloom; on in the High preset, PP-16)

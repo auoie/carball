@@ -75,6 +75,8 @@ test("two players find a 1v1, count down and land in the match together", async 
   await a.evaluate(() => {
     (window as unknown as { backMark?: boolean }).backMark = true;
   });
+  // (Back's entry pushed at a press, a browser skipping one pushed without: RV-1109)
+  await a.locator("#game").click({ position: { x: 320, y: 180 }, button: "right" });
   await a.goBack();
   await a.waitForTimeout(500);
   expect(a.url()).toBe(url);

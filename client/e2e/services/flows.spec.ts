@@ -157,6 +157,8 @@ test("a matched 1v1 conceded: the forfeit its result, the winner's rating up and
   await pauseButton(loser.page, "Yes").click();
   for (const p of [winner.page, loser.page]) {
     await expect.poll(async () => (await ends(p)).some((e) => e.forfeit), { timeout: 30_000 }).toBe(true);
+    // (the match over: leaving it no abandon, the page no longer asking before it unloads: RV-1116)
+    expect(await p.evaluate(() => window.dispatchEvent(new Event("beforeunload", { cancelable: true }))), "not asked once over").toBe(true);
   }
   // Back on the menu: the result recorded, the ratings moved apart from a new account's 1500, provisional still
   await leftForMenu(winner.page, "address");

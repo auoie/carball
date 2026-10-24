@@ -34,8 +34,8 @@ function page(): {
   return { target, fire, pushed: () => pushed, backs: () => backs, entries };
 }
 
-describe("a queue match's page left by accident (RV-1091, RV-1103, RV-1104)", () => {
-  it("asks before the page unloads from its start, while the match lives", () => {
+describe("a queue match's page left by accident (RV-1091, RV-1103, RV-1104, RV-1109)", () => {
+  it("asks before the page unloads from its start, while the match lives; not once it's over (RV-1116)", () => {
     const p = page();
     const guard = new LeaveGuard(p.target, p.entries);
     expect(p.fire("beforeunload"), "loading, the seat claimed").toBe(false);
@@ -46,24 +46,32 @@ describe("a queue match's page left by accident (RV-1091, RV-1103, RV-1104)", ()
     expect(p.fire("beforeunload"), "the match over").toBe(true);
   });
 
-  it("keeps Back in the page while the match lives (a same-document entry pushed again), then lets it go on", () => {
+  it("pushes Back's entry at a press alone (a browser skips one pushed without), again at the next press after a Back", () => {
     const p = page();
     const guard = new LeaveGuard(p.target, p.entries);
-    expect(p.pushed()).toBe(1);
+    expect(p.pushed(), "none before a press").toBe(0);
+    p.fire("keydown");
+    p.fire("pointerdown");
+    expect(p.pushed(), "one at the first press, not one a press").toBe(1);
     p.fire("popstate");
-    expect([p.pushed(), p.backs()]).toEqual([2, 0]);
+    expect([p.pushed(), p.backs()], "Back took it: kept in the page, no Back of ours").toEqual([1, 0]);
+    p.fire("pointerdown");
+    expect(p.pushed(), "another at the next press").toBe(2);
     guard.live = () => false;
     p.fire("popstate");
-    expect([p.pushed(), p.backs()], "over: on to where Back goes").toEqual([2, 1]);
+    expect(p.backs(), "over: on to where Back goes").toBe(1);
+    p.fire("keydown");
+    expect(p.pushed(), "over: no entry").toBe(2);
   });
 
-  it("never asks about the page's own leave (the menu's Leave, the end screen's exit, a failed load)", () => {
+  it("never asks about the page's own leave (the menu's Leave, the end screen's exit, a failed claim or load)", () => {
     const p = page();
     const guard = new LeaveGuard(p.target, p.entries);
+    p.fire("keydown");
     guard.leaving();
     expect(guard.asks()).toBe(false);
     expect(p.fire("beforeunload")).toBe(true);
     p.fire("popstate");
-    expect([p.pushed(), p.backs()], "leaving: no entry, no Back of its own").toEqual([1, 0]);
+    expect(p.backs(), "leaving: no Back of its own").toBe(0);
   });
 });

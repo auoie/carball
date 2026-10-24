@@ -1,15 +1,18 @@
-// A browser that can't take every bind (RV-1091, RV-1095, RV-1104; the user's request): its confirmed limits said, with
-// Chrome or another Chromium browser (Edge, Brave) recommended. Once on the main menu, its dismissal kept in this
+// A browser that can't take every bind (RV-1091, RV-1104; the user's request): its confirmed limits said (RV-1114: no
+// claim unconfirmed), with Chrome or another Chromium browser (Edge, Brave) recommended, but on an iPhone or iPad, where
+// every browser is Safari's engine. Once on the main menu, its dismissal kept in this
 // browser (storage failing: shown again next time), and always on the Controls screen. Found by feature where a page can
 // (no Keyboard Lock: a Ctrl or Alt bind's browser shortcuts), by name where it can't (Firefox's thumb buttons and pads)
+import { keyboardLockAvailable } from "./displayMode";
+
 const DISMISSED_KEY = "carball.browserNotice";
 
 export const BROWSER_NOTICE_TEXT = {
   title: "Some binds can't work in this browser",
   thumbs: "Mouse 4 and Mouse 5 can't be bound: Firefox doesn't pass them to web pages (Mozilla bug 1933746).",
-  shortcuts: "A Ctrl or Alt bind can set off the browser's own shortcuts (Ctrl+W closes the tab): this browser has no keyboard lock.",
-  pads: "Some controllers aren't recognised: Firefox doesn't map them as the browsers' standard pad.",
+  shortcuts: "A Ctrl, Alt or Cmd bind can set off the browser's own shortcuts (Ctrl+W or Cmd+W closes the tab): this browser has no keyboard lock.",
   recommend: "For every bind, play in Chrome or another Chromium browser (Edge, Brave).",
+  ios: "On an iPhone or iPad every browser shares these limits.",
   dismiss: "Got it",
 } as const;
 
@@ -17,13 +20,17 @@ export const BROWSER_NOTICE_TEXT = {
 export function browserLimits(env: { readonly keyboardLock: boolean; readonly userAgent: string }): string[] {
   const T = BROWSER_NOTICE_TEXT;
   const firefox = /\bFirefox\//.test(env.userAgent);
-  return [...(firefox ? [T.thumbs] : []), ...(env.keyboardLock ? [] : [T.shortcuts]), ...(firefox ? [T.pads] : [])];
+  return [...(firefox ? [T.thumbs] : []), ...(env.keyboardLock ? [] : [T.shortcuts])];
+}
+
+/** What the notice recommends: a Chromium browser, but where there's none (an iPhone's, an iPad's) */
+export function browserRecommendation(userAgent: string): string {
+  return /\b(iPhone|iPad|iPod)\b/.test(userAgent) ? BROWSER_NOTICE_TEXT.ios : BROWSER_NOTICE_TEXT.recommend;
 }
 
 /** This page's browser's limits */
 export function currentBrowserLimits(): string[] {
-  const keyboard = (navigator as { readonly keyboard?: { readonly lock?: unknown } }).keyboard;
-  return browserLimits({ keyboardLock: typeof keyboard?.lock === "function", userAgent: navigator.userAgent });
+  return browserLimits({ keyboardLock: keyboardLockAvailable(), userAgent: navigator.userAgent });
 }
 
 function local(): Pick<Storage, "getItem" | "setItem"> | null {
@@ -65,7 +72,7 @@ export function browserNotice(lines: readonly string[], dismiss?: () => void): H
     list.append(item);
   }
   const recommend = document.createElement("p");
-  recommend.textContent = T.recommend;
+  recommend.textContent = browserRecommendation(navigator.userAgent);
   root.append(title, list, recommend);
   if (dismiss) {
     const button = document.createElement("button");

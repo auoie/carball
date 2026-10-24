@@ -1,12 +1,10 @@
-<!--
-Licence: this file adapts content from Liquipedia's Rocket League wiki (https://liquipedia.net/rocketleague/), by Liquipedia
-contributors, licensed under the Creative Commons Attribution-ShareAlike 3.0 licence
-(https://creativecommons.org/licenses/by-sa/3.0/). Each player row links the exact page revision it was read from.
-Changes: the player pages' controls, camera and deadzone tables collected into these tables, spellings normalised (listed
-below), sorted, and summary statistics added. This file as a whole is licensed under CC BY-SA 3.0 (share-alike); the rest
-of the repository's licences don't apply to it.
--->
 # Player binds and camera settings (BIND1)
+
+> **Licence:** this file adapts content from [Liquipedia's Rocket League wiki](https://liquipedia.net/rocketleague/) by
+> Liquipedia contributors, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/); each player row
+> links the exact page revision it was read from. Changes: the player pages' controls, camera and deadzone tables
+> collected into these tables, spellings normalised (listed below), sorted, and summary statistics added. This file as a
+> whole is licensed under CC BY-SA 3.0 (share-alike), separate from the rest of the repository.
 
 Source: **Liquipedia** (Rocket League wiki), player pages' *Controls settings table*, *Camera settings table* and *Deadzone settings table* templates, read through the MediaWiki API (`action=query`, revision wikitext) on 2026-10-24. Liquipedia content is licensed **CC-BY-SA 3.0**; attribution: Liquipedia contributors, each row links the exact page revision it was read from. prosettings.net was not used: its legal notice requires prior written consent for any reproduction of its data.
 

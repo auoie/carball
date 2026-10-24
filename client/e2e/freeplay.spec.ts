@@ -57,10 +57,6 @@ test("freeplay loads, drives and resets", async ({ page }) => {
     .toBeLessThan(5);
   await expect(page.locator("#boost-value")).toHaveText("100");
 
-  // H shows the controls
-  await page.keyboard.press("KeyH");
-  await expect(page.locator("#help")).toBeVisible();
-
   // Sound: running since the first key press, the car's engine playing; a jump (space) and its landing heard
   const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { carballAudio: () => AudioStats }).carballAudio());
   await page.waitForTimeout(400);
@@ -100,11 +96,11 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await expect.poll(async () => (await audio()).played.land ?? 0, { timeout: 20_000 }).toBeGreaterThan(0);
   expect((await audio()).played.jump).toBe(1);
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
-  // M mutes (a setting like any other: the Audio tab shows it)
+  // M is no shortcut (mute is the Audio tab's alone, as the game's: no key for it)
   await page.keyboard.press("KeyM");
   await openSettings(page);
   await page.locator(".settings-tab", { hasText: "Audio" }).click();
-  await expect(page.locator('[data-option="muted"]')).toBeChecked();
+  await expect(page.locator('[data-option="muted"]')).not.toBeChecked();
   // The flip indicator can be turned off (the Gameplay tab's Flip Reset Indicator: MENU-9, RV-169)
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
   // (its rows in the game's order, their labels upper-cased, the values as written: HT-5, RV-281)

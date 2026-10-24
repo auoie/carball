@@ -55,7 +55,7 @@ import { carChoice, storedCar, storedTeam } from "./game/cars";
 import type { BotListing } from "./bots/listing";
 import { BOT_MATCH_TEXT } from "./local/botText";
 import type { Theme } from "./render/themes/theme";
-import { STAT_GRAPHS, type Settings, loadSettings, resolveSettings } from "./settings/settings";
+import { type Settings, loadSettings, resolveSettings } from "./settings/settings";
 import type { Vec3 } from "./math/vec";
 import { AutoVideoGuard, RENDER_QUALITY_SCALE, guardStep, guardWanted, isWeakGpu } from "./settings/video";
 import { applyWorldDetail, sceneDetail } from "./render/detail";
@@ -73,7 +73,7 @@ import { Nameplates } from "./ui/nameplates";
 import { LoadingScreen, showLoadingFailure } from "./ui/loadingScreen";
 import { TRAINING_TEXT, type TrainingKeys, TrainingHud } from "./ui/trainingHud";
 import { type KeyGlyph, keyGlyph } from "./ui/keyGlyph";
-import { type GamepadInput, type KeyboardInput, keyBound } from "./input/bindings";
+import { type GamepadInput, type KeyboardInput, keyBound, lockedKeys } from "./input/bindings";
 import { LeaveGuard } from "./game/leaveGuard";
 import { DisplayMode } from "./ui/displayMode";
 import { browserNotice, browserNoticeDismissed, currentBrowserLimits, dismissBrowserNotice } from "./ui/browserNotice";
@@ -146,6 +146,11 @@ async function main(): Promise<void> {
   }
   const onlinePage = server !== null || claim !== null || botMatch !== null;
   let settings = loadSettings();
+  // (Display Mode: Fullscreen asked for at the page's first press, the loading screen's too (a match's page, its full
+  // screen ended with the menu's: RV-1111), its keyboard locked there for the keys needed: RV-1091, RV-1112)
+  const displayMode = new DisplayMode({ keys: () => lockedKeys(settings.bindings) });
+  let fullscreen = settings.options.fullscreen;
+  displayMode.set(fullscreen, false);
   // (a claim that fails: back to the menu with what to show (claimNotice). Its config.json and its ticket tried again
   // inside its window (claimAddress, RX31), a ticket the server refuses once more (openClaim, RX30C))
   const claimFailed = (e: unknown): void => {
@@ -155,6 +160,8 @@ async function main(): Promise<void> {
     const kept = seatKeptAfter(notice, claim);
     if (kept) storeRankedSeat(kept);
     storeNotice(notice);
+    // (the page's own way back to the menu: not asked about, RV-1108)
+    matchGuard?.leaving();
     location.replace(pageUrl("menu", location));
   };
   // (the menu page's notice from a match page, read here)
@@ -309,38 +316,22 @@ async function main(): Promise<void> {
   const input = new InputDevices(canvas);
   // (in play, the bound keys' browser actions never taken: RV-1092)
   input.bound = (code) => keyBound(settings.bindings, code);
-  // (Display Mode: Fullscreen asked for at the page's first press, its keyboard locked there: RV-1091)
-  const displayMode = new DisplayMode();
-  let fullscreen = settings.options.fullscreen;
-  displayMode.set(fullscreen, false);
   const audio = new GameAudio(name);
   audio.apply(settings.audio, settings.options.muted);
   renderer.postOptions = settings.options;
-  // HUD-21's stat graphs: every row sampled each frame, the level's drawn over everything; F10 cycles the level, unsaved
+  // HUD-21's stat graphs: every row sampled each frame, the level's drawn over everything (Interface → Stat Graphs; no key
+  // of their own: the user's decision)
   const statData = new StatGraphData();
   const statView = new StatGraphsView(document.body);
   // (the display's refresh as the page's frames show it: the stat graphs' target, the video guard's cap)
   const refresh = new RefreshMeter();
   let statLevel = settings.interface.statGraphs;
-  let savedStatLevel = statLevel;
-  // (the Interface tab: the HUD's stage and its options; a change of Stat Graphs its level, F10's undone)
+  // (the Interface tab: the HUD's stage and its options, Stat Graphs' level among them)
   const applyInterface = (s: Settings): void => {
     setInterfaceScale(s.interface.scale, s.interface.displayScale);
-    if (s.interface.statGraphs !== savedStatLevel) statLevel = savedStatLevel = s.interface.statGraphs;
+    statLevel = s.interface.statGraphs;
     hud.configure(s.interface);
   };
-  window.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.code !== "F10") return;
-      // (F10 "Toggle Stat Graphs": the next level, not saved, once a press, not a held key's repeats (RV-528); the
-      // browser's own F10 not taken)
-      e.preventDefault();
-      if (e.repeat) return;
-      statLevel = STAT_GRAPHS[(STAT_GRAPHS.indexOf(statLevel) + 1) % STAT_GRAPHS.length] ?? "none";
-    },
-    { capture: true },
-  );
   applyInterface(settings);
   // (the HUD's fonts scaled to the game's capitals and digits, each number glyph's ink fitted: now, and again once
   // they're loaded)
@@ -363,11 +354,11 @@ async function main(): Promise<void> {
       // (a changed branch compiled before it's drawn where the browser compiles in parallel)
       if (applyShaderQuality(renderer.scene, next.video.highQualityShaders) > 0) void renderer.prepare();
       applyInterface(next);
-      // (chosen in the settings, a press: asked for at once)
+      // (chosen in the settings, a press: asked for at once; the binds changed in full screen: the lock's keys with them)
       if (next.options.fullscreen !== fullscreen) {
         fullscreen = next.options.fullscreen;
         displayMode.set(fullscreen, true);
-      }
+      } else displayMode.relock();
     },
     resolve,
   );
@@ -1381,12 +1372,6 @@ async function main(): Promise<void> {
       },
     };
   }
-
-  window.addEventListener("keydown", (e) => {
-    if (panel.isOpen || (mainMenu?.isOpen ?? false)) return;
-    if (e.code === "KeyH") hud.toggleHelp(settings.bindings);
-    if (e.code === "KeyM") panel.apply({ ...settings, options: { ...settings.options, muted: !settings.options.muted } });
-  });
 
   // (High Quality Shaders: every material's branch set before they're compiled; the scene's shader programs compiled
   // while the loading line shows, not in the first frames: RV-458)

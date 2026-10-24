@@ -61,7 +61,7 @@ import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
 import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
 import { fromThreeVector, rotateRl } from "../render/coords";
-import { postGoalDilation } from "./goalSequence";
+import { POST_GOAL_LOWEST_TICK, postGoalDilation } from "./goalSequence";
 import { type RecordedCar, ReplayRecorder, lastTouchTeam, onlineImpactFrame, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
 import { Fade } from "../render/fade";
@@ -155,6 +155,9 @@ export interface OnlineStats {
     readonly minDilation: number;
     readonly firstTick: number | null;
     readonly offsetSpread: number;
+    /** The curve's index jumped over its lowest point between two ticks run: the tick to frame mapping re-anchored
+     *  mid-goal (a stalled page's), the page in step with the server; its lowest point then not among those run */
+    readonly skippedLowest: boolean;
   };
 }
 
@@ -278,6 +281,9 @@ export class Online {
   #chatFilterSent = "";
   #minDilation = 1;
   #firstSlowTick: number | null = null;
+  /** The curve's index at the last tick run after the goal, and whether it has jumped over the lowest point */
+  #lastSlowIndex: number | null = null;
+  #skippedLowest = false;
   #fps = 60;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
@@ -417,6 +423,7 @@ export class Online {
         explodedFrame: this.#explodedFrame(),
         minDilation: this.#minDilation,
         firstTick: this.#firstSlowTick,
+        skippedLowest: this.#skippedLowest,
         offsetSpread: this.#goalTick === null ? 0 : this.#session.offsetSpread(this.#goalTick - 120, this.#goalTick + 120),
       },
     };
@@ -495,7 +502,11 @@ export class Online {
     if (this.#goalFrameNow !== null) {
       if (ticks > 0) this.#firstSlowTick ??= this.#predictor.frame + 1 - this.#goalFrameNow;
       for (let k = 1; k <= ticks; k++) {
-        this.#minDilation = Math.min(this.#minDilation, postGoalDilation(this.#predictor.frame + k - this.#goalFrameNow));
+        const n = this.#predictor.frame + k - this.#goalFrameNow;
+        const last = this.#lastSlowIndex;
+        if (last !== null && last < POST_GOAL_LOWEST_TICK && n > POST_GOAL_LOWEST_TICK && n - last > 1) this.#skippedLowest = true;
+        this.#lastSlowIndex = n;
+        this.#minDilation = Math.min(this.#minDilation, postGoalDilation(n));
       }
     }
     for (let i = 0; i < ticks; i++) {
@@ -751,6 +762,8 @@ export class Online {
         this.#camera.shakes.play(EXPLOSION_LARGE, at);
         this.#minDilation = 1;
         this.#firstSlowTick = null;
+        this.#lastSlowIndex = null;
+        this.#skippedLowest = false;
       } else if (m.type === "event" && m.event.kind === "demo") {
         // A demolition as the server says (QueueDemolish from the replicated demolish): its effect and shake where the
         // victim was at that tick, as this client drew it (RV-47)

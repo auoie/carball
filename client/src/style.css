@@ -382,26 +382,6 @@ body {
   opacity: 0.8;
 }
 
-#help {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  padding: 16px 24px;
-  background: var(--panel);
-  border-radius: 10px;
-}
-
-#help h2 {
-  margin: 0 0 8px;
-}
-
-#help td,
-#help th {
-  padding: 3px 12px 3px 0;
-  text-align: left;
-}
-
 [hidden] {
   display: none !important;
 }
@@ -4333,5 +4313,22 @@ body.pad-mode .settings-tab-glyph {
 }
 
 .browser-notice p {
+  margin: 0 0 8px;
+}
+
+/* Binds a normal tab can lose to the browser: the way to keep them, at the Controls screen's end, on the right (in the
+   flow: never over a binding slot, a small window's too) */
+.fullscreen-notice {
+  margin: 8px 0 0 auto;
+  width: fit-content;
+  max-width: min(380px, 100%);
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 78%);
+  color: #fff;
+  font: 14px/1.4 var(--hud-small);
+}
+
+.fullscreen-notice p {
   margin: 0 0 8px;
 }

@@ -17,6 +17,9 @@ const SCORE_SLOMO_CURVE: readonly (readonly [number, number])[] = [
   [0.625, 1],
 ];
 
+/** The tick after a goal at the curve's lowest point (its second key: 0.225 game s, the 28th tick) */
+export const POST_GOAL_LOWEST_TICK = Math.round((SCORE_SLOMO_CURVE[1]?.[0] ?? 0) * TICK_RATE) + 1;
+
 /** The time dilation `gameSeconds` after a goal */
 export function scoreSlomo(gameSeconds: number): number {
   const first = SCORE_SLOMO_CURVE[0];

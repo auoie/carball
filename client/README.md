@@ -108,8 +108,8 @@ Esc opens the settings menu (`src/ui/settingsPanel.ts`): rebind every action (on
 input each; gamepad buttons, triggers and stick directions all bindable), the game's camera settings, and the
 controller settings (controller deadzone, dodge deadzone, steering and aerial sensitivity), all with the game's
 defaults and slider ranges, plus its options (ball/rear camera toggle or hold, invert swivel pitch, keyboard air
-pitch safety). Saved in localStorage (`src/settings/settings.ts`, validated field by field on load). H shows the
-current bindings.
+pitch safety). Saved in localStorage (`src/settings/settings.ts`, validated field by field on load); the Controls tab lists
+the bindings.
 
 Input follows the game (`notes/input.md`): the deadzone applies per stick axis; holding air roll turns yaw into
 roll and replaces directional roll; the sensitivities and dodge deadzone are applied by the engine

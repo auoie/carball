@@ -64,7 +64,9 @@ export class InputDevices {
         if (e.code === "Tab" && !this.menuOpen() && (e.target === document.body || e.target === surface)) e.preventDefault();
         // (in play, a bound key or a chord with a bound modifier the game's alone: F5's reload, Ctrl+D's bookmark, Alt+D's
         // address bar never taken; Ctrl+W, T and N reach the page only in full screen, DisplayMode: RV-1091, RV-1092)
-        if (!this.menuOpen() && takesBrowserKey(e, this.bound)) e.preventDefault();
+        // (a focused button's Enter its own: the end screen's, an editor panel's, RV-1110)
+        const button = e.target instanceof HTMLButtonElement && (e.code === "Enter" || e.code === "NumpadEnter");
+        if (!this.menuOpen() && !button && takesBrowserKey(e, this.bound)) e.preventDefault();
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
         this.#keys.add(e.code);

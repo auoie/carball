@@ -8,7 +8,6 @@ import type { Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { respawnShown } from "./game/matchSequence";
 import type { MatchState } from "./net/protocol";
-import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 import { type KeyGlyph, clearPrompt, glyphElement, renderPrompt } from "./ui/keyGlyph";
 import { FlipLamp } from "./ui/flipLamp";
 import { FuelGaugeArt } from "./ui/fuelGauge";
@@ -213,7 +212,6 @@ export class Hud {
   /** The status line's texts as last written, and when its readouts last were */
   readonly #written = new Map<HTMLElement, string>();
   #readoutAt = -Infinity;
-  readonly #help: HTMLElement;
   readonly #flip: HTMLElement;
   readonly #flipLamp: FlipLamp;
   readonly #flipDetail: HTMLElement;
@@ -252,7 +250,6 @@ export class Hud {
     this.#ballCamToggle = element(root, "#ballcam-toggle", HTMLElement);
     this.#fps = element(root, "#fps", HTMLElement);
     this.#net = element(root, "#net", HTMLElement);
-    this.#help = element(root, "#help", HTMLElement);
     this.#flip = element(root, "#flip", HTMLElement);
     this.#flipDetail = element(root, "#flip-detail", HTMLElement);
     this.#flipLamp = new FlipLamp(this.#flip);
@@ -264,33 +261,6 @@ export class Hud {
     this.#voteTime = element(root, "#vote-time", HTMLElement);
     this.#voteFill = element(root, "#vote-fill", HTMLElement);
     this.#voteHint = element(root, "#vote-hint", HTMLElement);
-  }
-
-  /** Shows or hides the controls list, filled from the current bindings. */
-  toggleHelp(bindings: Bindings): void {
-    this.#help.hidden = !this.#help.hidden;
-    if (this.#help.hidden) return;
-    const rows = ACTIONS.map((a) => {
-      const b = bindings[a.id];
-      const row = document.createElement("tr");
-      for (const text of [a.label, inputName(b.keyboard), inputName(b.gamepad)]) {
-        const td = document.createElement("td");
-        td.textContent = text;
-        row.append(td);
-      }
-      return row;
-    });
-    const head = document.createElement("tr");
-    for (const text of ["", "Keyboard & mouse", "Gamepad"]) {
-      const th = document.createElement("th");
-      th.textContent = text;
-      head.append(th);
-    }
-    const table = document.createElement("table");
-    table.append(head, ...rows);
-    const title = document.createElement("h2");
-    title.textContent = "Controls (Esc: change them)";
-    this.#help.replaceChildren(title, table);
   }
 
   #ui: InterfaceSettings | null = null;

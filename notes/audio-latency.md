@@ -17,7 +17,7 @@ What stands between a game event and its sound being heard, measured in headless
 A sound's start, from the call to its first audible sample (−40 dBFS), offline: 12.4–12.9 ms before, 7.4–7.9 ms now
 (the limiter's 6 ms and the attack's 1.5–2 ms left), plus the render's time no longer in front of it.
 
-The stat graphs' Performance levels (F10) show two rows of ours under the game's: **Audio Base** (the browser's
+The stat graphs' Performance levels (Interface → Stat Graphs) show two rows of ours under the game's: **Audio Base** (the browser's
 processing) and **Audio Out** (the OS's and the device's output), read from the AudioContext each frame.
 
 **Known edges (RX39, not changed):**

@@ -1,8 +1,9 @@
 // Settings menu (from the pause menu or the main menu): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
 import { browserNotice, currentBrowserLimits } from "./browserNotice";
+import { fullscreenAvailable, keyboardLockAvailable } from "./displayMode";
 import type { CameraSettings } from "../camera/carballCamera";
-import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onPadStyle } from "../input/bindings";
+import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, browserHeldBinds, inputName, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
 import { checkbox, cycler, cyclerControl, slider } from "./controls";
 import { VIDEO_TEXT, type VideoState, withRenderDetail, withVideoChange } from "../settings/video";
@@ -129,7 +130,7 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   rearCameraToggle: "Rear camera toggles (off: hold)",
   cameraShake: "Camera shake (goals, demolitions, pickups, jumps; the Default preset's, off with Modern)",
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
-  muted: "Mute all sound (M)",
+  muted: "Mute all sound",
   autoSkipReplay: "Skip Goal Replay: Automatically votes to skip the goal replay.", // ([AutoSkipGoalReplay] Label, Description)
   bloom: "Bloom (a glow round the brightest parts)",
   depthOfField: "Depth of Field",
@@ -408,7 +409,26 @@ export class SettingsPanel {
     // (a browser that can't take every bind: its limits, always here, RV-1104)
     const limits = currentBrowserLimits();
     const notice = limits.length > 0 ? [browserNotice(limits)] : [];
-    return el("div", {}, [hint, ...notice, table, reset]);
+    return el("div", {}, [hint, ...notice, table, reset, ...this.#fullscreenNotice()]);
+  }
+
+  /** Binds a normal tab can lose to the browser (Ctrl, Alt, the OS key: Ctrl+W, Alt's menus) named, with the way to keep
+   *  them, in the bottom right: only Windowed, where the browser locks the keyboard in full screen (a browser that can't
+   *  has its own notice above), and only with such a bind (the user's request) */
+  #fullscreenNotice(): HTMLElement[] {
+    const held = browserHeldBinds(this.#settings.bindings);
+    if (this.#settings.options.fullscreen || !fullscreenAvailable() || !keyboardLockAvailable() || held.length === 0) return [];
+    const names = held.map((input) => inputName(input)).join(", ");
+    const button = el("button", { textContent: "Switch to Fullscreen" });
+    button.addEventListener("click", () => {
+      this.#update({ ...this.#settings, options: { ...this.#settings.options, fullscreen: true } });
+    });
+    return [
+      el("div", { className: "fullscreen-notice" }, [
+        el("p", { textContent: `Some of your binds (${names}) work fully only in Fullscreen: Video → Display Mode → Fullscreen.` }),
+        button,
+      ]),
+    ];
   }
 
   #slot(action: Action, device: Device, input: KeyboardInput | GamepadInput | null): HTMLButtonElement {
@@ -452,6 +472,28 @@ export class SettingsPanel {
   }
 
   #startCapture(action: Action, device: Device): void {
+    const swallowContextMenu = (): void => {
+      const done = new AbortController();
+      const swallow = (e: Event): void => {
+        e.preventDefault();
+        e.stopPropagation();
+        done.abort();
+      };
+      window.addEventListener("contextmenu", swallow, { capture: true, signal: done.signal });
+      // (the next press's own: not this one's)
+      setTimeout(() => {
+        window.addEventListener(
+          "mousedown",
+          () => {
+            done.abort();
+          },
+          { capture: true, signal: done.signal },
+        );
+      }, 0);
+      setTimeout(() => {
+        done.abort();
+      }, 1000);
+    };
     this.#stopCapture();
     const abort = new AbortController();
     let frame = 0;
@@ -478,6 +520,10 @@ export class SettingsPanel {
           (e) => {
             e.preventDefault();
             e.stopPropagation();
+            // (the right button bound by its own click: that click's context menu, which comes after (after the release on
+            // Windows), swallowed though the capture's over, so it never reaches the slot drawn again under it and clears
+            // what it just bound; let go at the next press, or a second on if none comes)
+            if (e.button === 2) swallowContextMenu();
             finish({ kind: "mouse", button: e.button });
           },
           { capture: true, signal: abort.signal },
@@ -869,20 +915,29 @@ export class SettingsPanel {
           : "Set for this device's graphics until you change one (Default goes back to that). Render Quality draws the 3D view at a share of the screen's resolution (the HUD and menus stay sharp); Render Detail sets the switches below.",
       }),
       // (Window Settings: Display Mode alone, Windowed or Fullscreen (a browser has no Borderless; Resolution and Vertical
-      // Sync the display's own), the page's full screen with its keyboard locked: RV-1091)
-      el("h3", { textContent: T.window }),
-      cycler({
-        label: T.displayMode,
-        options: [
-          ["windowed", T.windowed],
-          ["fullscreen", T.fullscreen],
-        ] as const,
-        value: s.options.fullscreen ? "fullscreen" : "windowed",
-        data: { option: "fullscreen" },
-        onChange: (mode) => {
-          this.#update({ ...this.#settings, options: { ...this.#settings.options, fullscreen: mode === "fullscreen" } });
-        },
-      }),
+      // Sync the display's own), the page's full screen with its keyboard locked: RV-1091; none where the page can't go
+      // full screen, an iPhone's Safari, RV-1113)
+      ...(fullscreenAvailable()
+        ? [
+            el("h3", { textContent: T.window }),
+            cycler({
+              label: T.displayMode,
+              options: [
+                ["windowed", T.windowed],
+                ["fullscreen", T.fullscreen],
+              ] as const,
+              value: s.options.fullscreen ? "fullscreen" : "windowed",
+              data: { option: "fullscreen" },
+              onChange: (mode) => {
+                this.#update({ ...this.#settings, options: { ...this.#settings.options, fullscreen: mode === "fullscreen" } });
+              },
+            }),
+            el("p", {
+              className: "settings-hint",
+              textContent: "A browser ends full screen with its page: a match's page asks again at your first press there.",
+            }),
+          ]
+        : []),
       el("h3", { textContent: T.basic }),
       list("renderQuality", T.renderQuality, ["highQuality", "quality", "performance", "highPerformance"] as const, s.video.renderQuality, (renderQuality) => {
         apply(withVideoChange(state, { renderQuality }));
