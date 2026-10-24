@@ -44,7 +44,7 @@ import { VersionCheck, reloadText } from "./net/versionCheck";
 import { MATCHMAKER_TEXT, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
-import { InputDevices, readGamepad } from "./input/devices";
+import { InputDevices, cancelThumbButtons, readGamepad } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
@@ -73,7 +73,10 @@ import { Nameplates } from "./ui/nameplates";
 import { LoadingScreen, showLoadingFailure } from "./ui/loadingScreen";
 import { TRAINING_TEXT, type TrainingKeys, TrainingHud } from "./ui/trainingHud";
 import { type KeyGlyph, keyGlyph } from "./ui/keyGlyph";
-import type { GamepadInput, KeyboardInput } from "./input/bindings";
+import { type GamepadInput, type KeyboardInput, keyBound } from "./input/bindings";
+import { LeaveGuard } from "./game/leaveGuard";
+import { DisplayMode } from "./ui/displayMode";
+import { browserNotice, browserNoticeDismissed, currentBrowserLimits, dismissBrowserNotice } from "./ui/browserNotice";
 import { type PackListing, listPacks, loadPack } from "./training/packs";
 import { type TrainingPack, parsePack } from "./training/pack";
 import { newPack } from "./training/myPacks";
@@ -114,7 +117,12 @@ function required<T extends Element>(selector: string, type: new () => T): T {
 /** The match session once opened (to close it if the page then fails to start) */
 let startedConnection: { close(): void } | null = null;
 
+/** A queue match's page's guard against leaving it by accident (LeaveGuard), from the page's start */
+let matchGuard: LeaveGuard | null = null;
+
 async function main(): Promise<void> {
+  // (the thumb buttons never the browser's back and forward, from the start: RV-1103)
+  cancelThumbButtons();
   const loading = new LoadingScreen(required("#loading", HTMLElement));
   const canvas = required("#game", HTMLCanvasElement);
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server
@@ -127,6 +135,8 @@ async function main(): Promise<void> {
     location.replace(pageUrl("menu", location));
     return;
   }
+  // (its seat claimed while it loads: leaving asked about from now, Back kept in the page, RV-1091, RV-1103, RV-1104)
+  if (claim !== null) matchGuard = new LeaveGuard();
   // ?bots: the offline match against bots, its setup handed over by the menu page (local/botMatch.ts), hosted in a worker
   // (a build without bots: none, back to the menu)
   const botMatch = __CARBALL_BOTS__ && params.has("bots") ? (await import("./local/botMatch")).readBotMatch() : null;
@@ -297,6 +307,12 @@ async function main(): Promise<void> {
   installMenuScale();
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
+  // (in play, the bound keys' browser actions never taken: RV-1092)
+  input.bound = (code) => keyBound(settings.bindings, code);
+  // (Display Mode: Fullscreen asked for at the page's first press, its keyboard locked there: RV-1091)
+  const displayMode = new DisplayMode();
+  let fullscreen = settings.options.fullscreen;
+  displayMode.set(fullscreen, false);
   const audio = new GameAudio(name);
   audio.apply(settings.audio, settings.options.muted);
   renderer.postOptions = settings.options;
@@ -347,6 +363,11 @@ async function main(): Promise<void> {
       // (a changed branch compiled before it's drawn where the browser compiles in parallel)
       if (applyShaderQuality(renderer.scene, next.video.highQualityShaders) > 0) void renderer.prepare();
       applyInterface(next);
+      // (chosen in the settings, a press: asked for at once)
+      if (next.options.fullscreen !== fullscreen) {
+        fullscreen = next.options.fullscreen;
+        displayMode.set(fullscreen, true);
+      }
     },
     resolve,
   );
@@ -936,6 +957,15 @@ async function main(): Promise<void> {
         });
       },
     });
+    // (a browser that can't take every bind: its limits once, Chromium recommended, until dismissed: RV-1104)
+    const limits = currentBrowserLimits();
+    if (limits.length > 0 && !browserNoticeDismissed()) {
+      mainMenu.showNotice(
+        browserNotice(limits, () => {
+          dismissBrowserNotice();
+        }),
+      );
+    }
     const pages = new AccountPages(mainMenu.accountBody, accountsApi, {
       ask: (title, body, yes) => {
         modal.ask(title, body, yes);
@@ -1265,6 +1295,7 @@ async function main(): Promise<void> {
     const leave = (notice?: MenuNotice): void => {
       if (left) return;
       left = true;
+      matchGuard?.leaving();
       leaveMatchSeat(welcome.matchId, notice?.modal);
       if (notice) storeNotice(notice);
       connection.close();
@@ -1289,6 +1320,8 @@ async function main(): Promise<void> {
     );
     const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
     const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, inputEnabled, chat, statsUi, endUi);
+    // (the match's guard from the game now: not once it's over or its connection gone)
+    if (matchGuard) matchGuard.live = () => online.live;
     online.idleTip = new IdleTip(hudRoot);
     if (claim) {
       // (a queue match's session ending: back to the menu, with the kick's modal, a search again, or the lost connection's)
@@ -1430,8 +1463,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  // (a match's session not left open behind a page that failed: its slot not an idle car, RV-445)
+  // (a match's session not left open behind a page that failed: its slot not an idle car, RV-445; its Back to the menu
+  // not asked about)
   startedConnection?.close();
+  matchGuard?.leaving();
   // (a match's or the bots' page: Back to the menu; the menu's own has nowhere else to go)
   const query = new URLSearchParams(location.search);
   const away = query.has("bots") || query.has("match") || query.has("server");

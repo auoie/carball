@@ -97,6 +97,7 @@ describe("settings", () => {
       unlimitedBoost: true, // (Unlimited boost in free play, on: MENU-9)
       bloom: true, // (the video options' High preset: PP-16)
       depthOfField: true,
+      fullscreen: false, // (Display Mode: Windowed, the page in its tab: RV-1091)
     });
   });
 

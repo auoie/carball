@@ -220,6 +220,22 @@ const AXIS_NAMES: Record<number, readonly [string, string]> = {
 };
 
 /** "KeyW" -> "W", "ShiftLeft" -> "Left Shift", "Digit1" -> "1", "ArrowUp" -> "Up arrow". */
+/** Whether any action is bound to the key `code` (KeyboardEvent.code) */
+export function keyBound(bindings: Bindings, code: string): boolean {
+  return Object.values(bindings).some((b: Binding) => b.keyboard?.kind === "key" && b.keyboard.code === code);
+}
+
+/** Whether a key press in play is the game's alone, its browser action never taken (RV-1092): a bound key (F5's reload,
+ *  `/`'s quick find), or any key with a bound modifier held (Ctrl held as a bind: Ctrl+D, Ctrl+S; Alt: Alt+D, Alt+E).
+ *  Ctrl+W, T and N reach the page only in full screen with the keyboard locked (RV-1091) */
+export function takesBrowserKey(
+  e: { readonly code: string; readonly ctrlKey: boolean; readonly altKey: boolean; readonly metaKey: boolean },
+  bound: (code: string) => boolean,
+): boolean {
+  const held = (side: string): boolean => bound(`${side}Left`) || bound(`${side}Right`);
+  return bound(e.code) || (e.ctrlKey && held("Control")) || (e.altKey && held("Alt")) || (e.metaKey && held("Meta"));
+}
+
 export function keyName(code: string): string {
   if (/^Key[A-Z]$/.test(code)) return code.slice(3);
   if (/^Digit\d$/.test(code)) return code.slice(5);

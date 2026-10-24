@@ -442,6 +442,11 @@ export class Online {
     this.#connection.voteForfeit();
   }
 
+  /** Whether leaving now would leave the match: connected, and the match not over (its start awaited counts: a no-show) */
+  get live(): boolean {
+    return this.#disconnected === null && !matchOver(this.#match?.phase);
+  }
+
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
   frame(rawSeconds: number): void {
     this.#handleControlMessages();

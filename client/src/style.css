@@ -4305,3 +4305,33 @@ body.pad-mode .settings-tab-glyph {
 .editor-mode {
   min-height: 28px;
 }
+
+/* A browser that can't take every bind (RV-1104): once on the main menu, dismissible; inline on the Controls screen */
+.browser-notice {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  max-width: min(380px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 78%);
+  color: #fff;
+  font: 14px/1.4 var(--hud-small);
+  z-index: 5;
+}
+
+.browser-notice.inline {
+  position: static;
+  max-width: none;
+  margin: 0 0 10px;
+  background: rgb(255 179 107 / 12%);
+}
+
+.browser-notice ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.browser-notice p {
+  margin: 0 0 8px;
+}

@@ -1,5 +1,6 @@
 // Settings menu (from the pause menu or the main menu): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
+import { browserNotice, currentBrowserLimits } from "./browserNotice";
 import type { CameraSettings } from "../camera/carballCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
@@ -133,6 +134,7 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   bloom: "Bloom (a glow round the brightest parts)",
   depthOfField: "Depth of Field",
   unlimitedBoost: "Unlimited boost in free play (off: 33 boost each round, used up as you boost, and pads to pick up; a full tank takes none)",
+  fullscreen: "Display Mode: Fullscreen", // (the Video tab's Window Settings cycler, its own row)
 };
 
 const AUDIO_LABELS: Readonly<Record<keyof AudioSettings, string>> = {
@@ -403,7 +405,10 @@ export class SettingsPanel {
       className: "settings-hint",
       textContent: "Click a slot, then press a key, click a mouse button, or press/move a gamepad input. Right-click a slot to clear it. Esc cancels.",
     });
-    return el("div", {}, [hint, table, reset]);
+    // (a browser that can't take every bind: its limits, always here, RV-1104)
+    const limits = currentBrowserLimits();
+    const notice = limits.length > 0 ? [browserNotice(limits)] : [];
+    return el("div", {}, [hint, ...notice, table, reset]);
   }
 
   #slot(action: Action, device: Device, input: KeyboardInput | GamepadInput | null): HTMLButtonElement {
@@ -863,6 +868,21 @@ export class SettingsPanel {
           ? "Render Quality draws the 3D view at a share of the screen's resolution (the HUD and menus stay sharp). Render Detail sets the switches below; changing one of them, or Render Quality, makes it Custom."
           : "Set for this device's graphics until you change one (Default goes back to that). Render Quality draws the 3D view at a share of the screen's resolution (the HUD and menus stay sharp); Render Detail sets the switches below.",
       }),
+      // (Window Settings: Display Mode alone, Windowed or Fullscreen (a browser has no Borderless; Resolution and Vertical
+      // Sync the display's own), the page's full screen with its keyboard locked: RV-1091)
+      el("h3", { textContent: T.window }),
+      cycler({
+        label: T.displayMode,
+        options: [
+          ["windowed", T.windowed],
+          ["fullscreen", T.fullscreen],
+        ] as const,
+        value: s.options.fullscreen ? "fullscreen" : "windowed",
+        data: { option: "fullscreen" },
+        onChange: (mode) => {
+          this.#update({ ...this.#settings, options: { ...this.#settings.options, fullscreen: mode === "fullscreen" } });
+        },
+      }),
       el("h3", { textContent: T.basic }),
       list("renderQuality", T.renderQuality, ["highQuality", "quality", "performance", "highPerformance"] as const, s.video.renderQuality, (renderQuality) => {
         apply(withVideoChange(state, { renderQuality }));
@@ -1007,7 +1027,7 @@ export function pageDefaults(tab: Tab, s: Settings): Settings {
       return { ...s, chat: { ...d.chat, name: s.chat.name } };
     case "video":
       // (back to the automatic default: the panel's resolve applies it)
-      return { ...s, video: d.video, options: options(["bloom", "depthOfField"]) };
+      return { ...s, video: d.video, options: options(["bloom", "depthOfField", "fullscreen"]) };
     case "audio":
       return { ...s, audio: d.audio, options: options(["muted"]) };
   }

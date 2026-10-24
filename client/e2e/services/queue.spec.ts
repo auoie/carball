@@ -68,6 +68,17 @@ test("two players find a 1v1, count down and land in the match together", async 
       { timeout: 20_000 },
     )
     .toContain("countdown");
+  // A live match's page asks before it unloads (a reload, the tab closed: RV-1091) and keeps Back in the page (Firefox's
+  // thumb button, which a page can't cancel: RV-1104), the same document at the same address
+  expect(await a.evaluate(() => !window.dispatchEvent(new Event("beforeunload", { cancelable: true }))), "asks").toBe(true);
+  const url = a.url();
+  await a.evaluate(() => {
+    (window as unknown as { backMark?: boolean }).backMark = true;
+  });
+  await a.goBack();
+  await a.waitForTimeout(500);
+  expect(a.url()).toBe(url);
+  expect(await a.evaluate(() => (window as unknown as { backMark?: boolean }).backMark === true), "the same page").toBe(true);
   expect(errors).toEqual([]);
   await a.context().close();
   await b.context().close();

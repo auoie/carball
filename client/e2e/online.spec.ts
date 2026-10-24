@@ -204,8 +204,14 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // software under load once held the goal's 0.4 s), so the span's bounds widened by those waits alone
   const span = (replay.at - goal.at) / 1000;
   const seen = JSON.stringify({ goal, replay });
-  expect(span + goal.waited / 1000, seen).toBeGreaterThan(3.25);
-  expect(span - replay.waited / 1000, seen).toBeLessThan(3.85);
+  // (waits past a quarter of a second, the margin's own size, can't tell the server's 3.53 s from 3.0 (no slow motion):
+  // said so, inconclusive, not passed; the duration pinned server-side too: RV-1107)
+  if (goal.waited + replay.waited > 250) {
+    test.info().annotations.push({ type: "inconclusive", description: `the goal's span: the page stalled (${seen})` });
+  } else {
+    expect(span + goal.waited / 1000, seen).toBeGreaterThan(3.25);
+    expect(span - replay.waited / 1000, seen).toBeLessThan(3.85);
+  }
   // This client's clock slowed with it, keyed to the server's goal tick: the frame its corrected history has the goal in
   // (how many frames it ran depends on its frame rate: under 24 fps, the game's 5 ticks a frame fall behind real time, as
   // software rendering here does). The curve read at each tick it ran (which a slow page's frames don't step past, RX31),

@@ -52,6 +52,20 @@ test("Mouse 4 and 5 never take free play's page back or forward, and do what the
   await bind(page, { launchBall: { kind: "mouse", button: 3 }, defendShot: { kind: "mouse", button: 4 } });
   await between(page, "/?render=off");
   await freePlay(page);
+  // (free play taking input first: a press on its first frame after the menu is the menu's, no press (RX25), and a
+  // loaded page's first frames come late; a click (Jump (alternative), the left button) until the car leaves the floor)
+  const center = page.viewportSize() ?? { width: 1280, height: 720 };
+  const airborne = (): Promise<boolean> =>
+    page.evaluate(() => !(window as unknown as { carballFreeplay: { car: () => { onGround: boolean } } }).carballFreeplay.car().onGround);
+  await expect
+    .poll(
+      async () => {
+        await page.mouse.click(center.width / 2, center.height / 2);
+        return airborne();
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   const stays = await marked(page);
   await page.evaluate(() => {
     (window as unknown as { carballFreeplay: { place: (car: object, ball: object) => void } }).carballFreeplay.place(
@@ -59,14 +73,28 @@ test("Mouse 4 and 5 never take free play's page back or forward, and do what the
       { x: 0, y: 1500, z: 93 },
     );
   });
-  const ball = (): Promise<{ vel: { x: number; y: number; z: number } }> =>
-    page.evaluate(() => (window as unknown as { carballFreeplay: { ball: () => { vel: { x: number; y: number; z: number } } } }).carballFreeplay.ball());
+  // (the ball's fastest up and along the floor, read each frame in the page: a launch's 750 up is under 400 within half a
+  // second, which a loaded page's read can miss)
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      peak: { up: number; flat: number };
+      carballFreeplay: { ball: () => { vel: { x: number; y: number; z: number } } };
+    };
+    w.peak = { up: 0, flat: 0 };
+    const sample = (): void => {
+      const { vel } = w.carballFreeplay.ball();
+      w.peak = { up: Math.max(w.peak.up, vel.z), flat: Math.max(w.peak.flat, Math.hypot(vel.x, vel.y)) };
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  const peak = (): Promise<{ up: number; flat: number }> => page.evaluate(() => (window as unknown as { peak: { up: number; flat: number } }).peak);
   await thumb(page, "back");
   await stays();
-  await expect.poll(async () => (await ball()).vel.z, { timeout: 10_000 }).toBeGreaterThan(400);
+  await expect.poll(async () => (await peak()).up, { timeout: 10_000 }).toBeGreaterThan(400);
   await thumb(page, "forward");
   await stays();
-  await expect.poll(async () => Math.hypot((await ball()).vel.x, (await ball()).vel.y), { timeout: 10_000 }).toBeGreaterThan(2000);
+  await expect.poll(async () => (await peak()).flat, { timeout: 10_000 }).toBeGreaterThan(2000);
   await expect(page.locator("#main-menu")).toBeHidden();
 });
 

@@ -337,6 +337,11 @@ export class MainMenu {
     host.append(this.#root);
   }
 
+  /** A notice on the menu (the browser's limits for binds: browserNotice.ts) */
+  showNotice(notice: HTMLElement): void {
+    this.#root.append(notice);
+  }
+
   /** The account's entry on the top page: the account's name, or Sign In; null hides it (no accounts here) */
   setAccountEntry(label: string | null): void {
     this.#accountEntry.hidden = label === null;

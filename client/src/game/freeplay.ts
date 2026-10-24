@@ -910,9 +910,10 @@ export class Freeplay {
     return { pos: ball.pos, vel: ball.vel };
   }
 
-  debugCar(): { readonly pos: Vec3; readonly speed: number; readonly hitbox: Vec3 } {
+  debugCar(): { readonly pos: Vec3; readonly speed: number; readonly hitbox: Vec3; readonly onGround: boolean } {
     const car = this.#world.car(this.#playerId);
-    return { pos: car.pos, speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z), hitbox: this.#world.carConfig(this.#playerId).hitboxSize };
+    const speed = Math.hypot(car.vel.x, car.vel.y, car.vel.z);
+    return { pos: car.pos, speed, hitbox: this.#world.carConfig(this.#playerId).hitboxSize, onGround: car.onGround };
   }
 
   /** For screenshots: a demolition's effect at `at` (game frame) */

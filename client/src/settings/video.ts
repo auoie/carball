@@ -47,6 +47,10 @@ export const RENDER_DETAIL_PRESETS: Readonly<Record<Exclude<RenderDetail, "custo
 
 /** The game's labels (UserSettings.int: MENU-19) */
 export const VIDEO_TEXT = {
+  window: "Window Settings",
+  displayMode: "Display Mode",
+  windowed: "Windowed",
+  fullscreen: "Fullscreen",
   basic: "Basic Settings",
   advanced: "Advanced Settings",
   renderQuality: "Render Quality",

@@ -39,6 +39,7 @@ export interface Options {
   readonly unlimitedBoost: boolean; // Unlimited boost in free play (MENU-9): on, the tank stays full (and a full car takes no pads)
   readonly bloom: boolean; // the video option Bloom (system setting Bloom; on in the High preset, PP-16)
   readonly depthOfField: boolean; // the video option Depth of Field (on in High: the arena's 25 % softening, PP-10)
+  readonly fullscreen: boolean; // the video option Display Mode: Fullscreen (the page's full screen, its keyboard locked), else Windowed (RV-1091)
 }
 
 /** Volumes, 0..1. */
@@ -292,6 +293,7 @@ export const DEFAULT_OPTIONS: Options = {
   unlimitedBoost: true,
   bloom: true,
   depthOfField: true,
+  fullscreen: false,
 };
 
 export const DEFAULT_SETTINGS: Settings = {

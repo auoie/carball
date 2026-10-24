@@ -1,6 +1,22 @@
 // Collects keyboard, mouse and gamepad state from the browser into snapshots.
-import { padStyleOf, setPadStyle } from "./bindings";
+import { padStyleOf, setPadStyle, takesBrowserKey } from "./bindings";
 import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
+
+/** The thumb buttons, Mouse 4 and 5: bindable (air roll, often), never the browser's back and forward, which on a match's
+ *  page would leave the match (a loss and a ban): anywhere on the page, a menu's too, from the page's start (its seat
+ *  claimed while it loads, RV-1103), in the capture phase (RV-1105). Chromium's; Firefox gives a page no thumb buttons at
+ *  all (its Back the match page's guard's, LeaveGuard: RV-1104) */
+export function cancelThumbButtons(target: Pick<Window, "addEventListener"> = window): void {
+  for (const kind of ["mousedown", "mouseup", "auxclick"] as const) {
+    target.addEventListener(
+      kind,
+      (e) => {
+        if (e.button === 3 || e.button === 4) e.preventDefault();
+      },
+      { capture: true },
+    );
+  }
+}
 
 /** A text field (or editable text) a key typed goes to */
 function editable(target: EventTarget | null): boolean {
@@ -30,6 +46,8 @@ export class InputDevices {
   capturePointer = false;
   /** Whether a menu is up (Tab then moves the focus, not the scoreboard's) */
   menuOpen: () => boolean = () => false;
+  /** Whether a key (KeyboardEvent.code) is bound to an action: in play its browser action never taken (RV-1092) */
+  bound: (code: string) => boolean = () => false;
 
   /** `surface`: the element that receives mouse buttons (the game canvas). */
   constructor(surface: HTMLElement) {
@@ -44,6 +62,9 @@ export class InputDevices {
         if ((e.code === "Space" && !box) || e.code === "Backspace") e.preventDefault();
         // (Tab the scoreboard's, not focus, in play; with a menu up it moves the focus, the menus' keyboard path: RV-482)
         if (e.code === "Tab" && !this.menuOpen() && (e.target === document.body || e.target === surface)) e.preventDefault();
+        // (in play, a bound key or a chord with a bound modifier the game's alone: F5's reload, Ctrl+D's bookmark, Alt+D's
+        // address bar never taken; Ctrl+W, T and N reach the page only in full screen, DisplayMode: RV-1091, RV-1092)
+        if (!this.menuOpen() && takesBrowserKey(e, this.bound)) e.preventDefault();
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
         this.#keys.add(e.code);
@@ -58,6 +79,8 @@ export class InputDevices {
     window.addEventListener(
       "keyup",
       (e) => {
+        // (a bound Alt's release not the browser's menu bar either)
+        if (!editable(e.target) && !this.menuOpen() && this.bound(e.code)) e.preventDefault();
         if (this.#keys.delete(e.code)) {
           this.#releasedKeys.add(e.code);
           this.#events.push({ kind: "key", code: e.code, down: false });
@@ -100,17 +123,6 @@ export class InputDevices {
       },
       { signal },
     ); // right button = jump
-    // (the thumb buttons, Mouse 4 and 5: bindable (air roll, often), never the browser's back and forward, which on a match
-    // page would leave the match, a loss and a ban; anywhere on the page, a menu's too)
-    for (const kind of ["mousedown", "mouseup", "auxclick"] as const) {
-      window.addEventListener(
-        kind,
-        (e) => {
-          if (e.button === 3 || e.button === 4) e.preventDefault();
-        },
-        { signal },
-      );
-    }
     window.addEventListener(
       "mousemove",
       (e) => {
