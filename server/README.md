@@ -44,7 +44,8 @@ players the world once a tick at most.
 ## Checks
 ```sh
 cargo fmt --check                       # the layout (rustfmt.toml at the repo's root: 120 columns); `cargo fmt` applies it
-cargo test                              # protocol vectors, input buffer, game logic, a real WebTransport client
+cargo test                              # protocol vectors, input buffer, game logic, a real WebTransport client, the
+                                        # engine bindings against rlengine.h (with libclang)
 cargo clippy --all-targets -- -D warnings
 # the local host's configuration (the client's in-browser server: scripts/build_host.sh); its tests need `net`, so
 # no --all-targets (RV-547, RV-552)
@@ -55,6 +56,7 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | Path | |
 |---|---|
 | `src/engine.rs` | safe wrapper around the engine's C API |
+| `src/engine_ffi.rs` | the C API's bindings, bindgen's, committed: after a change to `rlengine.h`, `scripts/gen_bindings.sh` (needs libclang); `tests/engine_bindings.rs` fails on any difference (skipped, said, without libclang) |
 | `src/protocol.rs` | messages; byte vectors shared with the client (`protocol/vectors.json`) |
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |
 | `src/game.rs` | the match: joins and leaves, inputs, the match flow (below), updates (rates, splitting into datagrams) |

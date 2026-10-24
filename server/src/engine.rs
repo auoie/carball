@@ -1,108 +1,23 @@
 //! The patched engine (C++), through its C interface (`engine/capi/rlengine.h`).
 
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, CString, c_int};
 use std::path::Path;
 use std::ptr::NonNull;
 
 use crate::protocol::PodiumTitle;
 
-#[repr(C)]
-struct CarballArena {
-    _private: [u8; 0],
-}
+// (the engine's C interface, its functions, types and constants: bindgen's from `engine/capi/rlengine.h`, committed,
+// scripts/gen_bindings.sh)
+#[path = "engine_ffi.rs"]
+mod ffi;
+use ffi::*;
 
 /// What the replication watches to force a car into the next update (`RLCarNetInfo`)
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CarNetInfo {
-    pub spawn_count: u32,
-    pub flip_resets: u32,
-    pub jumped: u8,
-    pub double_jumped: u8,
-    pub flipped: u8,
-    pub demoed: u8,
-}
+pub type CarNetInfo = ffi::RLCarNetInfo;
 
-/// Car controls as the engine takes them.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Controls {
-    pub throttle: f32,
-    pub steer: f32,
-    pub pitch: f32,
-    pub yaw: f32,
-    pub roll: f32,
-    pub jump: u8,
-    pub boost: u8,
-    pub handbrake: u8,
-    pub air_pitch_safety: u8,
-    /// The dodge's forward input, as its own byte (the game's q(-pitch), C-2), if `has_dodge_forward`
-    pub dodge_forward: f32,
-    pub has_dodge_forward: u8,
-}
-
-unsafe extern "C" {
-    fn rl_init(collision_mesh_dir: *const c_char) -> c_int;
-    fn rl_init_error() -> *const c_char;
-    fn rl_arena_create() -> *mut CarballArena;
-    fn rl_arena_destroy(arena: *mut CarballArena);
-    fn rl_add_car(arena: *mut CarballArena, team: c_int, body: c_int) -> u32;
-    fn rl_remove_car(arena: *mut CarballArena, car_id: u32) -> c_int;
-    fn rl_set_controls(arena: *mut CarballArena, car_id: u32, controls: *const Controls);
-    fn rl_car_repress_jump(arena: *mut CarballArena, car_id: u32);
-    fn rl_set_car_preferences(arena: *mut CarballArena, car_id: u32, dodge: f32, steer: f32, air: f32);
-    fn rl_step(arena: *mut CarballArena, ticks: c_int);
-    fn rl_reset_kickoff(arena: *mut CarballArena, seed: c_int);
-    fn rl_start_match(arena: *mut CarballArena, seed: c_int, team_size: c_int);
-    fn rl_next_kickoff(arena: *mut CarballArena);
-    fn rl_redo_kickoff(arena: *mut CarballArena);
-    fn rl_last_ball_touch_tick(arena: *mut CarballArena) -> i64;
-    fn rl_car_last_ball_touch_tick(arena: *mut CarballArena, car_id: u32) -> i64;
-    fn rl_ball_on_ground(arena: *mut CarballArena) -> c_int;
-    fn rl_reset_ball(arena: *mut CarballArena);
-    fn rl_set_ball(arena: *mut CarballArena, pos: *const f32, vel: *const f32);
-    fn rl_set_kickoff_countdown(arena: *mut CarballArena, ticks: u32);
-    fn rl_set_respawns_held(arena: *mut CarballArena, held: c_int);
-    fn rl_kickoff_countdown(arena: *const CarballArena) -> u32;
-    fn rl_tick_count(arena: *const CarballArena) -> u64;
-    fn rl_is_ball_scored(arena: *mut CarballArena) -> c_int;
-    fn rl_ball_position(arena: *mut CarballArena, out: *mut f32);
-    fn rl_car_position(arena: *mut CarballArena, car_id: u32, out: *mut f32) -> c_int;
-    fn rl_car_velocity(arena: *mut CarballArena, car_id: u32, out: *mut f32) -> c_int;
-    fn rl_car_demoed(arena: *mut CarballArena, car_id: u32) -> c_int;
-    fn rl_car_demolish(arena: *mut CarballArena, car_id: u32);
-    fn rl_car_net_info(arena: *mut CarballArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
-    fn rl_set_press_axes(arena: *mut CarballArena, car_id: u32, dodge_forward: f32, yaw: f32, roll: f32);
-    fn rl_set_vehicle_order(arena: *mut CarballArena, car_ids: *const u32, num_cars: usize);
-    fn rl_vehicle_order(arena: *mut CarballArena, out: *mut u32, max_ids: usize) -> usize;
-    fn rl_pads_active(arena: *mut CarballArena) -> u64;
-    fn rl_take_events(arena: *mut CarballArena, out: *mut i32, max_ints: usize) -> usize;
-    fn rl_write_net_state(
-        arena: *mut CarballArena,
-        ball: c_int,
-        car_ids: *const u32,
-        num_cars: usize,
-        pads: c_int,
-        out: *mut u8,
-        capacity: usize,
-    ) -> usize;
-    fn rl_save_state(arena: *mut CarballArena, out: *mut u8, capacity: usize) -> usize;
-    fn rl_load_state(arena: *mut CarballArena, data: *const u8, size: usize) -> c_int;
-    fn rl_apply_net_state(arena: *mut CarballArena, data: *const u8, size: usize) -> c_int;
-    fn rl_car_ids(arena: *mut CarballArena, out: *mut u32, max_ids: usize) -> usize;
-    fn rl_stats_set_state(arena: *mut CarballArena, state: c_int);
-    fn rl_stats_set_overtime(arena: *mut CarballArena, overtime: c_int);
-    fn rl_stats_reset(arena: *mut CarballArena);
-    fn rl_take_stat_awards(arena: *mut CarballArena, out: *mut i32, max_ints: usize) -> usize;
-    fn rl_car_stats(arena: *mut CarballArena, car_id: u32, out: *mut i32, max: usize) -> usize;
-    fn rl_stat_event_points(event: c_int) -> c_int;
-    fn rl_set_frozen(arena: *mut CarballArena, frozen: c_int);
-    fn rl_car_place(arena: *mut CarballArena, car_id: u32, x: f32, y: f32, yaw: f32, boost: f32);
-    fn rl_set_unlimited_boost(arena: *mut CarballArena, on: c_int);
-    fn rl_set_podium(arena: *mut CarballArena, on: c_int);
-    fn rl_ball_hide(arena: *mut CarballArena);
-    fn rl_match_ended(arena: *mut CarballArena, have_winner: c_int, members: *const u32, count: usize, out: *mut i32);
-}
+/// Car controls as the engine takes them (`RLControls`; `dodge_forward`: the dodge's forward input, as its own byte, the
+/// game's q(-pitch), C-2, if `has_dodge_forward`)
+pub type Controls = ffi::RLControls;
 
 /// A player's match counters (`engine/stats/StatFactory.h` `Counter`): MatchScore, Goals, Assists, Saves, Shots,
 /// Demolishes, EpicSaves, Centers, Clears, AerialHits, BicycleHits, JuggleHits, FirstTouches, PoolShots, LowFives,
@@ -467,10 +382,10 @@ impl Arena {
             .as_chunks::<3>()
             .0
             .iter()
-            .filter_map(|&[kind, a, b]| match kind {
-                0 => Some(Event::Goal { team: a as u8 }),
-                1 => Some(Event::Bump { attacker: a as u32, victim: b as u32 }),
-                2 => Some(Event::Demo { attacker: a as u32, victim: b as u32 }),
+            .filter_map(|&[kind, a, b]| match u32::try_from(kind) {
+                Ok(RL_EVENT_GOAL) => Some(Event::Goal { team: a as u8 }),
+                Ok(RL_EVENT_BUMP) => Some(Event::Bump { attacker: a as u32, victim: b as u32 }),
+                Ok(RL_EVENT_DEMO) => Some(Event::Demo { attacker: a as u32, victim: b as u32 }),
                 _ => None,
             })
             .collect()

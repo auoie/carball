@@ -69,6 +69,10 @@ required-features = ["host"]
 [dev-dependencies]
 serde_json = "1"
 wiremock = "0.6"
+# (the engine's bindings, src/engine_ffi.rs, made and checked by tests/engine_bindings.rs: bindgen's exact version, its
+# output changing with it; libclang loaded at run time, clang-sys telling whether there's one)
+bindgen = { version = "=0.73.2", default-features = false, features = ["runtime"] }
+clang-sys = { version = "1.9.1", features = ["runtime"] }
 
 [build-dependencies]
 cmake = "0.1"
