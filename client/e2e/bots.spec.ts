@@ -1,8 +1,13 @@
 // The offline match against bots (src/local/): the server's own match in the page's worker (the WebAssembly host), the
 // online client talking to it; a 1v1 against the built-in chaser (no bot package needed), its setup handed over as the
 // menu would (sessionStorage), through the match's start into play. The menu's Play vs Bots lists the shipped packages (a
-// build has them unless CARBALL_BOTS=0). Nothing of the 3D drawn.
+// build has them as src/features.ts says). Nothing of the 3D drawn.
+import { botsBuilt } from "../src/features";
 import { expect, test } from "./fixtures";
+
+// (a build without the bots has none of this: Play vs Bots switched off, src/features.ts PLAY_VS_BOTS; CARBALL_BOTS=1 for a
+// build with them)
+test.skip(!botsBuilt(process.env.CARBALL_BOTS), "Play vs Bots is switched off (src/features.ts PLAY_VS_BOTS)");
 
 interface Online {
   readonly phases: readonly { readonly phase: string }[];

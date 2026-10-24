@@ -7,6 +7,7 @@
 import { OWN_SEARCH_TEXT, PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
 import type { Team } from "../engine/world";
 import { CARS, storeCar, storeTeam, storedCar, storedTeam } from "../game/cars";
+import { CUSTOM_TRAINING } from "../features";
 import type { BotChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
 import type { BotsPage } from "./botsPage";
@@ -187,7 +188,7 @@ export class MainMenu {
         })
       : null;
     if (playBots) playBots.hidden = true;
-    // (hidden until a pack is there to play: setTrainingPacks)
+    // (hidden until a pack is there to play: setTrainingPacks; always while switched off: features.ts)
     this.#playTraining = button(this.#play, TRAINING_MENU_TEXT.customTraining, () => {
       this.#show("training");
     });
@@ -453,7 +454,7 @@ export class MainMenu {
    *  its page, the player's own with Edit beside it; Create Training first */
   setTrainingPacks(packs: readonly PackListing[]): void {
     const edit = this.#editAction;
-    this.#playTraining.hidden = packs.length === 0 && !edit;
+    this.#playTraining.hidden = !CUSTOM_TRAINING || (packs.length === 0 && !edit);
     const create = document.createElement("button");
     create.className = "main-menu-button main-menu-create";
     create.textContent = TRAINING_MENU_TEXT.create;

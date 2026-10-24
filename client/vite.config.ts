@@ -3,6 +3,7 @@ import { cpSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Plugin, type ViteDevServer, defineConfig } from "vite";
+import { botsBuilt } from "./src/features.ts";
 import { PROTOCOL_VERSION } from "./src/net/protocol.ts";
 
 const here = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
@@ -44,11 +45,11 @@ function localAssets(): Plugin {
 
 /** The bot packages (the offline match against bots: src/bots/; Nexto's and Necto's, CC BY-NC-SA 4.0), tracked in
  *  client/bots/ (their derived specs stay local: out/bsim/assets_local/bots/packages): the dev server serves them at
- *  /bots/; a build has them, onnxruntime's WebAssembly and the match host unless CARBALL_BOTS=0 (then none of the three:
- *  __CARBALL_BOTS__ false, the bots' mode hidden). A build with them: their runtime files in dist/bots/ (not their test
+ *  /bots/; a build has them, onnxruntime's WebAssembly and the match host when src/features.ts says (PLAY_VS_BOTS,
+ *  CARBALL_BOTS=1 or 0 over it; without them none of the three: __CARBALL_BOTS__ false, the bots' mode hidden). A build with them: their runtime files in dist/bots/ (not their test
  *  vectors), their notices after the page's (bots/NOTICES.txt) and onnxruntime's third-party notices beside them */
 const BOT_PACKAGES = here("bots");
-const BOTS = process.env.CARBALL_BOTS !== "0";
+const BOTS = botsBuilt(process.env.CARBALL_BOTS);
 
 function botPackages(): Plugin {
   let outDir = "";

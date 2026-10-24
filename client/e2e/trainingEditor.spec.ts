@@ -1,7 +1,11 @@
 // Carball's training editor (src/ui/trainingEditor.ts): Create Training opens it on a new pack of one default shot; a
 // shot added, the pack named and a speed changed; saved, then listed as the player's own with Edit; edited again;
 // playtested in training, and back to the editor from the pause menu. Nothing of the 3D drawn (`?render=off`).
+import { CUSTOM_TRAINING } from "../src/features";
 import { expect, fakeGamepad, padTap, test } from "./fixtures";
+
+// (the editor's only way in is Custom Training's page: none while it's switched off)
+test.skip(!CUSTOM_TRAINING, "Custom Training is switched off (src/features.ts CUSTOM_TRAINING)");
 
 test("the editor: a new pack made, saved and listed as the player's own, edited again, playtested, back to the editor", async ({ page, context }) => {
   const errors: string[] = [];

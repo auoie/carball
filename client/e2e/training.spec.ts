@@ -3,6 +3,7 @@
 // completion; next, previous, mirror and shuffle; a striker's goal after a touch completing the shot; Carball's starter
 // packs offered in a build. Nothing of the 3D drawn (`?render=off`).
 import type { Page } from "@playwright/test";
+import { CUSTOM_TRAINING } from "../src/features";
 import { expect, fakeGamepad, padTap, test } from "./fixtures";
 
 interface TrainingState {
@@ -134,6 +135,8 @@ test("a striker's goal after the car's touch completes the shot (CTR-8)", async 
 });
 
 test("a build offers Carball's starter packs: Custom Training lists them, one starts at its first shot", async ({ page }) => {
+  // (the menu's way in: none while it's switched off; the play mode above runs through the test hook still)
+  test.skip(!CUSTOM_TRAINING, "Custom Training is switched off (src/features.ts CUSTOM_TRAINING)");
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   const menu = page.locator("#main-menu");
