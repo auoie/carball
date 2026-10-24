@@ -551,7 +551,11 @@ describe("Predictor", () => {
     const states = new Map<number, Uint8Array>();
     let directWhileDemoed = 0;
     let replaysWhileDemoed = 0;
-    let replayedAfter = 0;
+    // (from the first correction after the respawn on: each replays from its own frame, and leaves the client's car and
+    // ball where the server's are at this frame, the same inputs both sides: no misprediction nor ball error as
+    // prediction resumes, RV-1065)
+    const after: { replayed: number; car: number; ball: number }[] = [];
+    let mispredictionsAtResume: number | null = null;
     for (let f = 1; f <= 600; f++) {
       server.step();
       states.set(f, server.writeNetState({ ball: true, carIds: server.carIds(), pads: true }));
@@ -563,14 +567,23 @@ describe("Predictor", () => {
         if (!wasPredicting) {
           directWhileDemoed += predictor.stats.direct - direct;
           replaysWhileDemoed += replayed;
-        } else if (f > 500) replayedAfter = Math.max(replayedAfter, replayed);
+        } else if (directWhileDemoed > 0) {
+          mispredictionsAtResume ??= predictor.stats.localMispredictions;
+          const gap = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+          after.push({ replayed, car: gap(client.car(local).pos, server.car(local).pos), ball: gap(client.ball().pos, server.ball().pos) });
+        }
       }
     }
     expect(server.car(local).demoed).toBe(false); // (respawned after 3 s)
     expect(directWhileDemoed).toBeGreaterThan(50);
     expect(replaysWhileDemoed).toBe(0);
     expect(predictor.predicting).toBe(true);
-    expect(replayedAfter).toBe(LAG); // (predicting again: each state replayed from its frame)
+    // (predicting again: each state replayed from its frame, the very first after the respawn too)
+    expect(after.length).toBeGreaterThan(30);
+    expect(after.map((a) => a.replayed)).toEqual(after.map(() => LAG));
+    expect(Math.max(...after.map((a) => a.car))).toBeLessThan(0.01);
+    expect(Math.max(...after.map((a) => a.ball))).toBeLessThan(0.01);
+    expect(predictor.stats.localMispredictions).toBe(mispredictionsAtResume);
     server.dispose();
     client.dispose();
   });

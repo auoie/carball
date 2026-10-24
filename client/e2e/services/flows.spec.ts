@@ -1,6 +1,7 @@
 // The real flows end to end against the services (stacks.ts' "flows" stack: the accounts service with its database, two
 // game servers, Region A and Region B, whose forfeit votes open at once): a sign-up through the page's own screen and a
-// returning sign-in; a matched 1v1 conceded, its result recorded and both ratings moved; a 1v1 abandoned, the leaver's
+// returning sign-in (both from the e2e build's sign-in in a provider's place: the provider's own returning path is the
+// API's tests'); a matched 1v1 conceded, its result recorded and both ratings moved; a 1v1 abandoned, the leaver's
 // ban line under Find Match; a 2v2 rejoin refused at the other region's server (the accounts service asked: the match
 // is elsewhere, RV-1008) and let in at its own. Nothing drawn (`?render=off`).
 import { randomBytes, randomUUID } from "node:crypto";
@@ -185,7 +186,7 @@ test("a 1v1 left: the leaver reported, its ban line under Find Match; the other'
   // The leaver's Play page: the ban's line (the game server's report, the service's first step: 5 minutes)
   const menu = back.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
-  await expect(menu.locator(".main-menu-ban")).toHaveText(/^you left a ranked match: you can search again in [45] minutes$/, { timeout: 40_000 });
+  await expect(menu.locator(".main-menu-ban")).toHaveText("you left a ranked match: you can search again in 5 minutes", { timeout: 40_000 });
   // (the one who stayed: its win, its team left without players)
   await expect.poll(async () => (await ends(stays.page)).length, { timeout: 30_000 }).toBeGreaterThan(0);
   await leftForMenu(stays.page, "address");

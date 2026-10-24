@@ -296,15 +296,16 @@ describe("the pages' handoffs", () => {
     expect(configServers({ gameServer: "ftp://x" })).toEqual([]);
   });
 
-  it("this page older than its deployment only when the deployment's version (its build's, never cached) is newer (RV-1030)", async () => {
+  it("this page apart from its deployment only when the deployment's version (its build's, never cached) differs (RV-1030, RV-1066)", async () => {
     const version =
       (body: unknown, status = 200, type = "application/json") =>
       () =>
         Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": type } }));
     expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION + 1 }))).toBe(true);
-    // (the same or older: a server refusing this page is the one behind; a reload changes nothing)
+    // (older too, a rollback: the reload brings the deployment's page; the same: a server refusing this page is the one
+    // apart, a reload changes nothing)
+    expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION - 1 }))).toBe(true);
     expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION }))).toBe(false);
-    expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION - 1 }))).toBe(false);
     // (none to read: a development page's page in its place, a 404, nothing, a failed request)
     expect(await pageOutdated(() => Promise.resolve(new Response("<!doctype html>", { headers: { "content-type": "text/html" } })))).toBe(false);
     expect(await pageOutdated(version({ protocol: PROTOCOL_VERSION + 1 }, 404))).toBe(false);

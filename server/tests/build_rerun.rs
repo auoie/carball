@@ -357,7 +357,8 @@ fn the_guard_refuses_a_path_it_cant_resolve() {
 }
 
 /// The Dockerfile's last stage, what a build with no --target makes, is a release image, never an e2e one (RV-1042); the
-/// release server's cargo build takes no features, the e2e one's `e2e` alone (RV-1045)
+/// release server's cargo build takes no features, the e2e one's `e2e` alone (RV-1045), and the Go builds' tags likewise
+/// (RV-1058); the e2e markers' lists agree (RV-1057)
 #[test]
 fn the_dockerfile_ends_on_a_release_stage_and_only_the_e2e_build_has_its_feature() {
     let dockerfile = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../Dockerfile"));
@@ -379,6 +380,31 @@ fn the_dockerfile_ends_on_a_release_stage_and_only_the_e2e_build_has_its_feature
         [("server", false, false), ("server-e2e", true, true)],
         "the cargo builds: (stage, e2e, any features)"
     );
+    // (the Go builds the same: the e2e tag in the api-e2e build's alone, RV-1058)
+    let mut stage = "";
+    let mut go = Vec::new();
+    for line in joined.lines() {
+        if let Some(name) = line.strip_prefix("FROM ").and_then(|l| l.split(" AS ").nth(1)) {
+            stage = name.trim();
+        } else if line.starts_with("RUN ") && line.contains(" go build ") {
+            go.push((stage, line.contains("-tags e2e"), line.contains("-tags")));
+        }
+    }
+    assert_eq!(
+        go,
+        [("api-build", false, false), ("api-e2e-build", true, true)],
+        "the go builds: (stage, e2e, any tags)"
+    );
+    // (the e2e markers written out in three places, never a build argument one could empty: the release checks' list
+    // the game's and the API's together, each e2e image checking its own, RV-1057)
+    let lists: Vec<Vec<&str>> = joined
+        .lines()
+        .filter_map(|l| l.split("for m in ").nth(1).and_then(|rest| rest.split("; do").next()))
+        .map(|list| list.split_whitespace().collect())
+        .collect();
+    assert_eq!(lists.len(), 3, "the release checks' marker list and the two e2e images': {lists:?}");
+    let (game, api) = (&lists[1], &lists[2]);
+    assert!(!game.is_empty() && !api.is_empty() && lists[0] == [game.as_slice(), api.as_slice()].concat(), "{lists:?}");
 }
 
 /// The image build's cargo builds of the server's crate each clean it first (RV-927): its cache-mounted target dir would

@@ -36,6 +36,9 @@ const (
 	NoShowCooldown = 2 * time.Minute
 	// ReturnFor is how long a cancelled match's players who came keep their wait for their next search
 	ReturnFor = time.Minute
+	// RejoinHold is how long a rejoin the matchmaker let through holds its account's searches, waiting for its server's
+	// word that it's back (a rejoin then refused never comes back: its searches free again after it, RV-1026)
+	RejoinHold = 10 * time.Second
 	// tickEvery is how often Run forms matches
 	tickEvery = time.Second
 )
@@ -177,7 +180,8 @@ type Matchmaker struct {
 	active    map[string]uint64 // each account's match
 	latest    map[string]uint64 // each account's latest match, its rejoin's; 0 once a later search gave it up
 	cooldowns map[string]time.Time
-	waits     map[string]kept // a cancelled match's players' waits, for their next search
+	waits     map[string]kept      // a cancelled match's players' waits, for their next search
+	rejoining map[string]time.Time // each rejoin let through: its account's searches held till then, or its Back
 	arrivals  uint64
 }
 
@@ -186,6 +190,7 @@ func New(issue Issuer, now func() time.Time, log *slog.Logger) *Matchmaker {
 	return &Matchmaker{
 		issue: issue, now: now, log: log, searches: map[string]*search{}, open: map[string]*search{}, matches: map[uint64]*match{},
 		active: map[string]uint64{}, latest: map[string]uint64{}, cooldowns: map[string]time.Time{}, waits: map[string]kept{},
+		rejoining: map[string]time.Time{},
 	}
 }
 
@@ -214,6 +219,10 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 	m.tidy(now)
 	if until, ok := m.cooldowns[p.Account]; ok {
 		return "", State{}, CooldownError{Until: until}
+	}
+	// (a rejoin of its let through moments ago, its server's word that it's back not come yet: in that match, RV-1026)
+	if until, ok := m.rejoining[p.Account]; ok && now.Before(until) {
+		return "", State{}, ErrInMatch
 	}
 	if id, ok := m.active[p.Account]; ok {
 		// (a match whose server no longer answers their page, ticked or not: gone with it, theirs no longer, MX1R-1,
@@ -371,6 +380,11 @@ func (m *Matchmaker) tidy(now time.Time) {
 	for a, w := range m.waits {
 		if !w.until.After(now) {
 			delete(m.waits, a)
+		}
+	}
+	for a, until := range m.rejoining {
+		if !until.After(now) {
+			delete(m.rejoining, a)
 		}
 	}
 	for id, mt := range m.matches {
@@ -543,6 +557,7 @@ func (m *Matchmaker) Back(server string, id uint64, seat int, now time.Time) {
 		}
 		mt.present[a] = true
 		m.active[a] = id
+		delete(m.rejoining, a)
 		if s := m.open[a]; s != nil {
 			m.end(s, ReasonReplaced, time.Time{}, now)
 		}
@@ -640,14 +655,19 @@ func (m *Matchmaker) RejoinAllowed(account string, id uint64) bool {
 
 // RejoinCheck is a game server's question at the rejoin itself, its ticket checked (RV-1008): RejoinAllowed still (a
 // ticket from before a search or a later match of the account's would put it in two matches, across servers too), and
-// a match this matchmaker knows only at its own server
+// a match this matchmaker knows only at its own server. Let through, the account's searches are held till its Back (or
+// RejoinHold): one started between the answer and that word would be matched into a second match (RV-1026)
 func (m *Matchmaker) RejoinCheck(account string, id uint64, server string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if mt := m.matches[id]; mt != nil && mt.server != server {
 		return false
 	}
-	return m.rejoinable(account, id)
+	if !m.rejoinable(account, id) {
+		return false
+	}
+	m.rejoining[account] = m.now().Add(RejoinHold)
+	return true
 }
 
 // rejoinable: RejoinAllowed's rule, under the lock

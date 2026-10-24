@@ -768,8 +768,10 @@ async fn session(
                 crate::outbox::RejoinAnswer::Allowed => {}
                 crate::outbox::RejoinAnswer::Gone => {
                     // (final: the account's latest match only ever moves on, so the ticket is spent: a replay refused here
-                    // as used, the API never asked again, RV-1020)
+                    // as used, the API never asked again, RV-1020; its question's slot let go before the refusal's close
+                    // wait, RV-1028)
                     let _ = tickets.spend(&checked, crate::ticket::unix_now());
+                    drop(_deciding.take());
                     refuse(&mut send, &connection, protocol::REFUSED_REJOIN_GONE).await;
                     bail!(
                         "{}: the rejoin of match {m:016x} refused: the matchmaker says the account searched or was matched \
@@ -779,6 +781,7 @@ async fn session(
                 }
                 // (the API down or slow, which passes: the ticket left good for a retry once it's back, RV-1020)
                 crate::outbox::RejoinAnswer::Unconfirmed(why) => {
+                    drop(_deciding.take());
                     refuse(&mut send, &connection, protocol::REFUSED_UNCONFIRMED).await;
                     bail!("{}: the rejoin of match {m:016x} refused unconfirmed: the matchmaker: {why}", request.who());
                 }

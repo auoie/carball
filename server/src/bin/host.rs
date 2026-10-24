@@ -284,6 +284,26 @@ pub extern "C" fn host_phase(id: u32) -> i32 {
     with(|h| h.matches.game_of(id).map(|g| g.phase() as i32)).flatten().unwrap_or(-1)
 }
 
+/// One of a player's input buffer counters (0 consumed, 1 never consumed, 2 over, 3 under, 4 refill skips, 5 duplicates,
+/// 6 late, 7 trimmed: the client's network tests read them, RV-1034; i32::MAX at most), or -1 (no such player or counter)
+#[unsafe(no_mangle)]
+pub extern "C" fn host_input_stat(id: u32, which: u32) -> i32 {
+    let id = PlayerId::from(id);
+    let stats = with(|h| h.matches.game_of(id).and_then(|g| g.input_stats(id))).flatten();
+    let Some(s) = stats else { return -1 };
+    let counters = [
+        s.consumed,
+        s.never_consumed,
+        s.over_buffer_frames,
+        s.under_buffer_frames,
+        s.fill_skips,
+        s.duplicates,
+        s.late_dropped,
+        s.trimmed,
+    ];
+    counters.get(which as usize).map_or(-1, |&n| i32::try_from(n).unwrap_or(i32::MAX))
+}
+
 /// The whole match's state, as a welcome's snapshot, of a player's match into `host_state_bytes`: its length (0: no such
 /// player)
 #[unsafe(no_mangle)]

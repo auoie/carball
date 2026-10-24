@@ -110,7 +110,11 @@ func NewSigner(keyID, seed string) (*Signer, error) {
 	if err != nil || len(raw) != ed25519.SeedSize {
 		return nil, errors.New("a ticket key's seed is 32 bytes, base64")
 	}
-	return &Signer{KeyID: keyID, key: ed25519.NewKeyFromSeed(raw)}, nil
+	key := ed25519.NewKeyFromSeed(raw)
+	if bytes.Equal(key.Public().(ed25519.PublicKey), publishedDevKey) {
+		return nil, errors.New("a ticket key's seed is the old development key's, published: make a new one (carball-api ticket-key)")
+	}
+	return &Signer{KeyID: keyID, key: key}, nil
 }
 
 // Public is the signer's public key as the game server's TICKET_PUBLIC_KEYS lists it: "KID BASE64"
@@ -504,6 +508,8 @@ func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
 			return nil, fmt.Errorf("ticket: key entry %d isn't 32 bytes of base64", n)
 		case smallOrder(raw):
 			return nil, fmt.Errorf("ticket: key entry %d is of small order (no signer's)", n)
+		case bytes.Equal(raw, publishedDevKey):
+			return nil, fmt.Errorf("ticket: key entry %d is the old development key, published (anyone can sign with it)", n)
 		}
 		if _, twice := out[kid]; twice {
 			return nil, fmt.Errorf("ticket: key entry %d repeats an id", n)
@@ -515,6 +521,14 @@ func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
 
 // smallOrderKeys are the Ed25519 public keys of small order, sign bit aside (libsodium's list; the game server's
 // SMALL_ORDER)
+// publishedDevKey is the old development key's public key (its seed the SHA-256 of "carball development ticket key",
+// published in the repository's history until design 4 removed it, 2026-10-24): never a ticket key, under whatever id,
+// since anyone can sign with it (RV-1059; the game server refuses it too: server/src/ticket.rs)
+var publishedDevKey = []byte{
+	212, 241, 128, 92, 150, 47, 245, 131, 87, 14, 146, 109, 163, 238, 152, 26,
+	182, 181, 172, 33, 140, 159, 225, 18, 133, 242, 207, 142, 146, 34, 22, 5,
+}
+
 var smallOrderKeys = func() [7][32]byte {
 	var ones [32]byte
 	for i := range ones {

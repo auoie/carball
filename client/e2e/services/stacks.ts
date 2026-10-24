@@ -4,12 +4,15 @@
 // game servers' certificate made fresh (self-signed, for localhost: the browser takes it by its key's hash), each stack
 // brought up; after the run each one's logs kept (test-results/services/<stack>.log) and the stack taken down with its
 // volumes, an interrupted run's too (interrupts.ts). Loopback ports alone: each stack's edge (the page and /api/ on one
-// origin) and its game servers' UDP (on ::1 too). One run at a time: a lock names the run whose stacks are up (RV-1047);
-// the stacks' secrets and certificate in client/.e2e-services/, outside test-results (which each Playwright start wipes).
+// origin) and its game servers' UDP (on ::1 too). One run at a time on the machine: a lock names the run whose stacks
+// are up (RV-1047, RV-1056); the stacks' secrets and certificate in client/.e2e-services/, outside test-results (which
+// each Playwright start wipes).
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { X509Certificate, createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { lockedBy, noteGroup, readLock, takeLock } from "./lock";
 
 const run = promisify(execFile);
 
@@ -77,12 +80,14 @@ export const GAME_ORIGINS: readonly string[] = Object.values(STACKS).flatMap((s)
 const ROOT = new URL("../../", import.meta.url).pathname;
 /** The run's logs (each stack's, the image build's) */
 const OUT = `${ROOT}test-results/services`;
-/** The stacks' own files: their secrets and certificate (bind-mounted while they run) and the run's lock */
+/** The stacks' own files: their secrets and certificate (bind-mounted while they run) */
 const WORK = `${ROOT}.e2e-services`;
 const SECRETS = `${WORK}/secrets`;
 const CERTS = `${WORK}/certs`;
-/** The run whose stacks are up: its Playwright runner's process id (the setup's parent), whose interrupt takes them down */
-const LOCK = `${WORK}/lock`;
+/** The run whose stacks are up (lock.ts), the machine's one (the stacks' names, ports and subnets are the machine's,
+ *  whatever the checkout: RV-1056), in the user's runtime directory: its Playwright runner the setup's parent, whose
+ *  interrupt takes them down */
+const LOCK = `${process.env.XDG_RUNTIME_DIR ?? tmpdir()}/carball-e2e-stacks.lock`;
 /** The certificate's key's hash (SHA-256 of its SubjectPublicKeyInfo, base64), as Chrome's flag takes it */
 export const SPKI_FILE = `${WORK}/spki.txt`;
 const COMPOSE = new URL("stack/compose.yaml", import.meta.url).pathname;
@@ -187,43 +192,48 @@ async function compose(s: Stack, args: readonly string[]): Promise<string> {
   return stdout;
 }
 
-/** The stack's logs kept, then the stack taken down with its volumes (one a run before left behind too) */
+/** The stack's logs kept (their folder made again: a later run's start may have wiped test-results, RV-1053), then the
+ *  stack taken down with its volumes (one a run before left behind too) */
 async function down(s: Stack, keepLogs: boolean): Promise<void> {
-  if (keepLogs) writeFileSync(`${OUT}/${s.name}.log`, await compose(s, ["logs", "--no-color", "--timestamps"]).catch((e: unknown) => String(e)));
+  if (keepLogs) {
+    const logs = await compose(s, ["logs", "--no-color", "--timestamps"]).catch((e: unknown) => String(e));
+    mkdirSync(OUT, { recursive: true });
+    writeFileSync(`${OUT}/${s.name}.log`, logs);
+  }
   await compose(s, ["down", "--volumes", "--remove-orphans", "--timeout", "5"]);
 }
 
-/** Whether process `pid` is alive */
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as { code?: string }).code === "EPERM";
-  }
-}
-
-/** The lock taken for the runner `owner` (the setup's parent process): refused while another live run holds it; one an
- *  ended run left (killed outright) taken over, its stacks the pre-clean's */
-function lock(owner: number): void {
-  mkdirSync(WORK, { recursive: true });
-  const held = existsSync(LOCK) ? Number(readFileSync(LOCK, "utf8")) : NaN;
-  if (Number.isInteger(held) && held !== owner && alive(held)) {
-    throw new Error(`another run (process ${String(held)}) has the services' stacks up: wait for it, or stop it (${LOCK})`);
-  }
-  writeFileSync(LOCK, String(owner));
+/** `docker compose up` for the stack, in a process group of its own noted in the lock while it runs: an interrupt of the
+ *  runner kills it before its take-down, so it never starts containers after that (RV-1054) */
+async function up(s: Stack): Promise<void> {
+  const call = composeCall(s, ["up", "--detach", "--wait", "--wait-timeout", "180"]);
+  await new Promise<void>((done, failed) => {
+    const child = spawn("docker", call.args, { env: call.env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    let said = "";
+    child.stderr.on("data", (d: Buffer) => {
+      said = (said + d.toString()).slice(-4000);
+    });
+    const group = child.pid;
+    if (group !== undefined) noteGroup(LOCK, group, true);
+    child.on("error", failed);
+    child.on("close", (code) => {
+      if (group !== undefined) noteGroup(LOCK, group, false);
+      if (code === 0) done();
+      else failed(new Error(`docker compose up (${s.name}): ${String(code)}\n${said}`));
+    });
+  });
 }
 
 /** The stacks of an ended run (the same project names: killed, or interrupted before its take-down) gone first, then
  *  the images (theirs no longer in use), the credentials, and every stack up and healthy; one that doesn't come up: all
  *  of them taken down, its logs kept, once every start has settled (RV-1046) */
 export async function upStacks(): Promise<void> {
-  lock(process.ppid);
+  takeLock(LOCK, process.ppid);
   mkdirSync(OUT, { recursive: true });
   await Promise.all(Object.values(STACKS).map((s) => down(s, false)));
   await images();
   await credentials();
-  const started = await Promise.allSettled(Object.values(STACKS).map((s) => compose(s, ["up", "--detach", "--wait", "--wait-timeout", "180"])));
+  const started = await Promise.allSettled(Object.values(STACKS).map(up));
   const failed = Object.values(STACKS).filter((_, i) => started[i]?.status === "rejected");
   if (failed.length > 0) {
     await downStacks().catch(() => undefined);
@@ -234,17 +244,46 @@ export async function upStacks(): Promise<void> {
   }
 }
 
-/** Every stack's logs kept and the stack taken down; the lock let go */
+/** Every stack's logs kept and the stack taken down, the lock let go: this run's alone (the lock its runner's); a run the
+ *  lock refused leaves another run's stacks be (RV-1053) */
 export async function downStacks(): Promise<void> {
+  if (!lockedBy(LOCK, process.ppid)) {
+    console.warn(`the services' stacks aren't this run's (${LOCK}): left as they are`);
+    return;
+  }
   await Promise.all(Object.values(STACKS).map((s) => down(s, true)));
   rmSync(LOCK, { force: true });
 }
 
-/** An interrupted run's take-down (interrupts.ts: Ctrl-C, SIGTERM), synchronous: the stacks down if this runner (`owner`)
- *  holds the lock, the lock let go; nothing if the run's own teardown came first, or it brought none up */
+/** An interrupted run's take-down (interrupts.ts: Ctrl-C, SIGTERM), synchronous: if this runner (`owner`) holds the lock,
+ *  its stacks' starts still running killed first (their process groups: TERM, a second's grace, KILL, RV-1054), then
+ *  each stack's logs kept (RV-1062) and the stack down, the lock let go; nothing if the run's own teardown came first, or
+ *  it brought none up */
 export function downStacksOnInterrupt(owner: number): void {
-  if (!existsSync(LOCK) || Number(readFileSync(LOCK, "utf8")) !== owner) return;
+  if (!lockedBy(LOCK, owner)) return;
+  const groups = readLock(LOCK)?.groups ?? [];
+  const signal = (name: NodeJS.Signals): void => {
+    for (const g of groups) {
+      try {
+        process.kill(-g, name);
+      } catch {
+        // (gone already)
+      }
+    }
+  };
+  if (groups.length > 0) {
+    signal("SIGTERM");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    signal("SIGKILL");
+  }
   for (const s of Object.values(STACKS)) {
+    const logs = composeCall(s, ["logs", "--no-color", "--timestamps"]);
+    try {
+      mkdirSync(OUT, { recursive: true });
+      writeFileSync(`${OUT}/${s.name}.log`, execFileSync("docker", logs.args, { env: logs.env, maxBuffer: 1 << 28, timeout: 30_000 }));
+    } catch {
+      // (none kept: the take-down still goes ahead)
+    }
     const call = composeCall(s, ["down", "--volumes", "--remove-orphans", "--timeout", "5"]);
     try {
       execFileSync("docker", call.args, { env: call.env, stdio: "ignore", timeout: 60_000 });

@@ -14,6 +14,7 @@ const HOST_EXPORTS: &[&str] = &[
     "host_bot",
     "host_car",
     "host_phase",
+    "host_input_stat",
     "host_state",
     "host_state_bytes",
     "malloc",

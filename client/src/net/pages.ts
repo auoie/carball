@@ -286,10 +286,10 @@ export async function deployedGameServer(
   return unreachable;
 }
 
-/** Whether this page is older than its deployment's (RV-1030): the deployment's protocol version (`/version.json`, written
- *  by its build, never cached) newer than this page's, so a reload brings a page its servers take. False when it can't be
- *  read (a development page, the request failing) or isn't newer: a server refusing this page's version then is the one
- *  behind, and a reload would change nothing */
+/** Whether this page's version isn't its deployment's (RV-1030, RV-1066): the deployment's protocol version
+ *  (`/version.json`, written by its build, never cached) another than this page's, newer or (a rollback) older, so a
+ *  reload brings the deployment's page. False when it can't be read (a development page, the request failing) or is the
+ *  same: a server refusing this page's version then is the one apart, and a reload would change nothing */
 export async function pageOutdated(
   fetchVersion: (signal: AbortSignal) => Promise<Response> = async (signal) => fetch("/version.json", { cache: "no-store", signal }),
   timeoutMs = REQUEST_TIMEOUT_MS,
@@ -297,7 +297,7 @@ export async function pageOutdated(
   try {
     const response = await fetchVersion(AbortSignal.timeout(timeoutMs));
     const body = (await response.json()) as { protocol?: unknown } | null;
-    return response.ok && typeof body?.protocol === "number" && body.protocol > PROTOCOL_VERSION;
+    return response.ok && typeof body?.protocol === "number" && body.protocol !== PROTOCOL_VERSION;
   } catch {
     return false;
   }

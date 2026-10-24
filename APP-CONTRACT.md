@@ -147,8 +147,9 @@ A development run of the image takes `--dev`: the open match (`SERVER_MODE=direc
 to start, as one beside production keys, `TICKET_PUBLIC_KEYS` or its file, or with a certificate file at `CERT_PATH` or
 `KEY_PATH`: a public server's), with a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH` say,
 pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as the
-same port): `docker run --rm -e SERVER_MODE=direct -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp -p
-127.0.0.1:14503:4434 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with `?server=localhost:14503`.
+same port; and the page's origin allowed, not the image's production one): `docker run --rm -e SERVER_MODE=direct -e
+GAME_PORT=14502 -e ALLOWED_ORIGIN=http://localhost:5173 -p 127.0.0.1:14502:14502/udp -p 127.0.0.1:14503:4434
+carball-game:TAG --dev --info-bind 0.0.0.0`, the page (`npm run dev`) opened with `?server=localhost:14503`.
 Anyone joins it, no ticket asked: a development server's alone. The queue's matches are tested against the real
 services instead (the browser tests' stacks, `client/e2e/services`).
 
@@ -242,7 +243,9 @@ IPv4 address or an IPv6 /64 (a LAN party's players behind one address count toge
 | Messages to the game thread | the server | 65,536 waiting, 2048 read a pass; a session's inputs one place (its newest: RV-991) | fixed |
 | Messages to a player | session | 2048 waiting; full, the player is dropped (a lost connection) | fixed |
 | QUIC streams | session | 4 each way; windows 256 KB a stream, 1 MB the connection | fixed |
-| A rejoin's confirmation | rejoin | the accounts service's answer within 2 s, else refused | fixed |
+| QUIC idle and keep-alive | session | closed after 10 s with no packet; a keep-alive every 2 s | fixed |
+| Datagrams waiting to be read | session | 64 KiB | fixed |
+| A rejoin's confirmation | rejoin | the accounts service's answer within 2 s, else refused (`Refused` 9; one question at a time for a ticket, let go before the refusal's close wait: RV-1028). Deploy the API before the game servers: a new server asking an older API gets 404 and refuses every rejoin with 9 | fixed |
 | Ticket life | ticket | a seat's 30 s, a rejoin's 2 min (the API's), 30 s of clock difference; each used once | fixed |
 | Refusal lines | address and reason | one a minute, the rest counted | fixed |
 | Log lines waiting | the server | 128k; past it dropped | fixed |
@@ -401,16 +404,25 @@ window.
 | Renames | account | 5 a day |
 | Rejoin tickets | account | 60 in 10 minutes |
 | Searches started | account | 30 in 10 minutes |
-| The game servers' calls (results, quitters, refills, events) | each server, by the name it sends (`X-Carball-Server`; one without: all such together) | 300 a minute |
+| The game servers' calls (results, quitters, refills, events) | each server, by the name it sends (`X-Carball-Server`; one without: all such together) / every server | 300 a minute / 2,400 a minute (a name is the server's word, not an identity: RV-1024) |
 | Rejoin questions (`POST /api/fleet/rejoin`) | account / everyone | 20 in 10 minutes / 600 a minute (never the calls' above) |
-| Request lines in the log | address | 600 a minute, the rest counted |
+| Request lines in the log | address / everyone | 600 / 6,000 a minute, the rest counted (the minute's line names 100 addresses at most, the rest summed: RV-1027) |
+| A rejoin let through (`/api/fleet/rejoin` yes) | account | its searches held 10 s, or till its server says it's back (RV-1026) |
 | A request's body | request | 16 KiB |
 | A search's poll | poll | 25 s; a search no page polls goes 45 s on, unmatched 3 s on |
 | No-show cooldown | account | 2 minutes |
 | Queue ban (a leave the game server reports) | account | 5 min, 15 min, 1 h, 6 h, 24 h up the ladder; a step forgiven per 24 h without a leave |
-| A game server call's ticket | ticket | issued within 24 h; each spent once |
+| A game server call's ticket | ticket | issued within 24 h; each spent once (a result's, a quitter's, a refill's; a rejoin question's ticket is checked, not spent: the game server spends it) |
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-24 (the working tree on 365e744, the review batch RV-1024..1069: `scripts/build_images.sh --worktree --e2e e2e`):
+the checks stage passed, its marker lists written out (none at 0 left to empty, RV-1057) and both runtime hook checks
+under `timeout 10` (RV-1055); the client stage found the build's `/version.json` naming the page's protocol (RV-1064).
+The browser tests as two runs: local 68/68 (FP3 on its rerun, a timing flake), then services 22/22 against the four
+stacks. A second services run started while they were up was refused, its teardown leaving them and the lock as they
+were (RV-1053's scenario G); SIGTERM to the runner alone while its `compose up`s ran (26 containers made) left no
+container, `compose` process or lock 15 s later (RV-1054), and one after the stacks were up kept each stack's logs.
 
 2026-10-24 (the working tree on 40cd5e0, RV-1030/RV-1029 and the end-of-match notice: `scripts/build_images.sh
 --worktree --e2e e2e`): the checks passed; the web image serves `/version.json` (`{"protocol":30}`, `no-store`: the

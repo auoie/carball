@@ -125,12 +125,15 @@ type Server struct {
 	renames, tickets     *ratelimit.Limiter
 	searchStarts         *ratelimit.Limiter
 	gameServerCalls      *ratelimit.Limiter
+	gameServerFleet      *ratelimit.Limiter
 	rejoinQuestions      *ratelimit.Limiter
 	rejoinCeiling        *ratelimit.Limiter
 	// (the log's request lines per client address, and the ones not written since its last: RV-963)
-	requestLines *ratelimit.Limiter
-	linesMu      sync.Mutex
-	unlogged     map[string]int
+	requestLines    *ratelimit.Limiter
+	requestLinesAll *ratelimit.Limiter
+	linesMu         sync.Mutex
+	unlogged        map[string]int
+	unloggedAll     int
 
 	// (the kinds of peer whose CF-Connecting-IP was ignored, each warned of once)
 	forwardMu     sync.Mutex
@@ -150,15 +153,16 @@ type Limits struct {
 	Searches Limit
 	// GameServer is each game server's calls' (results, quitters, refills, events: AC-26), by the name it sends
 	// (X-Carball-Server; one without, all such together), so that one server's burst can't hold another's results
-	// (RV-1020)
-	GameServer Limit
+	// (RV-1020); GameServerFleet everyone's together above them: a name is the server's word, not an identity, so a
+	// holder of the shared token naming many can't outrun the fleet's (RV-1024)
+	GameServer, GameServerFleet Limit
 	// RejoinQuestions and RejoinCeiling are the game servers' rejoin questions (RV-1008): each account's, and everyone's
 	// together; apart from GameServer, so that a replayed rejoin ticket can't hold the outbox calls (RV-1020)
 	RejoinQuestions, RejoinCeiling Limit
 	// RequestLines is each client address's request lines in the log (an IPv6 /64's): past them its lines are counted,
 	// not written, so that a flood can't push the abuse trail out of the log's rotation or fill the disk (RV-963); none
-	// (0): every line
-	RequestLines Limit
+	// (0): every line. RequestLinesAll is everyone's together above them, a flood from many addresses too (RV-1027)
+	RequestLines, RequestLinesAll Limit
 	// Keys is each limit's most keys at once (past it the longest idle is forgotten)
 	Keys int
 	// OpenFlows and OpenSignups are the ceilings on sign-ins in progress and sign-ups waiting, everyone's (AP-2)
@@ -176,13 +180,15 @@ func DefaultLimits() Limits {
 		Tickets:         Limit{60, 10 * time.Minute},
 		Searches:        Limit{30, 10 * time.Minute},
 		GameServer:      Limit{300, time.Minute},
+		GameServerFleet: Limit{2400, time.Minute},
 		RejoinQuestions: Limit{20, 10 * time.Minute},
 		RejoinCeiling:   Limit{600, time.Minute},
 		// (a LAN party's 64 players' polls, about one each 25 s, and their pages, well inside)
-		RequestLines: Limit{600, time.Minute},
-		Keys:         200_000,
-		OpenFlows:    20_000,
-		OpenSignups:  5_000,
+		RequestLines:    Limit{600, time.Minute},
+		RequestLinesAll: Limit{6000, time.Minute},
+		Keys:            200_000,
+		OpenFlows:       20_000,
+		OpenSignups:     5_000,
 	}
 }
 
@@ -194,34 +200,57 @@ func (s *Server) SetLimits(l Limits) {
 	s.signups, s.signupsWide = limiter(l.Signups), limiter(l.SignupsWide)
 	s.renames, s.tickets = limiter(l.Renames), limiter(l.Tickets)
 	s.searchStarts = limiter(l.Searches)
-	s.gameServerCalls = limiter(l.GameServer)
+	s.gameServerCalls, s.gameServerFleet = limiter(l.GameServer), limiter(l.GameServerFleet)
 	s.rejoinQuestions, s.rejoinCeiling = limiter(l.RejoinQuestions), limiter(l.RejoinCeiling)
-	s.requestLines = nil
+	s.requestLines, s.requestLinesAll = nil, nil
 	if l.RequestLines.Burst > 0 {
 		s.requestLines = limiter(l.RequestLines)
+		if l.RequestLinesAll.Burst > 0 {
+			s.requestLinesAll = limiter(l.RequestLinesAll)
+		}
 	}
 }
 
 // Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
 func (s *Server) Sweep(now time.Time) {
-	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls, s.rejoinQuestions, s.rejoinCeiling} {
+	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls, s.gameServerFleet, s.rejoinQuestions, s.rejoinCeiling} {
 		l.Sweep(now)
 	}
 	if s.requestLines != nil {
 		s.requestLines.Sweep(now)
 	}
-	// (the request lines not written in the last minute, each address's count said, then forgotten)
+	if s.requestLinesAll != nil {
+		s.requestLinesAll.Sweep(now)
+	}
+	// (the request lines not written in the last minute, each address's count said (the first sweepAddresses of them:
+	// a flood from many addresses can't make this a flood of its own, RV-1027), then forgotten)
 	s.linesMu.Lock()
-	unlogged := s.unlogged
-	s.unlogged = nil
+	unlogged, all := s.unlogged, s.unloggedAll
+	s.unlogged, s.unloggedAll = nil, 0
 	s.linesMu.Unlock()
+	said, rest, restLines := 0, 0, 0
 	for key, n := range unlogged {
-		s.Log.Warn("request lines not written", "ip", key, "lines", n)
+		if said < sweepAddresses {
+			s.Log.Warn("request lines not written", "ip", key, "lines", n)
+			said++
+		} else {
+			rest++
+			restLines += n
+		}
+	}
+	if rest > 0 {
+		s.Log.Warn("request lines not written from more addresses", "addresses", rest, "lines", restLines)
+	}
+	if all > 0 {
+		s.Log.Warn("request lines not written past everyone's ceiling", "lines", all)
 	}
 }
 
-// lineAllowed: whether a request from `key` (its address, ClientKey's) is written to the log, and how many of its
-// address's weren't since its last
+// sweepAddresses: the most addresses the minute's line names one by one
+const sweepAddresses = 100
+
+// lineAllowed: whether a request from `key` (its address, ClientKey's) is written to the log (its address's lines and
+// everyone's within their ceilings), and how many of its address's weren't since its last
 func (s *Server) lineAllowed(key string, now time.Time) (int, bool) {
 	if s.requestLines == nil {
 		return 0, true
@@ -233,6 +262,11 @@ func (s *Server) lineAllowed(key string, now time.Time) (int, bool) {
 			s.unlogged = map[string]int{}
 		}
 		s.unlogged[key]++
+		return 0, false
+	}
+	// (everyone's ceiling past: counted together, the minute's line says how many, RV-1027)
+	if s.requestLinesAll != nil && !s.requestLinesAll.Allow("all", now) {
+		s.unloggedAll++
 		return 0, false
 	}
 	n := s.unlogged[key]

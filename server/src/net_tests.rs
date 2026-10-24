@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use crate::input_buffer::{InputBuffer, JitterBuffer, Stats};
+use crate::input_buffer::{InputBuffer, Stats};
 use crate::netsim::{Jitter, Loss, NetSim, Profile, Stall};
 use crate::protocol::{BIT_JUMP, InputFrame};
 
@@ -67,8 +67,6 @@ pub struct TickSample {
 #[derive(Clone, Debug, Default)]
 pub struct Outcome {
     pub ticks: Vec<TickSample>,
-    /// The arrival times of the packets that were the newest so far (the jitter buffer's samples)
-    pub newest_arrivals: Vec<f64>,
     /// When the client's jump taps were
     pub taps: Vec<f64>,
     pub resets: Vec<f64>,
@@ -229,10 +227,7 @@ pub fn simulate(run: &Run) -> Outcome {
                 push(&mut events, t + dt, Kind::ClientFrame);
             }
             Kind::Packet { timestamp, first, frames } => {
-                let newest = buffer.receive(timestamp, first, &frames, t);
-                if newest {
-                    out.newest_arrivals.push(t);
-                }
+                buffer.receive(timestamp, first, &frames, t);
             }
             // (the highest seen, as the client keeps it: online.ts `#applyUpdate`)
             Kind::Ack(frame) => ack = ack.max(frame),
@@ -241,7 +236,8 @@ pub fn simulate(run: &Run) -> Outcome {
                 out.resets.push(t);
             }
             Kind::ServerTick(n) => {
-                let controls = buffer.tick(t, n % 2 == 1);
+                // (tick n runs frame n + 1: the parity the game's consumes see, counted before them, RV-1032)
+                let controls = buffer.tick(t, (n + 1) % 2 == 1);
                 if buffer.stats.consumed > consumed_count {
                     consumed_count = buffer.stats.consumed;
                     out.consumed.push(buffer.last_consumed());
@@ -268,15 +264,6 @@ pub fn simulate(run: &Run) -> Outcome {
     }
     out.taps = taps;
     out
-}
-
-/// A jitter buffer fed the same arrivals: what the server's should hold
-pub fn reference_target(arrivals: &[f64]) -> u32 {
-    let mut j = JitterBuffer::default();
-    for &t in arrivals {
-        j.received_packet(t);
-    }
-    j.buffer_size
 }
 
 fn per_minute(count: u32, seconds: f64) -> f64 {
@@ -325,12 +312,13 @@ mod tests {
 
     #[test]
     fn t2c_jitter_grows_the_buffer_by_the_game_s_formula() {
-        // (c) i.i.d. jitter: the target = a reference buffer fed the same newest arrivals; ≈ 7 / 8 / 13 ± 2; under ≤ 1
-        // a minute after a 30 s warm-up for σ ≤ 10 ms
-        for (sigma, expected) in [(5.0, 7u32), (10.0, 8), (20.0, 13)] {
+        // (c) i.i.d. jitter: the target these seeded paths give, exactly (RV-1031: not a reference buffer fed the same
+        // arrivals, which shares its code); ≈ 7 / 8 / 13 ± 2 by the game's formula; under ≤ 1 a minute after a 30 s
+        // warm-up for σ ≤ 10 ms
+        for (sigma, exact, expected) in [(5.0, 7u32, 7u32), (10.0, 9, 8), (20.0, 14, 13)] {
             let out = simulate(&Run::new(60.0, 120.0, normal(sigma)));
             let target = out.target_at(119.9);
-            assert_eq!(target, reference_target(&out.newest_arrivals), "σ {sigma}");
+            assert_eq!(target, exact, "σ {sigma}");
             assert!(target.abs_diff(expected) <= 2, "σ {sigma}: target {target}, expected ≈ {expected}");
             if sigma <= 10.0 {
                 let under = out.delta(30.0, 120.0).under_buffer_frames;
@@ -400,7 +388,7 @@ mod tests {
         let d = out.delta(0.0, 62.0);
         assert_eq!(d.never_consumed, 0);
         assert!(d.duplicates > 0);
-        assert_eq!(out.target_at(61.9), reference_target(&out.newest_arrivals));
+        assert_eq!(out.target_at(61.9), 10, "the seeded path's target (RV-1031)");
     }
 
     #[test]

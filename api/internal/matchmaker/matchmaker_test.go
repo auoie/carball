@@ -911,7 +911,12 @@ func TestRejoinCheckAtTheRejoin(t *testing.T) {
 	if h.m.RejoinCheck("j", first.ID, "us:4433") {
 		t.Error("a rejoin asked by another server than the match's")
 	}
+	// (the rejoin let through held j's searches; its server never told it back: free again after RejoinHold, RV-1026)
 	far := map[string]int{"us:4433": 30}
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, far), h.now); !errors.Is(err, ErrInMatch) {
+		t.Errorf("a search moments after a rejoin let through: %v, want ErrInMatch", err)
+	}
+	h.at(time.Second + RejoinHold)
 	h.search(t, player("j", 1500), []byte{1}, far)
 	if h.m.RejoinCheck("j", first.ID, "eu:4433") {
 		t.Error("a rejoin while its account searches")
@@ -928,6 +933,32 @@ func TestRejoinCheckAtTheRejoin(t *testing.T) {
 	if !h.m.RejoinCheck("stranger", 7, "eu:4433") {
 		t.Error("an account the matchmaker doesn't know refused")
 	}
+}
+
+// RV-1026: a rejoin let through holds its account's searches till its server's Back: then in the match (a search
+// refused as in it, at its server), and out of it at its Left, searching again
+func TestARejoinLetThroughHoldsSearchesTillItsBack(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("j", 1500), []byte{1}, near)
+	h.search(t, player("k", 1500), []byte{1}, near)
+	h.at(time.Second)
+	first := h.found(t, "j")
+	h.m.Started("eu:4433", first.ID, h.now)
+	seat := slices.IndexFunc(h.m.matches[first.ID].accounts, func(a string) bool { return a == "j" })
+	h.m.Left("eu:4433", first.ID, seat)
+	if !h.m.RejoinCheck("j", first.ID, "eu:4433") {
+		t.Fatal("an ordinary rejoin refused")
+	}
+	elsewhere := map[string]int{"us:4433": 30}
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); !errors.Is(err, ErrInMatch) {
+		t.Errorf("a search before its Back, at another server: %v, want ErrInMatch", err)
+	}
+	h.m.Back("eu:4433", first.ID, seat, h.now)
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, near), h.now); !errors.Is(err, ErrInMatch) {
+		t.Errorf("a search after its Back, at its server: %v, want ErrInMatch", err)
+	}
+	h.m.Left("eu:4433", first.ID, seat)
+	h.search(t, player("j", 1500), []byte{1}, elsewhere)
 }
 
 // RV-1009: a name with a line break (or Unicode's line separator) stays on its own line in the log: slog's text values

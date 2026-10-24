@@ -38,7 +38,18 @@ import {
 import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, pingAnswer, searchPlan, storedPings, storedRegions, storePings, storeRegions, toggleRegion } from "./net/regions";
+import {
+  chooseRegions,
+  markVersion,
+  pingAnswer,
+  searchPlan,
+  storedPings,
+  storedRegions,
+  storePings,
+  storeRegions,
+  toggleRegion,
+  versionVerdict,
+} from "./net/regions";
 import { pingServer } from "./net/search";
 import { REFUSED_VERSION } from "./net/protocol";
 import { MATCHMAKER_TEXT, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
@@ -519,24 +530,24 @@ async function main(): Promise<void> {
     const serverNames = new Map<string, string>();
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
     /** The regions whose server refused this page's version at its last ping: left out of a search, the others searched
-     *  (RV-1030); the reload asked once, and only of a page older than its deployment (a reload brings a page its servers
-     *  take, RV-1021), never of one newer than a server not updated yet, which a reload can't help */
+     *  (RV-1030); the reload asked once, and only of a page apart from its deployment (a reload brings the page its servers
+     *  take, RV-1021, RV-1066), never of the deployment's own beside a server not updated yet, which a reload can't help */
     const outdatedRegions = new Set<string>();
-    let reloadAsked = false;
-    const askReload = (): void => {
-      if (reloadAsked) return;
-      reloadAsked = true;
-      const text = refusalText(REFUSED_VERSION);
-      modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+    let reloadShown = false;
+    /** The deployment's version against this page's (versionVerdict): the reload's modal, once, when they differ */
+    const checkVersion = async (outdatedOnly: boolean): Promise<"reload" | "updating" | null> => {
+      const verdict = versionVerdict(outdatedOnly, await pageOutdated(), reloadShown);
+      if (verdict.showReload) {
+        reloadShown = true;
+        const text = refusalText(REFUSED_VERSION);
+        modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+      }
+      return verdict.refuse;
     };
-    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer); a refusal on version marks its region */
+    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer); a refusal on version marks its region
+     *  (markVersion) */
     const answered = (r: Region, answer: Awaited<ReturnType<typeof pingServer>>): number | null => {
-      if (answer === "outdated") {
-        outdatedRegions.add(r.id);
-        void pageOutdated().then((older) => {
-          if (older) askReload();
-        });
-      } else if (answer !== null) outdatedRegions.delete(r.id);
+      if (markVersion(outdatedRegions, r.id, answer)) void checkVersion(false);
       const ping = pingAnswer(answer);
       if (ping?.name) serverNames.set(r.id, ping.name);
       return ping?.ms ?? null;
@@ -646,12 +657,13 @@ async function main(): Promise<void> {
               const measured = await freshPings(all, PING_WAIT_MS);
               searchable = named(all);
               const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists, outdatedRegions);
-              // (every region it would search refused this page's version: the page the older one, the reload's words;
-              // else those servers aren't updated yet, RV-1030)
+              // (every region it would search refused this page's version: the page apart from its deployment, the reload's
+              // words; else those servers aren't updated yet, RV-1030)
               if (plan.outdatedOnly) {
-                const older = await pageOutdated();
-                if (older) askReload();
-                throw new Error(older ? refusalText(REFUSED_VERSION) : MATCHMAKER_TEXT.behind);
+                const refuse = await checkVersion(true);
+                if (refuse === "reload") throw new Error(refusalText(REFUSED_VERSION));
+                // (nothing ticked: the automatic pick's region; ticked: those, RV-1068)
+                throw new Error(plan.automatic ? MATCHMAKER_TEXT.updating : MATCHMAKER_TEXT.behind);
               }
               if (plan.automatic) {
                 chosen = plan.chosen;
@@ -1068,9 +1080,15 @@ async function main(): Promise<void> {
     } else if (notice?.modal === "elsewhere") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.elsewhere);
     } else if (notice?.modal === "reload") {
-      // (a claim or rejoin refused on version: the server updated since this page loaded, RV-865)
-      const text = refusalText(REFUSED_VERSION);
-      modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+      // (a claim or rejoin refused on version: the reload's modal when this page isn't its deployment's (the server
+      // updated since it loaded, RV-865), else that server is the one apart, not updated yet: said so, no reload that
+      // couldn't help, RV-1069)
+      void pageOutdated().then((apart) => {
+        if (apart) {
+          const text = refusalText(REFUSED_VERSION);
+          modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+        } else modal.show(MODAL_TEXT.title, `${MATCHMAKER_TEXT.matchUpdating.charAt(0).toUpperCase()}${MATCHMAKER_TEXT.matchUpdating.slice(1)}.`);
+      });
     } else if (notice?.modal === "rejoinGone") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.gone);
     } else if (notice?.modal === "rejoinUnconfirmed") {

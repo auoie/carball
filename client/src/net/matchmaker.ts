@@ -44,9 +44,13 @@ export const MATCHMAKER_TEXT = {
    *  the next step said (RV-886, RV-912: the game has no words for it, ours) */
   inMatch: "you're playing a match in another tab, window or device: finish it there, then search again",
   restarted: "the matchmaker restarted: search again",
-  /** Every region searched refused this page's version and the page isn't the older one: those servers aren't updated
+  /** Every region searched refused this page's version and the page is its deployment's: those servers aren't updated
    *  yet (ours, RV-1030) */
   behind: "the ticked regions' servers are being updated: try again in a moment, or tick another region",
+  /** The same with no region ticked (the automatic pick's, RV-1068) */
+  updating: "the servers are being updated: try again in a moment",
+  /** A claim or rejoin refused on version by a match's server not yet updated, this page the deployment's (RV-1069) */
+  matchUpdating: "that match's server is being updated: try again in a moment",
   noMatchmaker: "no matchmaker on a development page: online play is the deployment's",
 } as const;
 

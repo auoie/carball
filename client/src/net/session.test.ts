@@ -35,34 +35,48 @@ function report(name: string, r: NetRunResult): void {
 }
 
 describe("play over a network path (in process)", () => {
-  it("keeps the local car predicted and the server's input buffer steady on a clean 80 ms path", () => {
-    // (43 ms up: the refill after the start ends. 40 ms's packets land just before the server's odd ticks, one frame
-    // short of the clear check each time, so the refill never ends: an odd tick's frame skipped, a double consume each
+  it("keeps the local car predicted and the server's input buffer steady on a clean 77 ms path", () => {
+    // (37 ms up: the refill after the start ends. 45 ms's packets land just before the server's odd frames, one frame
+    // short of the clear check each time, so the refill never ends: an odd frame's frame skipped, a double consume each
     // update instead, 60 a second until the first goal's slow motion moves the packets' phase; the game's own rule,
     // notes/netcode-live.md §6: ServerConsume 0x140f23c10, bFillingBuffer cleared only at a newer packet with the
-    // queue at BufferSize before its frames merge, TA:71134)
-    const stuck = netRun(engine, host, { seconds: 30, up: constantProfile(40), down: constantProfile(40), seed: 3 });
-    report("clean 80 ms, packets before the odd ticks", stuck);
+    // queue at BufferSize before its frames merge, TA:71134, the frame's parity counted before the consumes, RV-1032)
+    const stuck = netRun(engine, host, { seconds: 30, up: constantProfile(45), down: constantProfile(40), seed: 3 });
+    report("clean 85 ms, packets before the odd frames", stuck);
     expect(stuck.buffer.over).toBeGreaterThan(400);
     expect(stuck.localMispredictions).toBeLessThanOrEqual(20);
-    const r = netRun(engine, host, { seconds: 30, up: constantProfile(43), down: constantProfile(40), seed: 3 });
-    report("clean 83 ms", r);
+    const r = netRun(engine, host, { seconds: 30, up: constantProfile(37), down: constantProfile(40), seed: 3 });
+    report("clean 77 ms", r);
     expect(r.buffer.over).toBe(0);
     // (the only mispredictions: contacts with the bot, whose wheels and contacts the client predicts itself)
-    expect(r.localMispredictions).toBeLessThanOrEqual(10);
+    expect(r.localMispredictions).toBeLessThanOrEqual(15);
     // (the measures come from the corrections' smoothing: there are some, RV-314)
     expect(r.errors.remote.length).toBeGreaterThan(0);
     expect(r.errors.local.length).toBeGreaterThan(0);
     expect(r.local.p95).toBe(0);
+    // (a contact's correction now and then, never a large one: RV-1035)
+    expect(r.local.max).toBeLessThanOrEqual(20);
     // No frame missed nor repeated (double consumes can alternate with the fill's skips at some round trips: harmless,
-    // RV-316)
+    // RV-316), none passed over on the server for good (RV-1034)
     expect(r.buffer.under + r.buffer.lost).toBe(0);
+    expect(r.serverInput?.neverConsumed).toBe(0);
     expect(r.buffer.target).toBe(7);
-    // Each correction replays the round trip and the server's buffer: 83 ms = 10 frames, + 5 to 12 (§13 T3)
-    expect(r.depth.mean).toBeGreaterThanOrEqual(10 + 5);
-    expect(r.depth.mean).toBeLessThanOrEqual(10 + 12);
-    expect(r.ping).toBeGreaterThan(83);
-    expect(r.ping).toBeLessThan(103); // (+ up to a frame: updates apply at the client's frames)
+    // Each correction replays the round trip and the server's buffer: 77 ms = 9 frames, + 5 to 12 (§13 T3)
+    expect(r.depth.mean).toBeGreaterThanOrEqual(9 + 5);
+    expect(r.depth.mean).toBeLessThanOrEqual(9 + 12);
+    expect(r.ping).toBeGreaterThan(77);
+    expect(r.ping).toBeLessThan(97); // (+ up to a frame: updates apply at the client's frames)
+  }, 120_000);
+
+  it("the refill stuck at one-way delays a frame's width apart: its edges pinned, the game's parity (RV-1032, RV-1037)", () => {
+    // (one player circling, no goal: the packets' phase against the server's frames fixed by the delay; stuck from 26 to
+    // 33 and 42 to 49 ms up, clear between, the exe's parity; ours before RV-1032 had them a frame's half apart)
+    const over = (up: number): number =>
+      netRun(engine, host, { seconds: 12, up: constantProfile(up), down: constantProfile(40), seed: 3, players: 1, drive: circleDriver }).buffer.over;
+    expect(over(33)).toBeGreaterThan(300);
+    expect(over(34)).toBe(0);
+    expect(over(41)).toBe(0);
+    expect(over(42)).toBeGreaterThan(300);
   }, 120_000);
 
   it("stays sane at an 80 ms round trip with 20 ms of jitter and 2 % loss", () => {
@@ -77,23 +91,44 @@ describe("play over a network path (in process)", () => {
       expect(r.ping).toBeGreaterThan(60);
       expect(r.ping).toBeLessThan(110);
       // The local car stays where it was predicted: a correction now and then (a repeated or skipped input, a contact,
-      // the first moments after a kickoff), small, all of them moving it at most 40 uu a second (RV-325; against the
-      // server's own match since design 5: its p95 up to 3 here, 1 against the TypeScript port)
+      // the first moments after a kickoff), small, all of them moving it at most 10 uu a second (RV-325, RV-1035;
+      // against the server's own match since design 5: its p95 up to 3 here, 1 against the TypeScript port); and there
+      // are corrections to measure: a client that never reconciled would pass the rest (RV-1035)
+      expect(r.corrections).toBeGreaterThan(0);
+      expect(r.errors.local.length).toBeGreaterThan(0);
       expect(r.local.p95).toBeLessThanOrEqual(4);
-      expect(r.local.mean).toBeLessThanOrEqual(2);
-      expect(r.movedPerSecond.local).toBeLessThanOrEqual(40);
-      expect(r.localMispredictions).toBeLessThanOrEqual(3 * 27);
+      expect(r.local.mean).toBeLessThanOrEqual(1);
+      expect(r.movedPerSecond.local).toBeLessThanOrEqual(10);
+      expect(r.localMispredictions).toBeLessThanOrEqual(30);
+      // (no frame passed over for good on the server: its own count, not the datagrams' gaps, RV-1034)
+      expect(r.serverInput?.neverConsumed).toBe(0);
       // The bot's and the ball's corrections stay small (each smoothed when drawn): measured while the client predicts.
-      // (Seed 5's bot demolishes the client's car at 25.4 s: about 3 s of states applied as they come, no prediction
-      // to correct (G5), the world catching up by whole ticks' travel; counted as corrections, they made its ball p95
-      // 21 before RV-1029)
+      // (A demolished client's states apply as they come, no prediction to correct (G5): not counted, RV-1029; the
+      // resume after its respawn exact, predictor.test.ts, RV-1065)
       expect(r.remote.p95).toBeLessThanOrEqual(30);
       expect(r.ball.p95).toBe(0);
-      if (seed === 5) expect(r.direct).toBeGreaterThan(100);
       expect(r.downKBps).toBeLessThanOrEqual(6);
       // One replay a frame, however many updates came in it (G3): never more than the round trip and the buffer's
       // depth, ≈ 16 frames here, with the jitter's spread
       expect(r.depth.max).toBeLessThanOrEqual(40);
+    }
+  }, 300_000);
+
+  it("stays sane at a 144 Hz display and a 59.94 Hz one, their frames jittered (RV-1033)", () => {
+    for (const [frameHz, frameJitterMs] of [
+      [144, 1],
+      [59.94, 2],
+    ] as const) {
+      const r = netRun(engine, host, { seconds: 30, up: REALISTIC, down: REALISTIC, seed: 3, frameHz, frameJitterMs });
+      report(`realistic, ${String(frameHz)} Hz ± ${String(frameJitterMs)} ms`, r);
+      expect(r.buffer.under).toBeLessThanOrEqual(r.buffer.ticks * 0.005);
+      expect(r.serverInput?.neverConsumed).toBe(0);
+      expect(r.errors.local.length).toBeGreaterThan(0);
+      // (59.94 Hz drifts against the server's 120: now and then a frame's input repeated or skipped, its correction a
+      // little larger than 60 Hz's: p95 4.1)
+      expect(r.local.p95).toBeLessThanOrEqual(6);
+      expect(r.localMispredictions).toBeLessThanOrEqual(30);
+      expect(r.ball.p95).toBe(0);
     }
   }, 300_000);
 

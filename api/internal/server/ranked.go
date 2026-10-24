@@ -62,7 +62,7 @@ func (s *Server) gameServerCall(next http.HandlerFunc, budgeted bool) http.Handl
 		if !serverName.MatchString(key) {
 			key = "game-server"
 		}
-		if budgeted && !s.gameServerCalls.Allow(key, s.Now()) {
+		if budgeted && (!s.gameServerCalls.Allow(key, s.Now()) || !s.gameServerFleet.Allow("fleet", s.Now())) {
 			writeError(w, http.StatusTooManyRequests, "busy")
 			return
 		}

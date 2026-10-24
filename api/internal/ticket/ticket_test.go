@@ -369,11 +369,12 @@ func TestParsePublicRefusesWhatTheGameServerRefuses(t *testing.T) {
 	}
 	secret := "c2VlZC1vZi1hLWtleS1uZXZlci10by1iZS1sb2dnZWQhIQ=="
 	for name, list := range map[string]string{
-		"an id twice":       "k1 " + good(1) + ", k1 " + good(2),
-		"not 32 bytes":      "k1 c2hvcnQ=",
-		"not base64":        "k1 !!!",
-		"three fields":      "k1 " + secret + " extra",
-		"a seed, not a key": "k1 " + secret,
+		"an id twice":             "k1 " + good(1) + ", k1 " + good(2),
+		"the old development key": "prod 1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=",
+		"not 32 bytes":            "k1 c2hvcnQ=",
+		"not base64":              "k1 !!!",
+		"three fields":            "k1 " + secret + " extra",
+		"a seed, not a key":       "k1 " + secret,
 	} {
 		_, err := ParsePublic(list)
 		if err == nil {
@@ -381,6 +382,11 @@ func TestParsePublicRefusesWhatTheGameServerRefuses(t *testing.T) {
 		} else if strings.Contains(err.Error(), secret) {
 			t.Errorf("%s: the entry's text in the error: %v", name, err)
 		}
+	}
+	// (the old development key's seed, published: no signer of it either, RV-1059)
+	devSeed := sha256.Sum256([]byte("carball development ticket key"))
+	if _, err := NewSigner("prod", base64.StdEncoding.EncodeToString(devSeed[:])); err == nil {
+		t.Error("a signer of the old development key's seed")
 	}
 }
 

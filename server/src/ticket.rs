@@ -64,6 +64,14 @@ const SMALL_ORDER: [[u8; 32]; 7] = {
     ]
 };
 
+/// The old development key's public key (its seed the SHA-256 of "carball development ticket key", published in the
+/// repository's history until design 4 removed it, 2026-10-24): never a ticket key, under whatever id it's listed, since
+/// anyone can sign with it (RV-1059)
+const PUBLISHED_DEV_KEY: [u8; 32] = [
+    212, 241, 128, 92, 150, 47, 245, 131, 87, 14, 146, 109, 163, 238, 152, 26, 182, 181, 172, 33, 140, 159, 225, 18,
+    133, 242, 207, 142, 146, 34, 22, 5,
+];
+
 /// A public key of small order (its sign bit aside)
 fn small_order(key: &[u8]) -> bool {
     key.len() == 32 && SMALL_ORDER.iter().any(|bad| key[..31] == bad[..31] && key[31] & 0x7f == bad[31])
@@ -331,7 +339,7 @@ fn validation() -> Validation {
 }
 
 /// `TICKET_PUBLIC_KEYS`'s keys: "KID BASE64" each, separated by commas or new lines; a malformed line, a key not 32
-/// bytes, a key of small order or a key id twice refused (AP2-5)
+/// bytes, a key of small order, a key id twice or the old published development key refused (AP2-5, RV-1059)
 fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     let mut keys = HashMap::new();
     // (an error names the entry by its number, never its text: a seed pasted in the wrong file stays out of the log,
@@ -348,6 +356,10 @@ fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
         anyhow::ensure!(key.len() == 32, "TICKET_PUBLIC_KEYS: key entry {n}'s key isn't 32 bytes");
         anyhow::ensure!(!kid.is_empty() && kid.len() <= 32, "TICKET_PUBLIC_KEYS: key entry {n}'s id isn't 1-32 bytes");
         anyhow::ensure!(!small_order(&key), "TICKET_PUBLIC_KEYS: key entry {n} is of small order (no signer's)");
+        anyhow::ensure!(
+            key != PUBLISHED_DEV_KEY,
+            "TICKET_PUBLIC_KEYS: key entry {n} is the old development key, published (anyone can sign with it)"
+        );
         anyhow::ensure!(keys.insert(kid.to_string(), key).is_none(), "TICKET_PUBLIC_KEYS: key entry {n} repeats an id");
     }
     Ok(keys)
@@ -782,6 +794,12 @@ mod tests {
             assert!(Tickets::from_list(&format!("so {}", STANDARD.encode(signed_bit))).is_err(), "its sign bit set");
         }
         assert!(Tickets::from_list(&format!("k1 {}, k1 {}", b64(1), b64(2))).is_err(), "a key id twice");
+        // (the old development key, its seed published: refused under any id, RV-1059)
+        let seed = ring::digest::digest(&ring::digest::SHA256, b"carball development ticket key");
+        let dev = Ed25519KeyPair::from_seed_unchecked(seed.as_ref()).unwrap();
+        assert_eq!(dev.public_key().as_ref(), PUBLISHED_DEV_KEY);
+        let e = Tickets::from_list(&format!("prod {}", STANDARD.encode(PUBLISHED_DEV_KEY))).unwrap_err().to_string();
+        assert!(e.contains("old development key"), "{e}");
         let tickets = Tickets::from_list(&format!("k1 {}", b64(1))).unwrap();
         tickets.reload(&format!("k2 {}", b64(2))).unwrap();
         assert_eq!(tickets.key_ids(), ["k2"]);

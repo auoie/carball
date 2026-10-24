@@ -24,7 +24,7 @@ describe("the web image's nginx", () => {
   it("falls back to the page for its routes alone: the assets, the config and the bots' files a 404 when missing", () => {
     const at = locations();
     expect(at.get("/")).toBe("$uri $uri/ /index.html");
-    for (const path of ["/assets/", "/config.json", "/bots/"]) expect(at.get(path), path).toBe("$uri =404");
+    for (const path of ["/assets/", "/config.json", "/version.json", "/bots/"]) expect(at.get(path), path).toBe("$uri =404");
   });
 
   it("answers /api/ with a 404, never the page: the accounts service's, misrouted if it reaches this container (RX28C)", () => {
@@ -38,6 +38,8 @@ describe("the web image's nginx", () => {
     const at = cacheControl();
     expect(at.get("/assets/")).toBe('"public, max-age=31536000, immutable"');
     expect(at.get("/config.json")).toBe('"no-store"');
+    // (the page's version, read on a refusal: never cached, nor its 404, RV-1064)
+    expect(at.get("/version.json")).toBe('"no-store" always');
     expect(at.get("/")).toBe('"no-cache"');
     // (a missing package file's 404 revalidated too, so a package added later isn't hidden by a cached one)
     expect(at.get("/bots/")).toBe('"no-cache" always');

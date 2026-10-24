@@ -84,7 +84,8 @@ pub struct Stats {
 }
 
 /// Since the last update sent (the stat graphs' IBuf rows and Out Loss, HUD-21: the game's InputBufferStats in each
-/// ClientAckFrame): the queue's fewest and most frames after a tick, the ticks it skipped a frame (over) and had none
+/// ClientAckFrame): the queue's fewest frames after a tick and most before one's consumes (the game samples its High
+/// there, FUN_140f214e0, RV-1038), the ticks it skipped a frame (over) and had none
 /// (under), the client's datagrams lost on the way (its sequence's gaps: protocol 24)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BufferWindow {
@@ -252,8 +253,9 @@ impl InputBuffer {
         }
     }
 
-    /// One server physics tick (`NetworkInputBuffer_ServerConsume_TA`, `FUN_140f1e780`). `odd_tick`: the server's
-    /// physics frame number is odd (while refilling, frames are consumed only on even ticks).
+    /// One server physics tick (`NetworkInputBuffer_ServerConsume_TA`, `FUN_140f1e780`). `odd_tick`: the number of the
+    /// physics frame being run is odd (counted before the consumes, as the game's: while refilling, frames are consumed
+    /// only on even frames, RV-1032).
     ///
     /// Two frames consumed in one tick (over the jitter target): the game fires SetVehicleInput for each, so the first
     /// one's jump edges still count though its axes, boost and handbrake give way to the second's (NET-2): a press in the
@@ -266,6 +268,7 @@ impl InputBuffer {
         self.press_axes = None;
         self.acted = false;
         let previous = self.controls.jump != 0; // (the last frame consumed)
+        let before = self.frames.len().min(255) as u8;
         let mut first = None;
         let mut first_controls = self.controls;
         let mut second = false;
@@ -298,7 +301,7 @@ impl InputBuffer {
         }
         let queued = self.frames.len().min(255) as u8;
         let w = &mut self.window;
-        (w.low, w.high) = if w.seen { (w.low.min(queued), w.high.max(queued)) } else { (queued, queued) };
+        (w.low, w.high) = if w.seen { (w.low.min(queued), w.high.max(before)) } else { (queued, before) };
         w.seen = true;
         let last = self.controls.jump != 0;
         // The jump the car gets, and whether a release came before its press this tick
@@ -323,6 +326,123 @@ mod tests {
 
     fn frame(throttle: i8) -> InputFrame {
         InputFrame { throttle, ..InputFrame::default() }
+    }
+
+    /// RV-1031: the buffer pinned tick by tick against a trace of its own (server/tests/input_buffer_trace.txt), the
+    /// input buffer's one exact regression check (no port beside it since design 5): a 60 Hz client's packets (two frames
+    /// each, the last ten repeated) over a jittered path, some arriving closer than the minimum gap; equal-timestamp
+    /// duplicates; a hitch and its reset; a stall's lost packets, the queue dry and refilled; a burst over the half second
+    /// kept; jump taps and a release-and-press in frames a double consume takes together. Its jitter estimate to the bit,
+    /// what it consumes and acknowledges when, its controls, counters and windows: any change fails it.
+    /// `REGENERATE_VECTORS=1 cargo test` writes it
+    #[test]
+    fn its_behaviour_matches_its_trace() {
+        use std::fmt::Write;
+        // (xorshift64: a seeded path)
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut uniform = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        // (a frame's inputs from its number: a throttle naming it; a one-frame tap, and a release then a press)
+        let frame_of = |n: u32| InputFrame {
+            throttle: ((n % 200) as i32 - 100) as i8,
+            bits: if n.is_multiple_of(61) || n % 61 == 2 { crate::protocol::BIT_JUMP } else { 0 },
+            ..InputFrame::default()
+        };
+        // The client: 60 Hz, two frames a step, each packet its last ten frames; frozen 3.0..3.3 s (a hitch: no frames,
+        // its reset asked with the next packet); its packets sent 5.0..5.15 s lost (a stall); 80 frames at once at 7.0 s
+        // (a burst); every 23rd packet twice, its timestamp the same; every 17th 20 ms late (the next ones bunched)
+        enum Event {
+            Packet { timestamp: u32, first: u32, frames: Vec<InputFrame>, reset: bool },
+            Tick(u32),
+        }
+        let mut events: Vec<(f64, Event)> = Vec::new();
+        let (mut newest, mut sent, mut reset_next) = (0u32, 0u32, false);
+        for step in 0..540u32 {
+            let c = f64::from(step) / 60.0;
+            if (3.0..3.3).contains(&c) {
+                reset_next = true;
+                continue;
+            }
+            let made = if (7.0..7.0 + 1.0 / 60.0).contains(&c) { 80 } else { 2 };
+            newest += made;
+            sent += 1;
+            if (5.0..5.15).contains(&c) {
+                continue;
+            }
+            let first = newest.saturating_sub(made.max(10) - 1).max(1);
+            let frames: Vec<InputFrame> = (first..=newest).map(frame_of).collect();
+            let timestamp = (c * 1000.0).round() as u32 + 1;
+            let arrive = c + 0.040 + uniform() * 0.012 + if sent % 17 == 0 { 0.020 } else { 0.0 };
+            events.push((arrive, Event::Packet { timestamp, first, frames: frames.clone(), reset: reset_next }));
+            if sent % 23 == 0 {
+                events.push((arrive + 0.001, Event::Packet { timestamp, first, frames, reset: false }));
+            }
+            reset_next = false;
+        }
+        for k in 0..1080u32 {
+            events.push((f64::from(k) / 120.0 + 1.0 / 240.0, Event::Tick(k)));
+        }
+        events.sort_by(|a, b| {
+            a.0.total_cmp(&b.0).then_with(|| matches!(a.1, Event::Tick(_)).cmp(&matches!(b.1, Event::Tick(_))))
+        });
+        let mut b = InputBuffer::default();
+        let mut text = String::new();
+        for (t, event) in events {
+            match event {
+                Event::Packet { timestamp, first, frames, reset } => {
+                    if reset {
+                        b.jitter.reset();
+                    }
+                    let new = b.receive(timestamp, first, &frames, t);
+                    let j = &b.jitter;
+                    writeln!(
+                        text,
+                        "> {t:.6} ts {timestamp} frames {first}+{} new {} size {} time {:08x}",
+                        frames.len(),
+                        u8::from(new),
+                        j.buffer_size,
+                        j.buffer_time.to_bits()
+                    )
+                    .unwrap();
+                }
+                Event::Tick(k) => {
+                    let c = b.tick(t, (k + 1) % 2 == 1);
+                    let s = b.stats;
+                    writeln!(
+                        text,
+                        "{k} q {} fill {} ack {} last {} thr {:.4} jump {} rep {} axes {} | o {} u {} r {} z {} s {} x {} l {} d {} c {} v {}",
+                        b.len(),
+                        u8::from(b.filling()),
+                        b.ack_frame(),
+                        b.last_consumed(),
+                        c.throttle,
+                        c.jump,
+                        u8::from(b.repress_jump),
+                        u8::from(b.press_axes.is_some()),
+                        s.over_buffer_frames,
+                        s.under_buffer_frames,
+                        s.repeated,
+                        s.zeroed,
+                        s.fill_skips,
+                        s.trimmed,
+                        s.late_dropped,
+                        s.duplicates,
+                        s.consumed,
+                        s.never_consumed
+                    )
+                    .unwrap();
+                    if k % 12 == 11 {
+                        let w = b.take_window();
+                        writeln!(text, "w {} {} {} {} {}", w.low, w.high, w.over, w.under, w.lost).unwrap();
+                    }
+                }
+            }
+        }
+        crate::netsim::check_vectors(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/input_buffer_trace.txt"), &text);
     }
 
     #[test]
@@ -361,13 +481,13 @@ mod tests {
         b.tick(t, false); // (none left: under)
         let w = b.take_window();
         assert_eq!((w.low, w.under), (0, 1));
-        assert!(w.high >= 1, "{w:?}");
+        assert_eq!(w.high, 3, "the most before a tick's consume (RV-1038): {w:?}");
         b.receive(2, 4, &[frame(1); 20], t);
         t += 1.0 / 120.0;
         b.tick(t, false); // (over the target: two consumed, one over)
         let w = b.take_window();
         assert_eq!(w.over, 1);
-        assert!(w.low >= 10 && w.high == w.low, "{w:?}");
+        assert!(w.low >= 10 && w.high == w.low + 2, "the high before its two consumes: {w:?}");
         // (no tick since: the queue as it is)
         let w = b.take_window();
         assert_eq!((w.low, w.high, w.over, w.under, w.lost), (b.len() as u8, b.len() as u8, 0, 0, 0));

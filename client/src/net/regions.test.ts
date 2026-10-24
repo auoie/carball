@@ -4,7 +4,9 @@ import {
   PINGS_KEPT_MS,
   chooseRegions,
   pingAnswer,
+  markVersion,
   searchPlan,
+  versionVerdict,
   searchRequest,
   serverNameOk,
   storePings,
@@ -167,6 +169,27 @@ describe("the regions searched", () => {
     // (a page of one region: that one refused, refused; none refused, as before)
     expect(searchPlan([listed[0] ?? { id: "", server: "" }], null, [], measured, [1], old).outdatedOnly).toBe(true);
     expect(searchPlan(listed, { ids: ["a"], manual: true }, ["a"], measured, [1]).outdatedOnly).toBe(false);
+  });
+
+  it("a refusal on version marks its region, a pong clears it, no answer leaves it (RV-1030, RV-1063)", () => {
+    const marks = new Set<string>();
+    expect(markVersion(marks, "a", "outdated")).toBe(true);
+    expect([...marks]).toEqual(["a"]);
+    expect(markVersion(marks, "a", null)).toBe(false);
+    expect([...marks]).toEqual(["a"]);
+    expect(markVersion(marks, "a", { ms: 30, server: "a.example:4433" })).toBe(false);
+    expect([...marks]).toEqual([]);
+  });
+
+  it("the reload asked once, and only of a page apart from its deployment; a search of refused regions alone refused (RV-1030, RV-1063)", () => {
+    // (apart: shown once, the search refused with the reload's words)
+    expect(versionVerdict(true, true, false)).toEqual({ showReload: true, refuse: "reload" });
+    expect(versionVerdict(true, true, true)).toEqual({ showReload: false, refuse: "reload" });
+    // (the page the deployment's: never the reload (no loop), those servers the ones being updated)
+    expect(versionVerdict(true, false, false)).toEqual({ showReload: false, refuse: "updating" });
+    // (other regions to search: it goes on)
+    expect(versionVerdict(false, true, false)).toEqual({ showReload: true, refuse: null });
+    expect(versionVerdict(false, false, false)).toEqual({ showReload: false, refuse: null });
   });
 
   it("a ping's answer: its ms and its name; a name the matchmaker wouldn't take, no answer; none, from before the name, its URL's (RV-893, RV-913)", () => {

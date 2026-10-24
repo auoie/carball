@@ -35,6 +35,8 @@ export async function signIn(context: BrowserContext, label: string, subject = `
         headers: { "Content-Type": "application/json", "X-Carball": "1" },
         body: JSON.stringify(body),
       });
+      // (the status first: an error's body may not be JSON, RV-1061)
+      if (!response.ok) return { status: response.status, account: undefined };
       return { status: response.status, account: ((await response.json()) as { account?: unknown }).account };
     },
     { subject, name },

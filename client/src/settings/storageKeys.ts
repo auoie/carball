@@ -10,9 +10,12 @@
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 /** The keys that moved: the old name's suffix is the new name's */
-const MOVED = ["settings.v1", "playlist", "browserKey", "playerKey", "claim", "menuNotice"] as const;
+const MOVED = ["settings.v1", "playlist", "playerKey", "claim", "menuNotice"] as const;
 /** Old keys nothing reads any more, removed: a development build's server address (150e1e6..98b4b57) */
 const DROPPED = ["server"] as const;
+/** Keys under the new name nothing reads any more, removed with their old names: the development queue's browser key
+ *  (its player's account, gone with design 4, RV-1062) */
+const RETIRED = ["browserKey"] as const;
 const OLD_PREFIX = "rl-clone.";
 const NEW_PREFIX = "carball.";
 
@@ -31,10 +34,11 @@ export function migrateStorageKeys(store: Store | null): number {
       // (storage blocked or full: the old key stays, the defaults apply)
     }
   }
-  for (const suffix of DROPPED) {
+  const dropped = [...DROPPED.map((s) => OLD_PREFIX + s), ...RETIRED.flatMap((s) => [OLD_PREFIX + s, NEW_PREFIX + s])];
+  for (const key of dropped) {
     try {
       // (looked at first: a removal is a write, every load, RV-439)
-      if (store.getItem(OLD_PREFIX + suffix) !== null) store.removeItem(OLD_PREFIX + suffix);
+      if (store.getItem(key) !== null) store.removeItem(key);
     } catch {
       // (storage blocked: it stays)
     }

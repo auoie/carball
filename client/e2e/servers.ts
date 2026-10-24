@@ -66,6 +66,8 @@ const SERVERS: readonly Server[] = [
 /** The first run builds the game server */
 const START_TIMEOUT_MS = 600_000;
 
+/** The local servers, unless the run is the services' alone (`npm run e2e:services`: none of its specs uses them) */
 export default async function globalSetup(): Promise<() => Promise<void>> {
+  if (process.env.CARBALL_E2E_SERVICES_ONLY === "1") return async () => Promise.resolve();
   return startServers(SERVERS, START_TIMEOUT_MS, "test-results/servers");
 }

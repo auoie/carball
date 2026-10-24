@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"carball/api/internal/matchmaker"
 	"carball/api/internal/server"
 	"carball/api/internal/ticket"
 )
@@ -502,11 +503,33 @@ func TestFleetRejoinQuestion(t *testing.T) {
 	if code, _ := ask(euServer, m1["ticket"].(string), gameToken); code != http.StatusForbidden {
 		t.Errorf("a seat's ticket: %d", code)
 	}
+	// (the rejoin let through holds the leaver's searches till its server says it's back, or RejoinHold: RV-1026)
+	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the leaver's search while its rejoin is held: %d", resp.StatusCode)
+	}
+	e.clock.Add(matchmaker.RejoinHold + time.Second)
 	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusOK {
 		t.Fatalf("the leaver's search: %d", resp.StatusCode)
 	}
 	if code, ok := ask(euServer, rejoin, gameToken); code != http.StatusOK || ok != false {
 		t.Errorf("a rejoin after the account's search: %d %v", code, ok)
+	}
+}
+
+// RV-1024: the game servers' calls under a fleet-wide ceiling (here 5) above each name's (here 3): a holder of the shared
+// token naming a new server for each call can't outrun it
+func TestGameServerCallsUnderAFleetCeiling(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.GameServer = server.Limit{Burst: 3, Window: time.Minute}
+	limits.GameServerFleet = server.Limit{Burst: 5, Window: time.Minute}
+	e := setup(t, &limits)
+	got := []int{}
+	for i := range 7 {
+		from := fmt.Sprintf("game-%d.example:4433", i)
+		got = append(got, e.gameCallAs(from, http.MethodPost, "/api/fleet/events", gameToken, map[string]any{"event": "started", "match": "00000000000000ab", "server": from}).StatusCode)
+	}
+	if want := []int{204, 204, 204, 204, 204, 429, 429}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("seven names' calls: %v, want the fleet's 5 then 429", got)
 	}
 }
 

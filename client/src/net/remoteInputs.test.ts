@@ -89,11 +89,31 @@ function componentsWin(cells: Map<string, Cell>): boolean {
   });
 }
 
+/** The game's model on its own (RV-1036: "not beaten by half" alone passed a model that predicted nothing well): its cars'
+ *  p50 and p99 within these bounds at each round trip (uu), its p99 no worse than the fading model's */
+function gameModelHolds(cells: Map<string, Cell>, p50: (rtt: number) => number, p99: (rtt: number) => number): void {
+  for (const rtt of RTTS) {
+    const game = cells.get(`game@${String(rtt)}`);
+    const fade = cells.get(`fade@${String(rtt)}`);
+    expect(game, `${String(rtt)} ms`).toBeDefined();
+    if (!game || !fade) continue;
+    expect(game.remote.p50, `p50 at ${String(rtt)} ms`).toBeLessThanOrEqual(p50(rtt));
+    expect(game.remote.p99, `p99 at ${String(rtt)} ms`).toBeLessThanOrEqual(p99(rtt));
+    expect(game.remote.p99, `p99 against the fade's at ${String(rtt)} ms`).toBeLessThanOrEqual(fade.remote.p99);
+  }
+}
+
 describe("T5: predicting other players' cars", () => {
   it("scripted bots: the game's model, not beaten by half", () => {
     const cells = compare([{ seed: 3 }]);
     table("bots", cells);
     expect(componentsWin(cells)).toBe(false);
+    // (measured: p50 4.5 / 8.3 / 15.7, p99 19.4 / 30.2 / 45.3 at 50 / 100 / 150 ms)
+    gameModelHolds(
+      cells,
+      (rtt) => 0.12 * rtt,
+      (rtt) => 0.45 * rtt,
+    );
   }, 600_000);
 
   const streams = replayInputStreams(fileURLToPath(STATES), (name) => name.startsWith("2v2_"));
@@ -112,6 +132,12 @@ describe("T5: predicting other players' cars", () => {
       const cells = compare(sources);
       table("replay inputs", cells);
       expect(componentsWin(cells)).toBe(false);
+      // (measured: p50 3.8 / 8.4 / 12.0, p99 51.3 / 76.5 / 92.3)
+      gameModelHolds(
+        cells,
+        (rtt) => 0.12 * rtt,
+        (rtt) => 0.7 * rtt + 20,
+      );
     },
     900_000,
   );

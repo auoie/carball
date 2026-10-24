@@ -1518,6 +1518,43 @@ func TestChunkedBodyCapped(t *testing.T) {
 	}
 }
 
+// RV-1027: everyone's request lines capped above each address's (here 4 a minute): a flood from many addresses counted,
+// not written, the minute's line saying how many; and that line names 100 addresses at most, the rest summed
+func TestRequestLinesCappedForEveryone(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.RequestLines = server.Limit{Burst: 1, Window: time.Minute}
+	limits.RequestLinesAll = server.Limit{Burst: 4, Window: time.Minute}
+	e := setup(t, &limits)
+	b := e.browser()
+	lines := func() int { return strings.Count(e.logs.String(), "msg=request ") }
+	for i := range 6 {
+		e.get(b, "/api/me", "CF-Connecting-IP", fmt.Sprintf("203.0.113.%d", i+1))
+	}
+	if got := lines(); got != 4 {
+		t.Errorf("%d request lines from 6 addresses, want everyone's 4:\n%s", got, e.logs.String())
+	}
+	e.s.Sweep(e.clock.Now())
+	if !strings.Contains(e.logs.String(), "request lines not written past everyone's ceiling") || !strings.Contains(e.logs.String(), "lines=2") {
+		t.Errorf("the minute's line for everyone's ceiling:\n%s", e.logs.String())
+	}
+	// (105 addresses each past their own 1: 100 named, the other 5 summed)
+	e.clock.Add(time.Minute)
+	e.s.Sweep(e.clock.Now())
+	limits.RequestLinesAll = server.Limit{Burst: 1000, Window: time.Minute}
+	e.s.SetLimits(limits)
+	e.logs.Reset()
+	for i := range 105 {
+		ip := fmt.Sprintf("198.51.100.%d", i+1)
+		e.get(b, "/api/me", "CF-Connecting-IP", ip)
+		e.get(b, "/api/me", "CF-Connecting-IP", ip)
+	}
+	e.s.Sweep(e.clock.Now())
+	named := strings.Count(e.logs.String(), "msg=\"request lines not written\"")
+	if named != 100 || !strings.Contains(e.logs.String(), "addresses=5 lines=5") {
+		t.Errorf("%d addresses named, want 100 and the other 5 summed:\n%s", named, e.logs.String())
+	}
+}
+
 // RV-963: a client address's request lines capped (here 3 a minute): past them counted, not written, the next written
 // line saying how many; another address's its own
 func TestRequestLinesCappedPerAddress(t *testing.T) {

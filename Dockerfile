@@ -17,10 +17,6 @@
 
 # (each compiler's parallel jobs: the three engine builds and two cargo builds can run at once)
 ARG JOBS=8
-# The e2e builds' markers (their test hooks' strings): none may be in a release binary (the checks below), and each must be
-# in its e2e binary (the e2e images' own check: the pattern proven against what it guards, RV-1045)
-ARG E2E_GAME_MARKERS="test-goal-after forfeit-vote-wait"
-ARG E2E_API_MARKERS="/api/e2e/ -tags=e2e"
 
 FROM emscripten/emsdk:6.0.13@sha256:fb7864e398acfda863dfcea78b8bc8adad359fa60c6a0bbeb845931de64aa68a AS emsdk
 FROM rust:1.91.1-trixie@sha256:867f1d1162913c401378a8504fb17fe2032c760dc316448766f150a130204aad AS rust
@@ -163,7 +159,7 @@ RUN --mount=type=cache,id=carball-gomod,target=/go/pkg/mod --mount=type=cache,id
     CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local \
     go build -tags e2e -trimpath -ldflags="-s -w -buildid=" -o /out/carball-api-e2e ./cmd/carball-api
 
-# The client's production build, the shipped-data and names checks on what it built
+# The client's production build, the shipped-data and names checks on what it built, and its version file's protocol
 FROM node AS client
 WORKDIR /src/client
 COPY client/package.json client/package-lock.json ./
@@ -175,18 +171,19 @@ COPY client/ client/
 COPY --from=engine-wasm /out/ engine/build-wasm/
 COPY --from=host /out/ engine/build-wasm-host/
 WORKDIR /src/client
-RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts
+RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts src/net/versionFile.test.ts
 
 # The checks (scripts/build_images.sh builds this first): the engine native = WebAssembly (above); the Rust notices as
 # committed, as they ship (the build's copies, RV-1019); the names guard (no game's,
 # maker's or mode names, RV-384/423) over each image's files and its stage of this file (what ships of it: its
 # instructions, in the image's history; the build stages never ship), and no build paths in either binary (the home,
 # registry, target and prebuilt libraries' directories here, unremapped: RV-380, RV-414; the remapped /src and /cargo
-# paths of panic messages are the ones the old builds had too), nor the e2e builds' hooks (the tests' sign-in route, the
-# game server's test flags: the game-e2e and api-e2e images' alone)
+# paths of panic messages are the ones the old builds had too), nor the e2e builds' markers (the tests' sign-in route and
+# the e2e build tag, the game server's test flags: the game-e2e and api-e2e images' alone; each e2e image checks its own
+# are there, the list proven against what it guards; written out here and there, never a build argument one could
+# empty, the three kept the same by server/tests/build_rerun.rs: RV-1045, RV-1057), the release game binary run to see
+# its hooks refused (each within 10 s: a hook that leaked would start a server, not hang the build, RV-1055)
 FROM client AS checks
-ARG E2E_GAME_MARKERS
-ARG E2E_API_MARKERS
 COPY --from=engine-check /engine-identical /tmp/engine-identical
 COPY --from=rust-notices /out/ /tmp/rust-notices/
 COPY --from=server /out/carball-server /game/carball-server
@@ -204,12 +201,12 @@ RUN for f in THIRD_PARTY_NOTICES-rust.txt THIRD_PARTY_NOTICES-rust-std.html; do 
     && for f in /game/carball-server /api/carball-api; do \
          n=$(grep -a -c -E '/root/|/usr/local/cargo|/target/|/engine/lib' "$f" || true); \
          echo "build paths in $f: $n"; [ "$n" = 0 ] || exit 1; \
-         for m in $E2E_GAME_MARKERS $E2E_API_MARKERS; do \
+         for m in test-goal-after forfeit-vote-wait /api/e2e/ -tags=e2e; do \
            n=$(grep -a -c -F -- "$m" "$f" || true); echo "e2e marker $m in $f: $n"; [ "$n" = 0 ] || exit 1; \
          done; \
        done \
-    && ! /game/carball-server --test-goal-after 1 > /tmp/hook.out 2>&1 && grep -q "unexpected argument '--test-goal-after'" /tmp/hook.out \
-    && ! API_URL=http://a.example GAME_SERVER_TOKEN_FILE=/t /game/carball-server > /tmp/hook.out 2>&1 && grep -q "API_URL must be https" /tmp/hook.out
+    && ! timeout 10 /game/carball-server --test-goal-after 1 > /tmp/hook.out 2>&1 && grep -q "unexpected argument '--test-goal-after'" /tmp/hook.out \
+    && ! API_URL=http://a.example GAME_SERVER_TOKEN_FILE=/t timeout 10 /game/carball-server > /tmp/hook.out 2>&1 && grep -q "API_URL must be https" /tmp/hook.out
 
 # The web client: its static build, served by unprivileged nginx (uid 101) on :3000. The game server's WebTransport URL
 # goes into /config.json when the container starts, from GAME_SERVER_URL. (nginx 1.30.6, the stable line, alpine; RV-371)
@@ -281,15 +278,13 @@ ENTRYPOINT ["/app/carball-api"]
 # The browser tests' images (client/e2e/services: never pushed or deployed): the game and accounts images with their e2e
 # builds in place of the release binaries (scripts/build_images.sh --e2e)
 FROM game AS game-e2e
-ARG E2E_GAME_MARKERS
 COPY --from=server-e2e /out/carball-server /app/carball-server
-RUN for m in $E2E_GAME_MARKERS; do grep -aqF -- "$m" /app/carball-server || { echo "e2e marker $m not in the e2e build: the checks' list is stale"; exit 1; }; done
+RUN for m in test-goal-after forfeit-vote-wait; do grep -aqF -- "$m" /app/carball-server || { echo "e2e marker $m not in the e2e build: the checks' list is stale"; exit 1; }; done
 LABEL org.opencontainers.image.title="carball-game-e2e" \
       org.opencontainers.image.description="Carball's game server, its e2e build: the browser tests' alone, never deployed"
 FROM api AS api-e2e
-ARG E2E_API_MARKERS
 COPY --from=api-e2e-build /out/carball-api-e2e /app/carball-api
-RUN for m in $E2E_API_MARKERS; do grep -aqF -- "$m" /app/carball-api || { echo "e2e marker $m not in the e2e build: the checks' list is stale"; exit 1; }; done
+RUN for m in /api/e2e/ -tags=e2e; do grep -aqF -- "$m" /app/carball-api || { echo "e2e marker $m not in the e2e build: the checks' list is stale"; exit 1; }; done
 LABEL org.opencontainers.image.title="carball-api-e2e" \
       org.opencontainers.image.description="Carball's accounts service, its e2e build: the browser tests' alone, never deployed"
 

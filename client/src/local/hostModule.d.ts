@@ -15,6 +15,7 @@ declare module "@host/carball_host.mjs" {
     _host_bot(id: number, throttle: number, steer: number, pitch: number, yaw: number, roll: number, jump: number, boost: number, handbrake: number): void;
     _host_car(id: number): number;
     _host_phase(id: number): number;
+    _host_input_stat(id: number, which: number): number;
     _host_state(id: number): number;
     _host_state_bytes(): number;
     _malloc(size: number): number;

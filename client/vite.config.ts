@@ -3,7 +3,7 @@ import { cpSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Plugin, type ViteDevServer, defineConfig } from "vite";
-import { PROTOCOL_VERSION } from "./src/net/protocol";
+import { PROTOCOL_VERSION } from "./src/net/protocol.ts";
 
 const here = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 
@@ -144,6 +144,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // (e2e/services' lock too: Node code the browser tests run, its test Vitest's)
+    include: ["src/**/*.test.ts", "e2e/**/*.test.ts"],
   },
 });

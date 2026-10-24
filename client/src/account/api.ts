@@ -1,7 +1,7 @@
 // The accounts service as the page sees it (notes/accounts.md; api/internal/server): who's signed in, sign-in at a
 // provider (a page load to the API, which comes back to `/?signin=…` or `/?signup`), the sign-up's name and Turnstile
-// check, the account's rename, sign-out and deletion. The deployment's page only: a development page plays on its game
-// server's own tickets, with no accounts.
+// check, the account's rename, sign-out and deletion. The deployment's page only: a development page has no accounts
+// (its online play the direct --dev server's open match).
 
 /** A signed-in account (GET /api/me): its ratings in the playlists (1v1, 2v2, 3v3), a leaver's queue ban's end and a
  *  no-show's search cooldown's end (ms, this page's clock: the service sends its seconds left, RV-983) */

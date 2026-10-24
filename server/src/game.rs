@@ -824,6 +824,11 @@ impl Game {
         self.players.get(&player).map(|p| p.car_id)
     }
 
+    /// A player's input buffer's counters (the local host's diagnostics: the client's network tests read them)
+    pub fn input_stats(&self, player: PlayerId) -> Option<crate::input_buffer::Stats> {
+        self.players.get(&player).map(|p| p.input.stats)
+    }
+
     pub fn car_position(&mut self, player: PlayerId) -> Option<[f32; 3]> {
         let car = self.car_id(player)?;
         self.arena.car_position(car)
@@ -1819,7 +1824,9 @@ impl Game {
             return;
         }
         self.send_pending_world();
-        let odd_tick = self.arena.tick_count() % 2 == 1;
+        // (the frame being run: the game counts it before its buffers' consumes, FUN_140f30970 raising PhysicsFrame and
+        // then each buffer's ServerConsume reading it, so a refill skips while the frame about to run is odd, RV-1032)
+        let odd_tick = (self.arena.tick_count() + 1) % 2 == 1;
         // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`; in the goal replay they're gone:
         // `StartReplay` → `DestroyCars`, here frozen out of sight until the kickoff places them)
         let frozen = matches!(self.phase, Phase::PrePodium | Phase::Finished | Phase::Replay);
@@ -2780,6 +2787,40 @@ mod tests {
             );
             assert!(pads <= 8.0, "pads {pads}/s");
             assert!(per_body <= 70.0, "{per_body} B a body");
+        }
+    }
+
+    /// RV-1032: while refilling, a buffer consumes only when the frame being run is even, the game's count taken before
+    /// its consumes (FUN_140f30970 raises PhysicsFrame, then each buffer's ServerConsume reads it); odd, it skips
+    #[test]
+    fn a_refill_consumes_on_even_frames_alone() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        // (one frame every third tick: the queue runs dry and refills, its frames arriving on both parities)
+        let mut frame = 1u32;
+        let mut seen = Vec::new();
+        for _ in 0..360 {
+            let run = game.arena.tick_count() + 1;
+            let now = game.arena.tick_count() as f64 / 120.0;
+            if run.is_multiple_of(3) {
+                game.receive_inputs(1, (now * 1000.0) as u32 + 1, frame, &throttle_frames(1), now);
+                frame += 1;
+            }
+            let before = &game.players[&1].input;
+            let (skips, consumed, filling) = (before.stats.fill_skips, before.stats.consumed, before.filling());
+            game.tick(now);
+            let after = &game.players[&1].input;
+            if filling && after.stats.fill_skips > skips {
+                seen.push((run, false));
+            } else if filling && after.stats.consumed > consumed {
+                seen.push((run, true));
+            }
+        }
+        assert!(seen.iter().any(|&(_, c)| c) && seen.iter().any(|&(_, c)| !c), "both while refilling: {seen:?}");
+        for (run, consumed) in seen {
+            assert_eq!(consumed, run % 2 == 0, "frame {run} while refilling");
         }
     }
 

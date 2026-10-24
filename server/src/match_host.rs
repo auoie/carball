@@ -482,30 +482,28 @@ impl MatchHost {
             slot.lost_at = Some(now);
         }
         // (an armed leave by a lost connection waits out OUTAGE_WINDOW before it's decided: its seat told left then, with
-        // its report, so that its player can't search and be matched before the ban comes, RV-964)
+        // its report, so that its player can't search and be matched before the ban comes, RV-964; a deliberate one's
+        // report goes before its seat's Left for the same reason, RV-1025)
         let pending = started && !decided && armed && !outage && lost && slot.ticket.is_some() && !slot.reported;
-        if started && !pending {
-            self.reports.push(Report::Left { match_id: ranked_id.clone(), seat: seat as u8 });
-        }
-        if !started || decided {
-            return;
-        }
-        slot.quit = true;
-        if !armed {
-            return;
-        }
-        let label = format!("match {ranked_id}: player {id} ({})", slot.who);
-        if outage {
-            tracing::info!("{label} left during the server's silence: no ban");
-        } else if slot.ticket.is_some() && !slot.reported {
-            if lost {
-                hosted.pending_quit = Some((seat, now)); // (reported after the window, unless an outage)
-            } else {
-                slot.reported = true;
-                tracing::info!("{label} left: reported as a quitter");
-                let ticket = slot.ticket.as_ref().map(|t| t.encoded.clone()).unwrap_or_default();
-                self.reports.push(Report::Quitter { match_id: ranked_id, ticket });
+        let left = (started && !pending).then(|| Report::Left { match_id: ranked_id.clone(), seat: seat as u8 });
+        if started && !decided {
+            slot.quit = true;
+            let label = format!("match {ranked_id}: player {id} ({})", slot.who);
+            if armed && outage {
+                tracing::info!("{label} left during the server's silence: no ban");
+            } else if armed && slot.ticket.is_some() && !slot.reported {
+                if lost {
+                    hosted.pending_quit = Some((seat, now)); // (reported after the window, unless an outage)
+                } else {
+                    slot.reported = true;
+                    tracing::info!("{label} left: reported as a quitter");
+                    let ticket = slot.ticket.as_ref().map(|t| t.encoded.clone()).unwrap_or_default();
+                    self.reports.push(Report::Quitter { match_id: ranked_id, ticket });
+                }
             }
+        }
+        if let Some(left) = left {
+            self.reports.push(left);
         }
     }
 
@@ -1632,7 +1630,11 @@ mod tests {
         let mut host = MatchHost::new(1, None);
         start(&mut host);
         host.leave(100, false);
-        assert_eq!(events(host.take_reports()), ["left", "quitter"], "a close: told at once");
+        assert_eq!(
+            events(host.take_reports()),
+            ["quitter", "left"],
+            "a close: told at once, its report first (RV-1025)"
+        );
     }
 
     /// AP3: a leave waiting out its window when the match is let go is decided then, with what's known

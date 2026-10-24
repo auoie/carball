@@ -1,0 +1,1705 @@
+0 q 0 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 1 r 1 z 0 s 0 x 0 l 0 d 0 c 0 v 0
+1 q 0 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 2 r 2 z 0 s 0 x 0 l 0 d 0 c 0 v 0
+2 q 0 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 3 r 3 z 0 s 0 x 0 l 0 d 0 c 0 v 0
+3 q 0 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 4 r 4 z 0 s 0 x 0 l 0 d 0 c 0 v 0
+4 q 0 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 5 r 5 z 0 s 0 x 0 l 0 d 0 c 0 v 0
+5 q 0 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 0 x 0 l 0 d 0 c 0 v 0
+> 0.050318 ts 1 frames 1+2 new 1 size 7 time 00000000
+6 q 2 fill 1 ack 0 last 0 thr 0.0000 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 1 x 0 l 0 d 0 c 0 v 0
+> 0.061398 ts 18 frames 1+4 new 1 size 7 time 3d4ccccd
+7 q 3 fill 1 ack 1 last 1 thr -0.7734 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 1 x 0 l 0 d 2 c 1 v 0
+8 q 3 fill 1 ack 2 last 1 thr -0.7734 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 2 x 0 l 0 d 2 c 1 v 0
+> 0.079100 ts 34 frames 1+6 new 1 size 7 time 3d4ccccd
+9 q 4 fill 1 ack 2 last 2 thr -0.7656 jump 1 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 2 x 0 l 1 d 5 c 2 v 0
+10 q 4 fill 1 ack 3 last 2 thr -0.7656 jump 1 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 3 x 0 l 1 d 5 c 2 v 0
+> 0.092267 ts 51 frames 1+8 new 1 size 7 time 3d4ccccd
+11 q 5 fill 1 ack 3 last 3 thr -0.7578 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 3 x 0 l 3 d 9 c 3 v 0
+w 0 6 0 6 0
+12 q 5 fill 1 ack 4 last 3 thr -0.7578 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 4 x 0 l 3 d 9 c 3 v 0
+> 0.108772 ts 68 frames 1+10 new 1 size 7 time 3d4ccccd
+13 q 6 fill 1 ack 4 last 4 thr -0.7500 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 4 x 0 l 6 d 14 c 4 v 0
+14 q 6 fill 1 ack 5 last 4 thr -0.7500 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 5 x 0 l 6 d 14 c 4 v 0
+15 q 5 fill 1 ack 5 last 5 thr -0.7422 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 5 x 0 l 6 d 14 c 5 v 0
+> 0.130414 ts 84 frames 3+10 new 1 size 7 time 3d4ccccd
+16 q 7 fill 1 ack 6 last 5 thr -0.7422 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 6 x 0 l 9 d 19 c 5 v 0
+17 q 6 fill 1 ack 6 last 6 thr -0.7344 jump 0 rep 0 axes 0 | o 0 u 6 r 6 z 0 s 6 x 0 l 9 d 19 c 6 v 0
+> 0.147257 ts 101 frames 5+10 new 1 size 7 time 3d4ccccd
+18 q 7 fill 1 ack 7 last 7 thr -0.7266 jump 0 rep 0 axes 0 | o 1 u 6 r 6 z 0 s 7 x 0 l 11 d 25 c 7 v 0
+19 q 6 fill 1 ack 8 last 8 thr -0.7188 jump 0 rep 0 axes 0 | o 1 u 6 r 6 z 0 s 7 x 0 l 11 d 25 c 8 v 0
+> 0.166870 ts 118 frames 7+10 new 1 size 7 time 3d4ccccd
+20 q 7 fill 1 ack 9 last 9 thr -0.7109 jump 0 rep 0 axes 0 | o 2 u 6 r 6 z 0 s 8 x 0 l 13 d 31 c 9 v 0
+21 q 6 fill 1 ack 10 last 10 thr -0.7031 jump 0 rep 0 axes 0 | o 2 u 6 r 6 z 0 s 8 x 0 l 13 d 31 c 10 v 0
+> 0.183724 ts 134 frames 9+10 new 1 size 7 time 3d4ccccd
+22 q 7 fill 1 ack 11 last 11 thr -0.6953 jump 0 rep 0 axes 0 | o 3 u 6 r 6 z 0 s 9 x 0 l 15 d 37 c 11 v 0
+23 q 6 fill 1 ack 12 last 12 thr -0.6875 jump 0 rep 0 axes 0 | o 3 u 6 r 6 z 0 s 9 x 0 l 15 d 37 c 12 v 0
+w 5 8 3 0 0
+> 0.196729 ts 151 frames 11+10 new 1 size 7 time 3d4ccccd
+24 q 7 fill 1 ack 13 last 13 thr -0.6797 jump 0 rep 0 axes 0 | o 4 u 6 r 6 z 0 s 10 x 0 l 17 d 43 c 13 v 0
+> 0.207086 ts 168 frames 13+10 new 1 size 7 time 3d4ccccd
+25 q 7 fill 0 ack 15 last 15 thr -0.6641 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 18 d 50 c 15 v 0
+26 q 6 fill 0 ack 16 last 16 thr -0.6562 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 18 d 50 c 16 v 0
+> 0.225521 ts 184 frames 15+10 new 1 size 7 time 3d4ccccd
+27 q 7 fill 0 ack 17 last 17 thr -0.6484 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 20 d 56 c 17 v 0
+28 q 6 fill 0 ack 18 last 18 thr -0.6406 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 20 d 56 c 18 v 0
+> 0.244019 ts 201 frames 17+10 new 1 size 7 time 3d4ccccd
+29 q 7 fill 0 ack 19 last 19 thr -0.6328 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 22 d 62 c 19 v 0
+30 q 6 fill 0 ack 20 last 20 thr -0.6250 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 22 d 62 c 20 v 0
+> 0.257329 ts 218 frames 19+10 new 1 size 7 time 3d4ccccd
+31 q 7 fill 0 ack 21 last 21 thr -0.6172 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 24 d 68 c 21 v 0
+32 q 6 fill 0 ack 22 last 22 thr -0.6094 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 24 d 68 c 22 v 0
+33 q 5 fill 0 ack 23 last 23 thr -0.6016 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 24 d 68 c 23 v 0
+> 0.282011 ts 234 frames 21+10 new 1 size 7 time 3d4ccccd
+34 q 6 fill 0 ack 24 last 24 thr -0.5938 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 27 d 73 c 24 v 0
+35 q 5 fill 0 ack 25 last 25 thr -0.5859 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 27 d 73 c 25 v 0
+w 5 9 2 0 0
+> 0.299256 ts 251 frames 23+10 new 1 size 7 time 3d4ccccd
+36 q 6 fill 0 ack 26 last 26 thr -0.5781 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 30 d 78 c 26 v 0
+37 q 5 fill 0 ack 27 last 27 thr -0.5703 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 30 d 78 c 27 v 0
+38 q 4 fill 0 ack 28 last 28 thr -0.5625 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 30 d 78 c 28 v 0
+> 0.329162 ts 268 frames 25+10 new 1 size 7 time 3d4ccccd
+39 q 5 fill 0 ack 29 last 29 thr -0.5547 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 34 d 82 c 29 v 0
+> 0.330983 ts 284 frames 27+10 new 1 size 7 time 3d4ccccd
+40 q 6 fill 0 ack 30 last 30 thr -0.5469 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 37 d 87 c 30 v 0
+41 q 5 fill 0 ack 31 last 31 thr -0.5391 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 37 d 87 c 31 v 0
+> 0.351828 ts 301 frames 29+10 new 1 size 7 time 3d4ccccd
+42 q 6 fill 0 ack 32 last 32 thr -0.5312 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 40 d 92 c 32 v 0
+43 q 5 fill 0 ack 33 last 33 thr -0.5234 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 40 d 92 c 33 v 0
+> 0.363556 ts 318 frames 31+10 new 1 size 7 time 3d4ccccd
+44 q 6 fill 0 ack 34 last 34 thr -0.5156 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 43 d 97 c 34 v 0
+> 0.377285 ts 334 frames 33+10 new 1 size 7 time 3d4ccccd
+45 q 7 fill 0 ack 35 last 35 thr -0.5078 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 45 d 103 c 35 v 0
+46 q 6 fill 0 ack 36 last 36 thr -0.5000 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 45 d 103 c 36 v 0
+47 q 5 fill 0 ack 37 last 37 thr -0.4922 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 45 d 103 c 37 v 0
+w 4 8 0 0 0
+> 0.398847 ts 351 frames 35+10 new 1 size 7 time 3d4ccccd
+48 q 6 fill 0 ack 38 last 38 thr -0.4844 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 48 d 108 c 38 v 0
+> 0.407375 ts 368 frames 37+10 new 1 size 7 time 3d4ccccd
+> 0.408375 ts 368 frames 37+10 new 0 size 7 time 3d4ccccd
+49 q 7 fill 0 ack 39 last 39 thr -0.4766 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 52 d 122 c 39 v 0
+50 q 6 fill 0 ack 40 last 40 thr -0.4688 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 52 d 122 c 40 v 0
+51 q 5 fill 0 ack 41 last 41 thr -0.4609 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 52 d 122 c 41 v 0
+> 0.429365 ts 384 frames 39+10 new 1 size 7 time 3d4ccccd
+52 q 6 fill 0 ack 42 last 42 thr -0.4531 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 55 d 127 c 42 v 0
+> 0.440662 ts 401 frames 41+10 new 1 size 7 time 3d4ccccd
+53 q 7 fill 0 ack 43 last 43 thr -0.4453 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 57 d 133 c 43 v 0
+54 q 6 fill 0 ack 44 last 44 thr -0.4375 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 57 d 133 c 44 v 0
+> 0.457278 ts 418 frames 43+10 new 1 size 7 time 3d4ccccd
+55 q 7 fill 0 ack 45 last 45 thr -0.4297 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 59 d 139 c 45 v 0
+56 q 6 fill 0 ack 46 last 46 thr -0.4219 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 59 d 139 c 46 v 0
+57 q 5 fill 0 ack 47 last 47 thr -0.4141 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 59 d 139 c 47 v 0
+> 0.483670 ts 434 frames 45+10 new 1 size 7 time 3d4ccccd
+58 q 6 fill 0 ack 48 last 48 thr -0.4062 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 62 d 144 c 48 v 0
+> 0.495111 ts 451 frames 47+10 new 1 size 7 time 3d4ccccd
+59 q 7 fill 0 ack 49 last 49 thr -0.3984 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 64 d 150 c 49 v 0
+w 5 8 0 0 0
+60 q 6 fill 0 ack 50 last 50 thr -0.3906 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 64 d 150 c 50 v 0
+> 0.509222 ts 468 frames 49+10 new 1 size 7 time 3d4ccccd
+61 q 7 fill 0 ack 51 last 51 thr -0.3828 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 66 d 156 c 51 v 0
+62 q 6 fill 0 ack 52 last 52 thr -0.3750 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 66 d 156 c 52 v 0
+> 0.527626 ts 484 frames 51+10 new 1 size 7 time 3d4ccccd
+63 q 7 fill 0 ack 53 last 53 thr -0.3672 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 68 d 162 c 53 v 0
+64 q 6 fill 0 ack 54 last 54 thr -0.3594 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 68 d 162 c 54 v 0
+> 0.545083 ts 501 frames 53+10 new 1 size 7 time 3d4ccccd
+65 q 7 fill 0 ack 55 last 55 thr -0.3516 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 70 d 168 c 55 v 0
+66 q 6 fill 0 ack 56 last 56 thr -0.3438 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 70 d 168 c 56 v 0
+67 q 5 fill 0 ack 57 last 57 thr -0.3359 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 70 d 168 c 57 v 0
+> 0.566263 ts 518 frames 55+10 new 1 size 7 time 3d4ccccd
+68 q 6 fill 0 ack 58 last 58 thr -0.3281 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 73 d 173 c 58 v 0
+69 q 5 fill 0 ack 59 last 59 thr -0.3203 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 73 d 173 c 59 v 0
+> 0.580788 ts 534 frames 57+10 new 1 size 7 time 3d4ccccd
+70 q 6 fill 0 ack 60 last 60 thr -0.3125 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 76 d 178 c 60 v 0
+71 q 5 fill 0 ack 61 last 61 thr -0.3047 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 76 d 178 c 61 v 0
+w 5 8 0 0 0
+72 q 4 fill 0 ack 62 last 62 thr -0.2969 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 76 d 178 c 62 v 0
+73 q 3 fill 0 ack 63 last 63 thr -0.2891 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 76 d 178 c 63 v 0
+> 0.616003 ts 568 frames 61+10 new 1 size 7 time 3d4ccccd
+> 0.618284 ts 551 frames 59+10 new 0 size 7 time 3d4ccccd
+74 q 6 fill 0 ack 64 last 64 thr -0.2812 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 84 d 186 c 64 v 0
+> 0.625862 ts 584 frames 63+10 new 1 size 7 time 3d4ccccd
+75 q 7 fill 0 ack 65 last 65 thr -0.2734 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 86 d 192 c 65 v 0
+76 q 6 fill 0 ack 66 last 66 thr -0.2656 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 86 d 192 c 66 v 0
+> 0.645755 ts 601 frames 65+10 new 1 size 7 time 3d4ccccd
+77 q 7 fill 0 ack 67 last 67 thr -0.2578 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 88 d 198 c 67 v 0
+78 q 6 fill 0 ack 68 last 68 thr -0.2500 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 88 d 198 c 68 v 0
+79 q 5 fill 0 ack 69 last 69 thr -0.2422 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 88 d 198 c 69 v 0
+> 0.663333 ts 618 frames 67+10 new 1 size 7 time 3d4ccccd
+80 q 6 fill 0 ack 70 last 70 thr -0.2344 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 91 d 203 c 70 v 0
+> 0.677536 ts 634 frames 69+10 new 1 size 7 time 3d4ccccd
+81 q 7 fill 0 ack 71 last 71 thr -0.2266 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 93 d 209 c 71 v 0
+82 q 6 fill 0 ack 72 last 72 thr -0.2188 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 93 d 209 c 72 v 0
+83 q 5 fill 0 ack 73 last 73 thr -0.2109 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 93 d 209 c 73 v 0
+w 3 8 0 0 0
+> 0.698990 ts 651 frames 71+10 new 1 size 7 time 3d4ccccd
+84 q 6 fill 0 ack 74 last 74 thr -0.2031 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 96 d 214 c 74 v 0
+> 0.708781 ts 668 frames 73+10 new 1 size 7 time 3d4ccccd
+85 q 7 fill 0 ack 75 last 75 thr -0.1953 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 98 d 220 c 75 v 0
+86 q 6 fill 0 ack 76 last 76 thr -0.1875 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 98 d 220 c 76 v 0
+> 0.727419 ts 684 frames 75+10 new 1 size 7 time 3d4ccccd
+87 q 7 fill 0 ack 77 last 77 thr -0.1797 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 100 d 226 c 77 v 0
+88 q 6 fill 0 ack 78 last 78 thr -0.1719 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 100 d 226 c 78 v 0
+> 0.742378 ts 701 frames 77+10 new 1 size 7 time 3d4ccccd
+89 q 7 fill 0 ack 79 last 79 thr -0.1641 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 102 d 232 c 79 v 0
+90 q 6 fill 0 ack 80 last 80 thr -0.1562 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 102 d 232 c 80 v 0
+> 0.757776 ts 718 frames 79+10 new 1 size 7 time 3d4ccccd
+91 q 7 fill 0 ack 81 last 81 thr -0.1484 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 104 d 238 c 81 v 0
+92 q 6 fill 0 ack 82 last 82 thr -0.1406 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 104 d 238 c 82 v 0
+> 0.773933 ts 734 frames 81+10 new 1 size 7 time 3d4ccccd
+93 q 7 fill 0 ack 83 last 83 thr -0.1328 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 106 d 244 c 83 v 0
+94 q 6 fill 0 ack 84 last 84 thr -0.1250 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 106 d 244 c 84 v 0
+95 q 5 fill 0 ack 85 last 85 thr -0.1172 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 106 d 244 c 85 v 0
+w 5 8 0 0 0
+> 0.798823 ts 751 frames 83+10 new 1 size 7 time 3d4ccccd
+> 0.799823 ts 751 frames 83+10 new 0 size 7 time 3d4ccccd
+96 q 6 fill 0 ack 86 last 86 thr -0.1094 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 112 d 256 c 86 v 0
+> 0.811873 ts 768 frames 85+10 new 1 size 7 time 3d4ccccd
+97 q 7 fill 0 ack 87 last 87 thr -0.1016 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 114 d 262 c 87 v 0
+98 q 6 fill 0 ack 88 last 88 thr -0.0938 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 114 d 262 c 88 v 0
+99 q 5 fill 0 ack 89 last 89 thr -0.0859 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 114 d 262 c 89 v 0
+> 0.834166 ts 784 frames 87+10 new 1 size 7 time 3d4ccccd
+100 q 6 fill 0 ack 90 last 90 thr -0.0781 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 117 d 267 c 90 v 0
+> 0.844660 ts 801 frames 89+10 new 1 size 7 time 3d4ccccd
+101 q 7 fill 0 ack 91 last 91 thr -0.0703 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 119 d 273 c 91 v 0
+102 q 6 fill 0 ack 92 last 92 thr -0.0625 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 119 d 273 c 92 v 0
+103 q 5 fill 0 ack 93 last 93 thr -0.0547 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 119 d 273 c 93 v 0
+> 0.867329 ts 818 frames 91+10 new 1 size 7 time 3d4ccccd
+104 q 6 fill 0 ack 94 last 94 thr -0.0469 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 122 d 278 c 94 v 0
+105 q 5 fill 0 ack 95 last 95 thr -0.0391 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 122 d 278 c 95 v 0
+106 q 4 fill 0 ack 96 last 96 thr -0.0312 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 122 d 278 c 96 v 0
+> 0.893702 ts 851 frames 95+10 new 1 size 7 time 3d4ccccd
+107 q 7 fill 0 ack 97 last 97 thr -0.0234 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 124 d 282 c 97 v 0
+w 4 8 0 0 0
+> 0.897438 ts 834 frames 93+10 new 0 size 7 time 3d4ccccd
+108 q 6 fill 0 ack 98 last 98 thr -0.0156 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 129 d 287 c 98 v 0
+109 q 5 fill 0 ack 99 last 99 thr -0.0078 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 129 d 287 c 99 v 0
+> 0.918090 ts 868 frames 97+10 new 1 size 7 time 3d4ccccd
+110 q 6 fill 0 ack 100 last 100 thr 0.0000 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 132 d 292 c 100 v 0
+> 0.925500 ts 884 frames 99+10 new 1 size 7 time 3d4ccccd
+111 q 7 fill 0 ack 101 last 101 thr 0.0079 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 134 d 298 c 101 v 0
+112 q 6 fill 0 ack 102 last 102 thr 0.0157 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 134 d 298 c 102 v 0
+113 q 5 fill 0 ack 103 last 103 thr 0.0236 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 134 d 298 c 103 v 0
+> 0.948627 ts 901 frames 101+10 new 1 size 7 time 3d4ccccd
+114 q 6 fill 0 ack 104 last 104 thr 0.0315 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 137 d 303 c 104 v 0
+> 0.959954 ts 918 frames 103+10 new 1 size 7 time 3d4ccccd
+115 q 7 fill 0 ack 105 last 105 thr 0.0394 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 139 d 309 c 105 v 0
+116 q 6 fill 0 ack 106 last 106 thr 0.0472 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 139 d 309 c 106 v 0
+117 q 5 fill 0 ack 107 last 107 thr 0.0551 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 139 d 309 c 107 v 0
+> 0.979768 ts 934 frames 105+10 new 1 size 7 time 3d4ccccd
+118 q 6 fill 0 ack 108 last 108 thr 0.0630 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 142 d 314 c 108 v 0
+> 0.993480 ts 951 frames 107+10 new 1 size 7 time 3d4ccccd
+119 q 7 fill 0 ack 109 last 109 thr 0.0709 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 144 d 320 c 109 v 0
+w 5 8 0 0 0
+120 q 6 fill 0 ack 110 last 110 thr 0.0787 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 144 d 320 c 110 v 0
+121 q 5 fill 0 ack 111 last 111 thr 0.0866 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 144 d 320 c 111 v 0
+> 1.015658 ts 968 frames 109+10 new 1 size 7 time 3d4ccccd
+122 q 6 fill 0 ack 112 last 112 thr 0.0945 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 147 d 325 c 112 v 0
+123 q 5 fill 0 ack 113 last 113 thr 0.1024 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 147 d 325 c 113 v 0
+> 1.034445 ts 984 frames 111+10 new 1 size 7 time 3d4ccccd
+124 q 6 fill 0 ack 114 last 114 thr 0.1102 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 150 d 330 c 114 v 0
+> 1.042814 ts 1001 frames 113+10 new 1 size 7 time 3d4ccccd
+125 q 7 fill 0 ack 115 last 115 thr 0.1181 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 152 d 336 c 115 v 0
+126 q 6 fill 0 ack 116 last 116 thr 0.1260 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 152 d 336 c 116 v 0
+> 1.060976 ts 1018 frames 115+10 new 1 size 7 time 3d4ccccd
+127 q 7 fill 0 ack 117 last 117 thr 0.1339 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 154 d 342 c 117 v 0
+128 q 6 fill 0 ack 118 last 118 thr 0.1417 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 154 d 342 c 118 v 0
+129 q 5 fill 0 ack 119 last 119 thr 0.1496 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 154 d 342 c 119 v 0
+> 1.080097 ts 1034 frames 117+10 new 1 size 7 time 3d4ccccd
+130 q 6 fill 0 ack 120 last 120 thr 0.1575 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 157 d 347 c 120 v 0
+> 1.093263 ts 1051 frames 119+10 new 1 size 7 time 3d4ccccd
+131 q 7 fill 0 ack 121 last 121 thr 0.1654 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 159 d 353 c 121 v 0
+w 5 8 0 0 0
+132 q 6 fill 0 ack 122 last 122 thr 0.1732 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 159 d 353 c 122 v 0
+133 q 5 fill 0 ack 123 last 123 thr 0.1811 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 159 d 353 c 123 v 0
+> 1.116836 ts 1068 frames 121+10 new 1 size 7 time 3d4ccccd
+134 q 6 fill 0 ack 124 last 124 thr 0.1890 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 162 d 358 c 124 v 0
+> 1.128633 ts 1084 frames 123+10 new 1 size 7 time 3d4ccccd
+135 q 7 fill 0 ack 125 last 125 thr 0.1969 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 164 d 364 c 125 v 0
+136 q 6 fill 0 ack 126 last 126 thr 0.2047 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 164 d 364 c 126 v 0
+> 1.143948 ts 1101 frames 125+10 new 1 size 7 time 3d4ccccd
+137 q 7 fill 0 ack 127 last 127 thr 0.2126 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 166 d 370 c 127 v 0
+138 q 6 fill 0 ack 128 last 128 thr 0.2205 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 166 d 370 c 128 v 0
+139 q 5 fill 0 ack 129 last 129 thr 0.2283 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 166 d 370 c 129 v 0
+140 q 4 fill 0 ack 130 last 130 thr 0.2362 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 166 d 370 c 130 v 0
+141 q 3 fill 0 ack 131 last 131 thr 0.2441 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 166 d 370 c 131 v 0
+> 1.180513 ts 1134 frames 129+10 new 1 size 7 time 3d4ccccd
+> 1.181513 ts 1134 frames 129+10 new 0 size 7 time 3d4ccccd
+> 1.185089 ts 1118 frames 127+10 new 0 size 7 time 3d4ccccd
+142 q 6 fill 0 ack 132 last 132 thr 0.2520 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 177 d 385 c 132 v 0
+> 1.194762 ts 1151 frames 131+10 new 1 size 7 time 3d4ccccd
+143 q 7 fill 0 ack 133 last 133 thr 0.2598 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 179 d 391 c 133 v 0
+w 3 8 0 0 0
+144 q 6 fill 0 ack 134 last 134 thr 0.2677 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 179 d 391 c 134 v 0
+> 1.210745 ts 1168 frames 133+10 new 1 size 7 time 3d4ccccd
+145 q 7 fill 0 ack 135 last 135 thr 0.2756 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 181 d 397 c 135 v 0
+146 q 6 fill 0 ack 136 last 136 thr 0.2835 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 181 d 397 c 136 v 0
+147 q 5 fill 0 ack 137 last 137 thr 0.2913 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 181 d 397 c 137 v 0
+> 1.234843 ts 1184 frames 135+10 new 1 size 7 time 3d4ccccd
+148 q 6 fill 0 ack 138 last 138 thr 0.2992 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 184 d 402 c 138 v 0
+149 q 5 fill 0 ack 139 last 139 thr 0.3071 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 184 d 402 c 139 v 0
+> 1.247885 ts 1201 frames 137+10 new 1 size 7 time 3d4ccccd
+150 q 6 fill 0 ack 140 last 140 thr 0.3150 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 187 d 407 c 140 v 0
+> 1.260460 ts 1218 frames 139+10 new 1 size 7 time 3d4ccccd
+151 q 7 fill 0 ack 141 last 141 thr 0.3228 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 189 d 413 c 141 v 0
+152 q 6 fill 0 ack 142 last 142 thr 0.3307 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 189 d 413 c 142 v 0
+> 1.276980 ts 1234 frames 141+10 new 1 size 7 time 3d4ccccd
+153 q 7 fill 0 ack 143 last 143 thr 0.3386 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 191 d 419 c 143 v 0
+154 q 6 fill 0 ack 144 last 144 thr 0.3465 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 191 d 419 c 144 v 0
+> 1.293403 ts 1251 frames 143+10 new 1 size 7 time 3d4ccccd
+155 q 7 fill 0 ack 145 last 145 thr 0.3543 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 193 d 425 c 145 v 0
+w 5 8 0 0 0
+156 q 6 fill 0 ack 146 last 146 thr 0.3622 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 193 d 425 c 146 v 0
+> 1.307702 ts 1268 frames 145+10 new 1 size 7 time 3d4ccccd
+157 q 7 fill 0 ack 147 last 147 thr 0.3701 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 195 d 431 c 147 v 0
+158 q 6 fill 0 ack 148 last 148 thr 0.3780 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 195 d 431 c 148 v 0
+159 q 5 fill 0 ack 149 last 149 thr 0.3858 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 195 d 431 c 149 v 0
+> 1.332870 ts 1284 frames 147+10 new 1 size 7 time 3d4ccccd
+160 q 6 fill 0 ack 150 last 150 thr 0.3937 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 198 d 436 c 150 v 0
+> 1.341568 ts 1301 frames 149+10 new 1 size 7 time 3d4ccccd
+161 q 7 fill 0 ack 151 last 151 thr 0.4016 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 200 d 442 c 151 v 0
+162 q 6 fill 0 ack 152 last 152 thr 0.4094 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 200 d 442 c 152 v 0
+> 1.358571 ts 1318 frames 151+10 new 1 size 7 time 3d4ccccd
+163 q 7 fill 0 ack 153 last 153 thr 0.4173 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 202 d 448 c 153 v 0
+164 q 6 fill 0 ack 154 last 154 thr 0.4252 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 202 d 448 c 154 v 0
+> 1.373675 ts 1334 frames 153+10 new 1 size 7 time 3d4ccccd
+165 q 7 fill 0 ack 155 last 155 thr 0.4331 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 204 d 454 c 155 v 0
+166 q 6 fill 0 ack 156 last 156 thr 0.4409 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 204 d 454 c 156 v 0
+167 q 5 fill 0 ack 157 last 157 thr 0.4488 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 204 d 454 c 157 v 0
+w 5 8 0 0 0
+> 1.398942 ts 1351 frames 155+10 new 1 size 7 time 3d4ccccd
+168 q 6 fill 0 ack 158 last 158 thr 0.4567 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 207 d 459 c 158 v 0
+169 q 5 fill 0 ack 159 last 159 thr 0.4646 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 207 d 459 c 159 v 0
+> 1.418338 ts 1368 frames 157+10 new 1 size 7 time 3d4ccccd
+170 q 6 fill 0 ack 160 last 160 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 210 d 464 c 160 v 0
+> 1.425313 ts 1384 frames 159+10 new 1 size 7 time 3d4ccccd
+171 q 7 fill 0 ack 161 last 161 thr 0.4803 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 212 d 470 c 161 v 0
+172 q 6 fill 0 ack 162 last 162 thr 0.4882 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 212 d 470 c 162 v 0
+173 q 5 fill 0 ack 163 last 163 thr 0.4961 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 212 d 470 c 163 v 0
+174 q 4 fill 0 ack 164 last 164 thr 0.5039 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 212 d 470 c 164 v 0
+> 1.461701 ts 1418 frames 163+10 new 1 size 7 time 3d4ccccd
+175 q 7 fill 0 ack 165 last 165 thr 0.5118 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 214 d 474 c 165 v 0
+> 1.463734 ts 1401 frames 161+10 new 0 size 7 time 3d4ccccd
+176 q 6 fill 0 ack 166 last 166 thr 0.5197 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 219 d 479 c 166 v 0
+177 q 5 fill 0 ack 167 last 167 thr 0.5276 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 219 d 479 c 167 v 0
+> 1.481623 ts 1434 frames 165+10 new 1 size 7 time 3d4ccccd
+178 q 6 fill 0 ack 168 last 168 thr 0.5354 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 222 d 484 c 168 v 0
+179 q 5 fill 0 ack 169 last 169 thr 0.5433 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 222 d 484 c 169 v 0
+w 4 8 0 0 0
+> 1.501275 ts 1451 frames 167+10 new 1 size 7 time 3d4ccccd
+180 q 6 fill 0 ack 170 last 170 thr 0.5512 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 225 d 489 c 170 v 0
+181 q 5 fill 0 ack 171 last 171 thr 0.5591 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 225 d 489 c 171 v 0
+> 1.515143 ts 1468 frames 169+10 new 1 size 7 time 3d4ccccd
+182 q 6 fill 0 ack 172 last 172 thr 0.5669 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 228 d 494 c 172 v 0
+183 q 5 fill 0 ack 173 last 173 thr 0.5748 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 228 d 494 c 173 v 0
+> 1.529295 ts 1484 frames 171+10 new 1 size 7 time 3d4ccccd
+184 q 6 fill 0 ack 174 last 174 thr 0.5827 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 231 d 499 c 174 v 0
+185 q 5 fill 0 ack 175 last 175 thr 0.5906 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 231 d 499 c 175 v 0
+> 1.547260 ts 1501 frames 173+10 new 1 size 7 time 3d4ccccd
+186 q 6 fill 0 ack 176 last 176 thr 0.5984 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 234 d 504 c 176 v 0
+187 q 5 fill 0 ack 177 last 177 thr 0.6063 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 234 d 504 c 177 v 0
+> 1.565620 ts 1518 frames 175+10 new 1 size 7 time 3d4ccccd
+> 1.566620 ts 1518 frames 175+10 new 0 size 7 time 3d4ccccd
+188 q 6 fill 0 ack 178 last 178 thr 0.6142 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 240 d 516 c 178 v 0
+189 q 5 fill 0 ack 179 last 179 thr 0.6220 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 240 d 516 c 179 v 0
+> 1.584998 ts 1534 frames 177+10 new 1 size 7 time 3d4ccccd
+190 q 6 fill 0 ack 180 last 180 thr 0.6299 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 243 d 521 c 180 v 0
+> 1.592799 ts 1551 frames 179+10 new 1 size 7 time 3d4ccccd
+191 q 7 fill 0 ack 181 last 181 thr 0.6378 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 245 d 527 c 181 v 0
+w 5 8 0 0 0
+192 q 6 fill 0 ack 182 last 182 thr 0.6457 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 245 d 527 c 182 v 0
+193 q 5 fill 0 ack 183 last 183 thr 0.6535 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 245 d 527 c 183 v 0
+> 1.617247 ts 1568 frames 181+10 new 1 size 7 time 3d4ccccd
+194 q 6 fill 0 ack 184 last 184 thr 0.6614 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 248 d 532 c 184 v 0
+195 q 5 fill 0 ack 185 last 185 thr 0.6693 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 248 d 532 c 185 v 0
+> 1.630425 ts 1584 frames 183+10 new 1 size 7 time 3d4ccccd
+196 q 6 fill 0 ack 186 last 186 thr 0.6772 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 251 d 537 c 186 v 0
+> 1.645650 ts 1601 frames 185+10 new 1 size 7 time 3d4ccccd
+197 q 7 fill 0 ack 187 last 187 thr 0.6850 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 253 d 543 c 187 v 0
+198 q 6 fill 0 ack 188 last 188 thr 0.6929 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 253 d 543 c 188 v 0
+> 1.662325 ts 1618 frames 187+10 new 1 size 7 time 3d4ccccd
+199 q 7 fill 0 ack 189 last 189 thr 0.7008 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 255 d 549 c 189 v 0
+200 q 6 fill 0 ack 190 last 190 thr 0.7087 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 255 d 549 c 190 v 0
+201 q 5 fill 0 ack 191 last 191 thr 0.7165 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 255 d 549 c 191 v 0
+> 1.684868 ts 1634 frames 189+10 new 1 size 7 time 3d4ccccd
+202 q 6 fill 0 ack 192 last 192 thr 0.7244 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 258 d 554 c 192 v 0
+203 q 5 fill 0 ack 193 last 193 thr 0.7323 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 258 d 554 c 193 v 0
+w 5 8 0 0 0
+> 1.698032 ts 1651 frames 191+10 new 1 size 7 time 3d4ccccd
+204 q 6 fill 0 ack 194 last 194 thr 0.7402 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 261 d 559 c 194 v 0
+> 1.707440 ts 1668 frames 193+10 new 1 size 7 time 3d4ccccd
+205 q 7 fill 0 ack 195 last 195 thr 0.7480 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 263 d 565 c 195 v 0
+206 q 6 fill 0 ack 196 last 196 thr 0.7559 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 263 d 565 c 196 v 0
+207 q 5 fill 0 ack 197 last 197 thr 0.7638 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 263 d 565 c 197 v 0
+208 q 4 fill 0 ack 198 last 198 thr 0.7717 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 263 d 565 c 198 v 0
+> 1.743136 ts 1701 frames 197+10 new 1 size 7 time 3d4ccccd
+209 q 7 fill 0 ack 199 last 199 thr 0.7795 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 265 d 569 c 199 v 0
+> 1.751203 ts 1684 frames 195+10 new 0 size 7 time 3d4ccccd
+210 q 6 fill 0 ack 200 last 200 thr -0.7812 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 270 d 574 c 200 v 0
+211 q 5 fill 0 ack 201 last 201 thr -0.7734 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 270 d 574 c 201 v 0
+> 1.762513 ts 1718 frames 199+10 new 1 size 7 time 3d4ccccd
+212 q 6 fill 0 ack 202 last 202 thr -0.7656 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 273 d 579 c 202 v 0
+213 q 5 fill 0 ack 203 last 203 thr -0.7578 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 273 d 579 c 203 v 0
+> 1.780257 ts 1734 frames 201+10 new 1 size 7 time 3d4ccccd
+214 q 6 fill 0 ack 204 last 204 thr -0.7500 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 276 d 584 c 204 v 0
+> 1.791085 ts 1751 frames 203+10 new 1 size 7 time 3d4ccccd
+215 q 7 fill 0 ack 205 last 205 thr -0.7422 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 278 d 590 c 205 v 0
+w 4 8 0 0 0
+216 q 6 fill 0 ack 206 last 206 thr -0.7344 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 278 d 590 c 206 v 0
+> 1.808046 ts 1768 frames 205+10 new 1 size 7 time 3d4ccccd
+217 q 7 fill 0 ack 207 last 207 thr -0.7266 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 280 d 596 c 207 v 0
+218 q 6 fill 0 ack 208 last 208 thr -0.7188 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 280 d 596 c 208 v 0
+219 q 5 fill 0 ack 209 last 209 thr -0.7109 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 280 d 596 c 209 v 0
+> 1.830682 ts 1784 frames 207+10 new 1 size 7 time 3d4ccccd
+220 q 6 fill 0 ack 210 last 210 thr -0.7031 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 283 d 601 c 210 v 0
+221 q 5 fill 0 ack 211 last 211 thr -0.6953 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 283 d 601 c 211 v 0
+> 1.846933 ts 1801 frames 209+10 new 1 size 7 time 3d4ccccd
+222 q 6 fill 0 ack 212 last 212 thr -0.6875 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 286 d 606 c 212 v 0
+> 1.859680 ts 1818 frames 211+10 new 1 size 7 time 3d4ccccd
+223 q 7 fill 0 ack 213 last 213 thr -0.6797 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 288 d 612 c 213 v 0
+224 q 6 fill 0 ack 214 last 214 thr -0.6719 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 288 d 612 c 214 v 0
+225 q 5 fill 0 ack 215 last 215 thr -0.6641 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 288 d 612 c 215 v 0
+> 1.885149 ts 1834 frames 213+10 new 1 size 7 time 3d4ccccd
+226 q 6 fill 0 ack 216 last 216 thr -0.6562 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 291 d 617 c 216 v 0
+> 1.892032 ts 1851 frames 215+10 new 1 size 7 time 3d4ccccd
+227 q 7 fill 0 ack 217 last 217 thr -0.6484 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 293 d 623 c 217 v 0
+w 5 8 0 0 0
+228 q 6 fill 0 ack 218 last 218 thr -0.6406 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 293 d 623 c 218 v 0
+229 q 5 fill 0 ack 219 last 219 thr -0.6328 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 293 d 623 c 219 v 0
+> 1.915028 ts 1868 frames 217+10 new 1 size 7 time 3d4ccccd
+230 q 6 fill 0 ack 220 last 220 thr -0.6250 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 296 d 628 c 220 v 0
+> 1.926717 ts 1884 frames 219+10 new 1 size 7 time 3d4ccccd
+231 q 7 fill 0 ack 221 last 221 thr -0.6172 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 298 d 634 c 221 v 0
+232 q 6 fill 0 ack 222 last 222 thr -0.6094 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 298 d 634 c 222 v 0
+233 q 5 fill 0 ack 223 last 223 thr -0.6016 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 298 d 634 c 223 v 0
+> 1.947973 ts 1901 frames 221+10 new 1 size 7 time 3d4ccccd
+> 1.948973 ts 1901 frames 221+10 new 0 size 7 time 3d4ccccd
+234 q 6 fill 0 ack 224 last 224 thr -0.5938 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 304 d 646 c 224 v 0
+235 q 5 fill 0 ack 225 last 225 thr -0.5859 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 304 d 646 c 225 v 0
+> 1.965485 ts 1918 frames 223+10 new 1 size 7 time 3d4ccccd
+236 q 6 fill 0 ack 226 last 226 thr -0.5781 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 307 d 651 c 226 v 0
+> 1.973399 ts 1934 frames 225+10 new 1 size 7 time 3d4ccccd
+237 q 7 fill 0 ack 227 last 227 thr -0.5703 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 309 d 657 c 227 v 0
+238 q 6 fill 0 ack 228 last 228 thr -0.5625 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 309 d 657 c 228 v 0
+> 1.991548 ts 1951 frames 227+10 new 1 size 7 time 3d4ccccd
+239 q 7 fill 0 ack 229 last 229 thr -0.5547 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 311 d 663 c 229 v 0
+w 5 8 0 0 0
+240 q 6 fill 0 ack 230 last 230 thr -0.5469 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 311 d 663 c 230 v 0
+241 q 5 fill 0 ack 231 last 231 thr -0.5391 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 311 d 663 c 231 v 0
+242 q 4 fill 0 ack 232 last 232 thr -0.5312 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 311 d 663 c 232 v 0
+> 2.026699 ts 1984 frames 231+10 new 1 size 7 time 3d4ccccd
+243 q 7 fill 0 ack 233 last 233 thr -0.5234 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 313 d 667 c 233 v 0
+> 2.035402 ts 1968 frames 229+10 new 0 size 7 time 3d4ccccd
+244 q 6 fill 0 ack 234 last 234 thr -0.5156 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 318 d 672 c 234 v 0
+> 2.040724 ts 2001 frames 233+10 new 1 size 7 time 3d4ccccd
+245 q 7 fill 0 ack 235 last 235 thr -0.5078 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 320 d 678 c 235 v 0
+246 q 6 fill 0 ack 236 last 236 thr -0.5000 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 320 d 678 c 236 v 0
+> 2.058042 ts 2018 frames 235+10 new 1 size 7 time 3d4ccccd
+247 q 7 fill 0 ack 237 last 237 thr -0.4922 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 322 d 684 c 237 v 0
+248 q 6 fill 0 ack 238 last 238 thr -0.4844 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 322 d 684 c 238 v 0
+> 2.076237 ts 2034 frames 237+10 new 1 size 7 time 3d4ccccd
+249 q 7 fill 0 ack 239 last 239 thr -0.4766 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 324 d 690 c 239 v 0
+250 q 6 fill 0 ack 240 last 240 thr -0.4688 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 324 d 690 c 240 v 0
+251 q 5 fill 0 ack 241 last 241 thr -0.4609 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 324 d 690 c 241 v 0
+w 4 8 0 0 0
+> 2.097348 ts 2051 frames 239+10 new 1 size 7 time 3d4ccccd
+252 q 6 fill 0 ack 242 last 242 thr -0.4531 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 327 d 695 c 242 v 0
+> 2.111577 ts 2068 frames 241+10 new 1 size 7 time 3d4ccccd
+253 q 7 fill 0 ack 243 last 243 thr -0.4453 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 329 d 701 c 243 v 0
+254 q 6 fill 0 ack 244 last 244 thr -0.4375 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 329 d 701 c 244 v 0
+255 q 5 fill 0 ack 245 last 245 thr -0.4297 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 329 d 701 c 245 v 0
+> 2.130918 ts 2084 frames 243+10 new 1 size 7 time 3d4ccccd
+256 q 6 fill 0 ack 246 last 246 thr -0.4219 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 332 d 706 c 246 v 0
+257 q 5 fill 0 ack 247 last 247 thr -0.4141 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 332 d 706 c 247 v 0
+> 2.146987 ts 2101 frames 245+10 new 1 size 7 time 3d4ccccd
+258 q 6 fill 0 ack 248 last 248 thr -0.4062 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 335 d 711 c 248 v 0
+> 2.159631 ts 2118 frames 247+10 new 1 size 7 time 3d4ccccd
+259 q 7 fill 0 ack 249 last 249 thr -0.3984 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 337 d 717 c 249 v 0
+260 q 6 fill 0 ack 250 last 250 thr -0.3906 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 337 d 717 c 250 v 0
+261 q 5 fill 0 ack 251 last 251 thr -0.3828 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 337 d 717 c 251 v 0
+> 2.182001 ts 2134 frames 249+10 new 1 size 7 time 3d4ccccd
+262 q 6 fill 0 ack 252 last 252 thr -0.3750 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 340 d 722 c 252 v 0
+> 2.194902 ts 2151 frames 251+10 new 1 size 7 time 3d4ccccd
+263 q 7 fill 0 ack 253 last 253 thr -0.3672 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 342 d 728 c 253 v 0
+w 5 8 0 0 0
+264 q 6 fill 0 ack 254 last 254 thr -0.3594 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 342 d 728 c 254 v 0
+265 q 5 fill 0 ack 255 last 255 thr -0.3516 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 342 d 728 c 255 v 0
+> 2.212652 ts 2168 frames 253+10 new 1 size 7 time 3d4ccccd
+266 q 6 fill 0 ack 256 last 256 thr -0.3438 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 345 d 733 c 256 v 0
+> 2.225909 ts 2184 frames 255+10 new 1 size 7 time 3d4ccccd
+267 q 7 fill 0 ack 257 last 257 thr -0.3359 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 347 d 739 c 257 v 0
+268 q 6 fill 0 ack 258 last 258 thr -0.3281 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 347 d 739 c 258 v 0
+> 2.245448 ts 2201 frames 257+10 new 1 size 7 time 3d4ccccd
+269 q 7 fill 0 ack 259 last 259 thr -0.3203 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 349 d 745 c 259 v 0
+270 q 6 fill 0 ack 260 last 260 thr -0.3125 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 349 d 745 c 260 v 0
+271 q 5 fill 0 ack 261 last 261 thr -0.3047 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 349 d 745 c 261 v 0
+> 2.262818 ts 2218 frames 259+10 new 1 size 7 time 3d4ccccd
+272 q 6 fill 0 ack 262 last 262 thr -0.2969 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 352 d 750 c 262 v 0
+273 q 5 fill 0 ack 263 last 263 thr -0.2891 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 352 d 750 c 263 v 0
+> 2.280513 ts 2234 frames 261+10 new 1 size 7 time 3d4ccccd
+274 q 6 fill 0 ack 264 last 264 thr -0.2812 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 355 d 755 c 264 v 0
+275 q 5 fill 0 ack 265 last 265 thr -0.2734 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 355 d 755 c 265 v 0
+w 5 8 0 0 0
+276 q 4 fill 0 ack 266 last 266 thr -0.2656 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 355 d 755 c 266 v 0
+> 2.311371 ts 2268 frames 265+10 new 1 size 7 time 3d4ccccd
+277 q 7 fill 0 ack 267 last 267 thr -0.2578 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 357 d 759 c 267 v 0
+> 2.319409 ts 2251 frames 263+10 new 0 size 7 time 3d4ccccd
+278 q 6 fill 0 ack 268 last 268 thr -0.2500 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 362 d 764 c 268 v 0
+279 q 5 fill 0 ack 269 last 269 thr -0.2422 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 362 d 764 c 269 v 0
+> 2.329359 ts 2284 frames 267+10 new 1 size 7 time 3d4ccccd
+> 2.330359 ts 2284 frames 267+10 new 0 size 7 time 3d4ccccd
+280 q 6 fill 0 ack 270 last 270 thr -0.2344 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 368 d 776 c 270 v 0
+281 q 5 fill 0 ack 271 last 271 thr -0.2266 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 368 d 776 c 271 v 0
+> 2.347187 ts 2301 frames 269+10 new 1 size 7 time 3d4ccccd
+282 q 6 fill 0 ack 272 last 272 thr -0.2188 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 371 d 781 c 272 v 0
+> 2.357065 ts 2318 frames 271+10 new 1 size 7 time 3d4ccccd
+283 q 7 fill 0 ack 273 last 273 thr -0.2109 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 373 d 787 c 273 v 0
+284 q 6 fill 0 ack 274 last 274 thr -0.2031 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 373 d 787 c 274 v 0
+285 q 5 fill 0 ack 275 last 275 thr -0.1953 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 373 d 787 c 275 v 0
+> 2.384761 ts 2334 frames 273+10 new 1 size 7 time 3d4ccccd
+286 q 6 fill 0 ack 276 last 276 thr -0.1875 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 376 d 792 c 276 v 0
+287 q 5 fill 0 ack 277 last 277 thr -0.1797 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 376 d 792 c 277 v 0
+w 4 8 0 0 0
+> 2.400970 ts 2351 frames 275+10 new 1 size 7 time 3d4ccccd
+288 q 6 fill 0 ack 278 last 278 thr -0.1719 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 379 d 797 c 278 v 0
+> 2.410567 ts 2368 frames 277+10 new 1 size 7 time 3d4ccccd
+289 q 7 fill 0 ack 279 last 279 thr -0.1641 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 381 d 803 c 279 v 0
+290 q 6 fill 0 ack 280 last 280 thr -0.1562 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 381 d 803 c 280 v 0
+291 q 5 fill 0 ack 281 last 281 thr -0.1484 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 381 d 803 c 281 v 0
+> 2.433384 ts 2384 frames 279+10 new 1 size 7 time 3d4ccccd
+292 q 6 fill 0 ack 282 last 282 thr -0.1406 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 384 d 808 c 282 v 0
+293 q 5 fill 0 ack 283 last 283 thr -0.1328 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 384 d 808 c 283 v 0
+> 2.446625 ts 2401 frames 281+10 new 1 size 7 time 3d4ccccd
+294 q 6 fill 0 ack 284 last 284 thr -0.1250 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 387 d 813 c 284 v 0
+> 2.456673 ts 2418 frames 283+10 new 1 size 7 time 3d4ccccd
+295 q 7 fill 0 ack 285 last 285 thr -0.1172 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 389 d 819 c 285 v 0
+296 q 6 fill 0 ack 286 last 286 thr -0.1094 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 389 d 819 c 286 v 0
+297 q 5 fill 0 ack 287 last 287 thr -0.1016 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 389 d 819 c 287 v 0
+> 2.484811 ts 2434 frames 285+10 new 1 size 7 time 3d4ccccd
+298 q 6 fill 0 ack 288 last 288 thr -0.0938 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 392 d 824 c 288 v 0
+299 q 5 fill 0 ack 289 last 289 thr -0.0859 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 392 d 824 c 289 v 0
+w 5 8 0 0 0
+> 2.497701 ts 2451 frames 287+10 new 1 size 7 time 3d4ccccd
+300 q 6 fill 0 ack 290 last 290 thr -0.0781 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 395 d 829 c 290 v 0
+> 2.510831 ts 2468 frames 289+10 new 1 size 7 time 3d4ccccd
+301 q 7 fill 0 ack 291 last 291 thr -0.0703 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 397 d 835 c 291 v 0
+302 q 6 fill 0 ack 292 last 292 thr -0.0625 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 397 d 835 c 292 v 0
+> 2.529157 ts 2484 frames 291+10 new 1 size 7 time 3d4ccccd
+303 q 7 fill 0 ack 293 last 293 thr -0.0547 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 399 d 841 c 293 v 0
+304 q 6 fill 0 ack 294 last 294 thr -0.0469 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 399 d 841 c 294 v 0
+305 q 5 fill 0 ack 295 last 295 thr -0.0391 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 399 d 841 c 295 v 0
+> 2.547166 ts 2501 frames 293+10 new 1 size 7 time 3d4ccccd
+306 q 6 fill 0 ack 296 last 296 thr -0.0312 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 402 d 846 c 296 v 0
+307 q 5 fill 0 ack 297 last 297 thr -0.0234 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 402 d 846 c 297 v 0
+> 2.565340 ts 2518 frames 295+10 new 1 size 7 time 3d4ccccd
+308 q 6 fill 0 ack 298 last 298 thr -0.0156 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 405 d 851 c 298 v 0
+309 q 5 fill 0 ack 299 last 299 thr -0.0078 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 405 d 851 c 299 v 0
+310 q 4 fill 0 ack 300 last 300 thr 0.0000 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 405 d 851 c 300 v 0
+> 2.591558 ts 2551 frames 299+10 new 1 size 7 time 3d4ccccd
+> 2.593530 ts 2534 frames 297+10 new 0 size 7 time 3d4ccccd
+311 q 7 fill 0 ack 301 last 301 thr 0.0079 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 411 d 861 c 301 v 0
+w 4 8 0 0 0
+312 q 6 fill 0 ack 302 last 302 thr 0.0157 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 411 d 861 c 302 v 0
+313 q 5 fill 0 ack 303 last 303 thr 0.0236 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 411 d 861 c 303 v 0
+> 2.614811 ts 2568 frames 301+10 new 1 size 7 time 3d4ccccd
+314 q 6 fill 0 ack 304 last 304 thr 0.0315 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 414 d 866 c 304 v 0
+> 2.628285 ts 2584 frames 303+10 new 1 size 7 time 3d4ccccd
+315 q 7 fill 0 ack 305 last 305 thr 0.0394 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 416 d 872 c 305 v 0
+316 q 6 fill 0 ack 306 last 306 thr 0.0472 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 416 d 872 c 306 v 0
+> 2.645372 ts 2601 frames 305+10 new 1 size 7 time 3d4ccccd
+317 q 7 fill 0 ack 307 last 307 thr 0.0551 jump 1 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 418 d 878 c 307 v 0
+318 q 6 fill 0 ack 308 last 308 thr 0.0630 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 418 d 878 c 308 v 0
+319 q 5 fill 0 ack 309 last 309 thr 0.0709 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 418 d 878 c 309 v 0
+> 2.668335 ts 2618 frames 307+10 new 1 size 7 time 3d4ccccd
+320 q 6 fill 0 ack 310 last 310 thr 0.0787 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 421 d 883 c 310 v 0
+> 2.676873 ts 2634 frames 309+10 new 1 size 7 time 3d4ccccd
+321 q 7 fill 0 ack 311 last 311 thr 0.0866 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 423 d 889 c 311 v 0
+322 q 6 fill 0 ack 312 last 312 thr 0.0945 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 423 d 889 c 312 v 0
+> 2.693047 ts 2651 frames 311+10 new 1 size 7 time 3d4ccccd
+323 q 7 fill 0 ack 313 last 313 thr 0.1024 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 425 d 895 c 313 v 0
+w 5 8 0 0 0
+324 q 6 fill 0 ack 314 last 314 thr 0.1102 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 425 d 895 c 314 v 0
+> 2.708806 ts 2668 frames 313+10 new 1 size 7 time 3d4ccccd
+> 2.709806 ts 2668 frames 313+10 new 0 size 7 time 3d4ccccd
+325 q 7 fill 0 ack 315 last 315 thr 0.1181 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 429 d 909 c 315 v 0
+326 q 6 fill 0 ack 316 last 316 thr 0.1260 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 429 d 909 c 316 v 0
+327 q 5 fill 0 ack 317 last 317 thr 0.1339 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 429 d 909 c 317 v 0
+> 2.733426 ts 2684 frames 315+10 new 1 size 7 time 3d4ccccd
+328 q 6 fill 0 ack 318 last 318 thr 0.1417 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 432 d 914 c 318 v 0
+> 2.741353 ts 2701 frames 317+10 new 1 size 7 time 3d4ccccd
+329 q 7 fill 0 ack 319 last 319 thr 0.1496 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 434 d 920 c 319 v 0
+330 q 6 fill 0 ack 320 last 320 thr 0.1575 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 434 d 920 c 320 v 0
+331 q 5 fill 0 ack 321 last 321 thr 0.1654 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 434 d 920 c 321 v 0
+> 2.765429 ts 2718 frames 319+10 new 1 size 7 time 3d4ccccd
+332 q 6 fill 0 ack 322 last 322 thr 0.1732 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 437 d 925 c 322 v 0
+> 2.776130 ts 2734 frames 321+10 new 1 size 7 time 3d4ccccd
+333 q 7 fill 0 ack 323 last 323 thr 0.1811 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 439 d 931 c 323 v 0
+334 q 6 fill 0 ack 324 last 324 thr 0.1890 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 439 d 931 c 324 v 0
+> 2.790017 ts 2751 frames 323+10 new 1 size 7 time 3d4ccccd
+335 q 7 fill 0 ack 325 last 325 thr 0.1969 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 441 d 937 c 325 v 0
+w 5 8 0 0 0
+336 q 6 fill 0 ack 326 last 326 thr 0.2047 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 441 d 937 c 326 v 0
+337 q 5 fill 0 ack 327 last 327 thr 0.2126 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 441 d 937 c 327 v 0
+> 2.816027 ts 2768 frames 325+10 new 1 size 7 time 3d4ccccd
+338 q 6 fill 0 ack 328 last 328 thr 0.2205 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 444 d 942 c 328 v 0
+> 2.828290 ts 2784 frames 327+10 new 1 size 7 time 3d4ccccd
+339 q 7 fill 0 ack 329 last 329 thr 0.2283 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 446 d 948 c 329 v 0
+340 q 6 fill 0 ack 330 last 330 thr 0.2362 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 446 d 948 c 330 v 0
+> 2.845218 ts 2801 frames 329+10 new 1 size 7 time 3d4ccccd
+341 q 7 fill 0 ack 331 last 331 thr 0.2441 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 448 d 954 c 331 v 0
+342 q 6 fill 0 ack 332 last 332 thr 0.2520 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 448 d 954 c 332 v 0
+343 q 5 fill 0 ack 333 last 333 thr 0.2598 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 448 d 954 c 333 v 0
+344 q 4 fill 0 ack 334 last 334 thr 0.2677 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 448 d 954 c 334 v 0
+345 q 3 fill 0 ack 335 last 335 thr 0.2756 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 448 d 954 c 335 v 0
+> 2.881802 ts 2818 frames 331+10 new 1 size 7 time 3d4ccccd
+> 2.881822 ts 2834 frames 333+10 new 1 size 7 time 3d4ccccd
+346 q 6 fill 0 ack 336 last 336 thr 0.2835 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 456 d 962 c 336 v 0
+> 2.890192 ts 2851 frames 335+10 new 1 size 7 time 3d4ccccd
+347 q 7 fill 0 ack 337 last 337 thr 0.2913 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 458 d 968 c 337 v 0
+w 3 8 0 0 0
+348 q 6 fill 0 ack 338 last 338 thr 0.2992 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 458 d 968 c 338 v 0
+349 q 5 fill 0 ack 339 last 339 thr 0.3071 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 458 d 968 c 339 v 0
+> 2.914425 ts 2868 frames 337+10 new 1 size 7 time 3d4ccccd
+350 q 6 fill 0 ack 340 last 340 thr 0.3150 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 461 d 973 c 340 v 0
+351 q 5 fill 0 ack 341 last 341 thr 0.3228 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 461 d 973 c 341 v 0
+> 2.934662 ts 2884 frames 339+10 new 1 size 7 time 3d4ccccd
+352 q 6 fill 0 ack 342 last 342 thr 0.3307 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 464 d 978 c 342 v 0
+> 2.942891 ts 2901 frames 341+10 new 1 size 7 time 3d4ccccd
+353 q 7 fill 0 ack 343 last 343 thr 0.3386 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 466 d 984 c 343 v 0
+354 q 6 fill 0 ack 344 last 344 thr 0.3465 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 466 d 984 c 344 v 0
+> 2.960688 ts 2918 frames 343+10 new 1 size 7 time 3d4ccccd
+355 q 7 fill 0 ack 345 last 345 thr 0.3543 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 468 d 990 c 345 v 0
+356 q 6 fill 0 ack 346 last 346 thr 0.3622 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 468 d 990 c 346 v 0
+> 2.978707 ts 2934 frames 345+10 new 1 size 7 time 3d4ccccd
+357 q 7 fill 0 ack 347 last 347 thr 0.3701 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 470 d 996 c 347 v 0
+358 q 6 fill 0 ack 348 last 348 thr 0.3780 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 470 d 996 c 348 v 0
+359 q 5 fill 0 ack 349 last 349 thr 0.3858 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 470 d 996 c 349 v 0
+w 5 8 0 0 0
+> 2.997662 ts 2951 frames 347+10 new 1 size 7 time 3d4ccccd
+360 q 6 fill 0 ack 350 last 350 thr 0.3937 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 473 d 1001 c 350 v 0
+> 3.011161 ts 2968 frames 349+10 new 1 size 7 time 3d4ccccd
+361 q 7 fill 0 ack 351 last 351 thr 0.4016 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 475 d 1007 c 351 v 0
+362 q 6 fill 0 ack 352 last 352 thr 0.4094 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 475 d 1007 c 352 v 0
+> 3.028249 ts 2984 frames 351+10 new 1 size 7 time 3d4ccccd
+363 q 7 fill 0 ack 353 last 353 thr 0.4173 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 353 v 0
+364 q 6 fill 0 ack 354 last 354 thr 0.4252 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 354 v 0
+365 q 5 fill 0 ack 355 last 355 thr 0.4331 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 355 v 0
+366 q 4 fill 0 ack 356 last 356 thr 0.4409 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 356 v 0
+367 q 3 fill 0 ack 357 last 357 thr 0.4488 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 357 v 0
+368 q 2 fill 0 ack 358 last 358 thr 0.4567 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 358 v 0
+369 q 1 fill 0 ack 359 last 359 thr 0.4646 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 359 v 0
+370 q 0 fill 0 ack 360 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 6 r 6 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+371 q 0 fill 1 ack 361 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 7 r 7 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+w 0 8 0 1 0
+372 q 0 fill 1 ack 362 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 8 r 8 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+373 q 0 fill 1 ack 363 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 9 r 9 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+374 q 0 fill 1 ack 364 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 10 r 10 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+375 q 0 fill 1 ack 365 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 11 r 11 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+376 q 0 fill 1 ack 366 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 12 r 12 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+377 q 0 fill 1 ack 367 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 13 r 13 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+378 q 0 fill 1 ack 368 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 14 r 14 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+379 q 0 fill 1 ack 369 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 15 r 15 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+380 q 0 fill 1 ack 370 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 16 r 16 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+381 q 0 fill 1 ack 371 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 17 r 17 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+382 q 0 fill 1 ack 372 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 18 r 18 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+383 q 0 fill 1 ack 373 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 19 r 19 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+w 0 0 0 12 0
+384 q 0 fill 1 ack 374 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 20 r 20 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+385 q 0 fill 1 ack 375 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 21 r 21 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+386 q 0 fill 1 ack 376 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 22 r 22 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+387 q 0 fill 1 ack 377 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 23 r 23 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+388 q 0 fill 1 ack 378 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 24 r 24 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+389 q 0 fill 1 ack 379 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 25 r 25 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+390 q 0 fill 1 ack 380 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 26 r 26 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+391 q 0 fill 1 ack 381 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 27 r 27 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+392 q 0 fill 1 ack 382 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 28 r 28 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+393 q 0 fill 1 ack 383 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 29 r 29 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+394 q 0 fill 1 ack 384 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 30 r 30 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+395 q 0 fill 1 ack 385 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 31 r 31 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+w 0 0 0 12 0
+396 q 0 fill 1 ack 386 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 32 r 32 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+397 q 0 fill 1 ack 387 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 33 r 33 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+398 q 0 fill 1 ack 388 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 34 r 34 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+399 q 0 fill 1 ack 389 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 35 r 35 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+400 q 0 fill 1 ack 390 last 360 thr 0.4724 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 10 x 0 l 477 d 1013 c 360 v 0
+> 3.344608 ts 3301 frames 353+10 new 1 size 18 time 3e0e0d70
+401 q 1 fill 1 ack 361 last 361 thr 0.4803 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 10 x 0 l 485 d 1013 c 361 v 0
+402 q 1 fill 1 ack 362 last 361 thr 0.4803 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 11 x 0 l 485 d 1013 c 361 v 0
+403 q 0 fill 1 ack 362 last 362 thr 0.4882 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 11 x 0 l 485 d 1013 c 362 v 0
+> 3.365602 ts 3318 frames 355+10 new 1 size 18 time 3e0df810
+404 q 2 fill 1 ack 363 last 362 thr 0.4882 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 12 x 0 l 493 d 1013 c 362 v 0
+405 q 1 fill 1 ack 363 last 363 thr 0.4961 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 12 x 0 l 493 d 1013 c 363 v 0
+> 3.383440 ts 3334 frames 357+10 new 1 size 18 time 3e0de4ff
+406 q 3 fill 1 ack 364 last 363 thr 0.4961 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 13 x 0 l 500 d 1014 c 363 v 0
+> 3.395220 ts 3351 frames 359+10 new 1 size 18 time 3e0dd399
+407 q 4 fill 1 ack 364 last 364 thr 0.5039 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 13 x 0 l 505 d 1017 c 364 v 0
+w 0 5 0 5 0
+> 3.396220 ts 3351 frames 359+10 new 0 size 18 time 3e0dd399
+408 q 4 fill 1 ack 365 last 364 thr 0.5039 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 14 x 0 l 511 d 1021 c 364 v 0
+> 3.410929 ts 3368 frames 361+10 new 1 size 18 time 3e0dc235
+409 q 5 fill 1 ack 365 last 365 thr 0.5118 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 14 x 0 l 515 d 1025 c 365 v 0
+410 q 5 fill 1 ack 366 last 365 thr 0.5118 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 15 x 0 l 515 d 1025 c 365 v 0
+> 3.425568 ts 3384 frames 363+10 new 1 size 18 time 3e0db0d4
+411 q 6 fill 1 ack 366 last 366 thr 0.5197 jump 1 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 15 x 0 l 518 d 1030 c 366 v 0
+412 q 6 fill 1 ack 367 last 366 thr 0.5197 jump 1 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 16 x 0 l 518 d 1030 c 366 v 0
+413 q 5 fill 1 ack 367 last 367 thr 0.5276 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 16 x 0 l 518 d 1030 c 367 v 0
+414 q 5 fill 1 ack 368 last 367 thr 0.5276 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 17 x 0 l 518 d 1030 c 367 v 0
+415 q 4 fill 1 ack 368 last 368 thr 0.5354 jump 1 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 17 x 0 l 518 d 1030 c 368 v 0
+> 3.466558 ts 3418 frames 367+10 new 1 size 18 time 3e0daaec
+> 3.468778 ts 3401 frames 365+10 new 0 size 18 time 3e0daaec
+416 q 8 fill 1 ack 369 last 368 thr 0.5354 jump 1 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 18 x 0 l 524 d 1040 c 368 v 0
+> 3.474149 ts 3434 frames 369+10 new 1 size 18 time 3e0d998e
+417 q 9 fill 1 ack 369 last 369 thr 0.5433 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 18 x 0 l 524 d 1048 c 369 v 0
+418 q 9 fill 1 ack 370 last 369 thr 0.5433 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 19 x 0 l 524 d 1048 c 369 v 0
+419 q 8 fill 1 ack 370 last 370 thr 0.5512 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 19 x 0 l 524 d 1048 c 370 v 0
+w 4 10 0 0 0
+> 3.498538 ts 3451 frames 371+10 new 1 size 18 time 3e0d82ca
+420 q 10 fill 1 ack 371 last 370 thr 0.5512 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 20 x 0 l 524 d 1056 c 370 v 0
+421 q 9 fill 1 ack 371 last 371 thr 0.5591 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 20 x 0 l 524 d 1056 c 371 v 0
+> 3.515102 ts 3468 frames 373+10 new 1 size 18 time 3e0d70ea
+422 q 11 fill 1 ack 372 last 371 thr 0.5591 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 21 x 0 l 524 d 1064 c 371 v 0
+423 q 10 fill 1 ack 372 last 372 thr 0.5669 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 21 x 0 l 524 d 1064 c 372 v 0
+> 3.531231 ts 3484 frames 375+10 new 1 size 18 time 3e0d5f75
+424 q 12 fill 1 ack 373 last 372 thr 0.5669 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 22 x 0 l 524 d 1072 c 372 v 0
+425 q 11 fill 1 ack 373 last 373 thr 0.5748 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 22 x 0 l 524 d 1072 c 373 v 0
+> 3.550698 ts 3501 frames 377+10 new 1 size 18 time 3e0d4b34
+426 q 13 fill 1 ack 374 last 373 thr 0.5748 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 23 x 0 l 524 d 1080 c 373 v 0
+> 3.560880 ts 3518 frames 379+10 new 1 size 18 time 3e0d39e3
+427 q 14 fill 1 ack 374 last 374 thr 0.5827 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 23 x 0 l 524 d 1088 c 374 v 0
+428 q 14 fill 1 ack 375 last 374 thr 0.5827 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 24 x 0 l 524 d 1088 c 374 v 0
+429 q 13 fill 1 ack 375 last 375 thr 0.5906 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 24 x 0 l 524 d 1088 c 375 v 0
+> 3.579202 ts 3534 frames 381+10 new 1 size 18 time 3e0d2688
+430 q 15 fill 1 ack 376 last 375 thr 0.5906 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 25 x 0 l 524 d 1096 c 375 v 0
+> 3.591380 ts 3551 frames 383+10 new 1 size 18 time 3e0d153c
+431 q 16 fill 1 ack 376 last 376 thr 0.5984 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 25 x 0 l 524 d 1104 c 376 v 0
+w 9 17 0 0 0
+432 q 16 fill 1 ack 377 last 376 thr 0.5984 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 26 x 0 l 524 d 1104 c 376 v 0
+> 3.608094 ts 3568 frames 385+10 new 1 size 18 time 3e0d0349
+433 q 17 fill 1 ack 377 last 377 thr 0.6063 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 26 x 0 l 524 d 1112 c 377 v 0
+434 q 17 fill 1 ack 378 last 377 thr 0.6063 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 27 x 0 l 524 d 1112 c 377 v 0
+435 q 16 fill 1 ack 378 last 378 thr 0.6142 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 27 x 0 l 524 d 1112 c 378 v 0
+> 3.630869 ts 3584 frames 387+10 new 1 size 18 time 3e0ced30
+436 q 18 fill 1 ack 379 last 378 thr 0.6142 jump 0 rep 0 axes 0 | o 5 u 36 r 36 z 0 s 28 x 0 l 524 d 1120 c 378 v 0
+> 3.643448 ts 3601 frames 389+10 new 1 size 18 time 3e0cdbed
+437 q 18 fill 0 ack 380 last 380 thr 0.6299 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1128 c 380 v 0
+438 q 17 fill 0 ack 381 last 381 thr 0.6378 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1128 c 381 v 0
+> 3.657995 ts 3618 frames 391+10 new 1 size 18 time 3e0ccaab
+439 q 18 fill 0 ack 382 last 382 thr 0.6457 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1136 c 382 v 0
+440 q 17 fill 0 ack 383 last 383 thr 0.6535 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1136 c 383 v 0
+> 3.674399 ts 3634 frames 393+10 new 1 size 18 time 3e0cb90b
+441 q 18 fill 0 ack 384 last 384 thr 0.6614 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1144 c 384 v 0
+442 q 17 fill 0 ack 385 last 385 thr 0.6693 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1144 c 385 v 0
+> 3.694869 ts 3651 frames 395+10 new 1 size 18 time 3e0ca439
+443 q 18 fill 0 ack 386 last 386 thr 0.6772 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1152 c 386 v 0
+w 16 20 1 0 0
+444 q 17 fill 0 ack 387 last 387 thr 0.6850 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1152 c 387 v 0
+> 3.707443 ts 3668 frames 397+10 new 1 size 18 time 3e0c92ff
+445 q 18 fill 0 ack 388 last 388 thr 0.6929 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1160 c 388 v 0
+446 q 17 fill 0 ack 389 last 389 thr 0.7008 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1160 c 389 v 0
+447 q 16 fill 0 ack 390 last 390 thr 0.7087 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1160 c 390 v 0
+448 q 15 fill 0 ack 391 last 391 thr 0.7165 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1160 c 391 v 0
+449 q 14 fill 0 ack 392 last 392 thr 0.7244 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1160 c 392 v 0
+> 3.746396 ts 3701 frames 401+10 new 1 size 18 time 3e0c88bc
+> 3.750372 ts 3684 frames 399+10 new 0 size 18 time 3e0c88bc
+450 q 17 fill 0 ack 393 last 393 thr 0.7323 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1176 c 393 v 0
+451 q 16 fill 0 ack 394 last 394 thr 0.7402 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1176 c 394 v 0
+> 3.767377 ts 3718 frames 403+10 new 1 size 18 time 3e0c73a0
+452 q 17 fill 0 ack 395 last 395 thr 0.7480 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1184 c 395 v 0
+453 q 16 fill 0 ack 396 last 396 thr 0.7559 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1184 c 396 v 0
+> 3.782378 ts 3734 frames 405+10 new 1 size 18 time 3e0c626d
+> 3.783378 ts 3734 frames 405+10 new 0 size 18 time 3e0c626d
+454 q 17 fill 0 ack 397 last 397 thr 0.7638 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1202 c 397 v 0
+> 3.790090 ts 3751 frames 407+10 new 1 size 18 time 3e0c513c
+455 q 18 fill 0 ack 398 last 398 thr 0.7717 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1210 c 398 v 0
+w 14 19 0 0 0
+456 q 17 fill 0 ack 399 last 399 thr 0.7795 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1210 c 399 v 0
+457 q 16 fill 0 ack 400 last 400 thr -0.7812 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1210 c 400 v 0
+> 3.817427 ts 3768 frames 409+10 new 1 size 18 time 3e0c3a8f
+458 q 17 fill 0 ack 401 last 401 thr -0.7734 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1218 c 401 v 0
+> 3.824043 ts 3784 frames 411+10 new 1 size 18 time 3e0c2964
+459 q 18 fill 0 ack 402 last 402 thr -0.7656 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1226 c 402 v 0
+460 q 17 fill 0 ack 403 last 403 thr -0.7578 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1226 c 403 v 0
+> 3.840825 ts 3801 frames 413+10 new 1 size 18 time 3e0c1783
+461 q 18 fill 0 ack 404 last 404 thr -0.7500 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1234 c 404 v 0
+462 q 17 fill 0 ack 405 last 405 thr -0.7422 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1234 c 405 v 0
+463 q 16 fill 0 ack 406 last 406 thr -0.7344 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1234 c 406 v 0
+> 3.864799 ts 3818 frames 415+10 new 1 size 18 time 3e0c012a
+464 q 17 fill 0 ack 407 last 407 thr -0.7266 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1242 c 407 v 0
+> 3.878277 ts 3834 frames 417+10 new 1 size 18 time 3e0bf008
+465 q 18 fill 0 ack 408 last 408 thr -0.7188 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1250 c 408 v 0
+466 q 17 fill 0 ack 409 last 409 thr -0.7109 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1250 c 409 v 0
+> 3.895087 ts 3851 frames 419+10 new 1 size 18 time 3e0bde28
+467 q 18 fill 0 ack 410 last 410 thr -0.7031 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1258 c 410 v 0
+w 16 19 0 0 0
+468 q 17 fill 0 ack 411 last 411 thr -0.6953 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1258 c 411 v 0
+469 q 16 fill 0 ack 412 last 412 thr -0.6875 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1258 c 412 v 0
+> 3.915059 ts 3868 frames 421+10 new 1 size 18 time 3e0bc9cd
+470 q 17 fill 0 ack 413 last 413 thr -0.6797 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1266 c 413 v 0
+471 q 16 fill 0 ack 414 last 414 thr -0.6719 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1266 c 414 v 0
+> 3.929744 ts 3884 frames 423+10 new 1 size 18 time 3e0bb8b2
+472 q 17 fill 0 ack 415 last 415 thr -0.6641 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1274 c 415 v 0
+473 q 16 fill 0 ack 416 last 416 thr -0.6562 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1274 c 416 v 0
+> 3.947499 ts 3901 frames 425+10 new 1 size 18 time 3e0ba609
+474 q 17 fill 0 ack 417 last 417 thr -0.6484 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1282 c 417 v 0
+475 q 16 fill 0 ack 418 last 418 thr -0.6406 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1282 c 418 v 0
+> 3.968200 ts 3918 frames 427+10 new 1 size 18 time 3e0b9141
+476 q 17 fill 0 ack 419 last 419 thr -0.6328 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1290 c 419 v 0
+> 3.975817 ts 3934 frames 429+10 new 1 size 18 time 3e0b802e
+477 q 18 fill 0 ack 420 last 420 thr -0.6250 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1298 c 420 v 0
+478 q 17 fill 0 ack 421 last 421 thr -0.6172 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1298 c 421 v 0
+479 q 16 fill 0 ack 422 last 422 thr -0.6094 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1298 c 422 v 0
+w 16 19 0 0 0
+> 3.998661 ts 3951 frames 431+10 new 1 size 18 time 3e0b6a58
+480 q 17 fill 0 ack 423 last 423 thr -0.6016 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1306 c 423 v 0
+481 q 16 fill 0 ack 424 last 424 thr -0.5938 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1306 c 424 v 0
+482 q 15 fill 0 ack 425 last 425 thr -0.5859 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1306 c 425 v 0
+> 4.025063 ts 3984 frames 435+10 new 1 size 18 time 3e0b53d1
+483 q 18 fill 0 ack 426 last 426 thr -0.5781 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1312 c 426 v 0
+> 4.037070 ts 3968 frames 433+10 new 0 size 18 time 3e0b53d1
+484 q 17 fill 0 ack 427 last 427 thr -0.5703 jump 1 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1322 c 427 v 0
+485 q 16 fill 0 ack 428 last 428 thr -0.5625 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1322 c 428 v 0
+> 4.050640 ts 4001 frames 437+10 new 1 size 18 time 3e0b3d56
+486 q 17 fill 0 ack 429 last 429 thr -0.5547 jump 1 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1330 c 429 v 0
+487 q 16 fill 0 ack 430 last 430 thr -0.5469 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1330 c 430 v 0
+> 4.065764 ts 4018 frames 439+10 new 1 size 18 time 3e0b2c4e
+488 q 17 fill 0 ack 431 last 431 thr -0.5391 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1338 c 431 v 0
+> 4.078363 ts 4034 frames 441+10 new 1 size 18 time 3e0b1b48
+489 q 18 fill 0 ack 432 last 432 thr -0.5312 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1346 c 432 v 0
+490 q 17 fill 0 ack 433 last 433 thr -0.5234 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1346 c 433 v 0
+491 q 16 fill 0 ack 434 last 434 thr -0.5156 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1346 c 434 v 0
+w 15 19 0 0 0
+> 4.101612 ts 4051 frames 443+10 new 1 size 18 time 3e0b055e
+492 q 17 fill 0 ack 435 last 435 thr -0.5078 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1354 c 435 v 0
+> 4.108586 ts 4068 frames 445+10 new 1 size 18 time 3e0af45e
+493 q 18 fill 0 ack 436 last 436 thr -0.5000 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1362 c 436 v 0
+494 q 17 fill 0 ack 437 last 437 thr -0.4922 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1362 c 437 v 0
+> 4.124912 ts 4084 frames 447+10 new 1 size 18 time 3e0ae313
+495 q 18 fill 0 ack 438 last 438 thr -0.4844 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1370 c 438 v 0
+496 q 17 fill 0 ack 439 last 439 thr -0.4766 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1370 c 439 v 0
+497 q 16 fill 0 ack 440 last 440 thr -0.4688 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1370 c 440 v 0
+> 4.151461 ts 4101 frames 449+10 new 1 size 18 time 3e0accac
+498 q 17 fill 0 ack 441 last 441 thr -0.4609 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1378 c 441 v 0
+> 4.157838 ts 4118 frames 451+10 new 1 size 18 time 3e0abbb4
+> 4.158838 ts 4118 frames 451+10 new 0 size 18 time 3e0abbb4
+499 q 18 fill 0 ack 442 last 442 thr -0.4531 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1396 c 442 v 0
+500 q 17 fill 0 ack 443 last 443 thr -0.4453 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1396 c 443 v 0
+> 4.174681 ts 4134 frames 453+10 new 1 size 18 time 3e0aa9fa
+501 q 18 fill 0 ack 444 last 444 thr -0.4375 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1404 c 444 v 0
+502 q 17 fill 0 ack 445 last 445 thr -0.4297 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1404 c 445 v 0
+> 4.191276 ts 4151 frames 455+10 new 1 size 18 time 3e0a987c
+503 q 18 fill 0 ack 446 last 446 thr -0.4219 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1412 c 446 v 0
+w 16 19 0 0 0
+504 q 17 fill 0 ack 447 last 447 thr -0.4141 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1412 c 447 v 0
+505 q 16 fill 0 ack 448 last 448 thr -0.4062 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1412 c 448 v 0
+> 4.212957 ts 4168 frames 457+10 new 1 size 18 time 3e0a8358
+506 q 17 fill 0 ack 449 last 449 thr -0.3984 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1420 c 449 v 0
+> 4.227859 ts 4184 frames 459+10 new 1 size 18 time 3e0a726a
+507 q 18 fill 0 ack 450 last 450 thr -0.3906 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1428 c 450 v 0
+508 q 17 fill 0 ack 451 last 451 thr -0.3828 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1428 c 451 v 0
+509 q 16 fill 0 ack 452 last 452 thr -0.3750 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1428 c 452 v 0
+> 4.248696 ts 4201 frames 461+10 new 1 size 18 time 3e0a5dc3
+510 q 17 fill 0 ack 453 last 453 thr -0.3672 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1436 c 453 v 0
+> 4.259306 ts 4218 frames 463+10 new 1 size 18 time 3e0a4cda
+511 q 18 fill 0 ack 454 last 454 thr -0.3594 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1444 c 454 v 0
+512 q 17 fill 0 ack 455 last 455 thr -0.3516 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1444 c 455 v 0
+513 q 16 fill 0 ack 456 last 456 thr -0.3438 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1444 c 456 v 0
+> 4.280781 ts 4234 frames 465+10 new 1 size 18 time 3e0a37e0
+514 q 17 fill 0 ack 457 last 457 thr -0.3359 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1452 c 457 v 0
+515 q 16 fill 0 ack 458 last 458 thr -0.3281 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1452 c 458 v 0
+w 16 19 0 0 0
+516 q 15 fill 0 ack 459 last 459 thr -0.3203 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1452 c 459 v 0
+517 q 14 fill 0 ack 460 last 460 thr -0.3125 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1452 c 460 v 0
+> 4.315033 ts 4268 frames 469+10 new 1 size 18 time 3e0a2676
+> 4.315235 ts 4251 frames 467+10 new 0 size 18 time 3e0a2676
+518 q 17 fill 0 ack 461 last 461 thr -0.3047 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1468 c 461 v 0
+519 q 16 fill 0 ack 462 last 462 thr -0.2969 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1468 c 462 v 0
+> 4.330823 ts 4284 frames 471+10 new 1 size 18 time 3e0a1595
+520 q 17 fill 0 ack 463 last 463 thr -0.2891 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1476 c 463 v 0
+521 q 16 fill 0 ack 464 last 464 thr -0.2812 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1476 c 464 v 0
+> 4.346812 ts 4301 frames 473+10 new 1 size 18 time 3e0a04b6
+522 q 17 fill 0 ack 465 last 465 thr -0.2734 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1484 c 465 v 0
+> 4.356743 ts 4318 frames 475+10 new 1 size 18 time 3e09f3da
+523 q 18 fill 0 ack 466 last 466 thr -0.2656 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1492 c 466 v 0
+524 q 17 fill 0 ack 467 last 467 thr -0.2578 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1492 c 467 v 0
+> 4.374419 ts 4334 frames 477+10 new 1 size 18 time 3e09e187
+525 q 18 fill 0 ack 468 last 468 thr -0.2500 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1500 c 468 v 0
+526 q 17 fill 0 ack 469 last 469 thr -0.2422 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1500 c 469 v 0
+527 q 16 fill 0 ack 470 last 470 thr -0.2344 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1500 c 470 v 0
+w 14 19 0 0 0
+> 4.400934 ts 4351 frames 479+10 new 1 size 18 time 3e09cb5b
+528 q 17 fill 0 ack 471 last 471 thr -0.2266 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1508 c 471 v 0
+529 q 16 fill 0 ack 472 last 472 thr -0.2188 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1508 c 472 v 0
+> 4.414840 ts 4368 frames 481+10 new 1 size 18 time 3e09ba87
+530 q 17 fill 0 ack 473 last 473 thr -0.2109 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1516 c 473 v 0
+531 q 16 fill 0 ack 474 last 474 thr -0.2031 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1516 c 474 v 0
+> 4.432339 ts 4384 frames 483+10 new 1 size 18 time 3e09a862
+532 q 17 fill 0 ack 475 last 475 thr -0.1953 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1524 c 475 v 0
+> 4.440896 ts 4401 frames 485+10 new 1 size 18 time 3e099793
+533 q 18 fill 0 ack 476 last 476 thr -0.1875 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1532 c 476 v 0
+534 q 17 fill 0 ack 477 last 477 thr -0.1797 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1532 c 477 v 0
+535 q 16 fill 0 ack 478 last 478 thr -0.1719 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1532 c 478 v 0
+> 4.463358 ts 4418 frames 487+10 new 1 size 18 time 3e098242
+536 q 17 fill 0 ack 479 last 479 thr -0.1641 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1540 c 479 v 0
+537 q 16 fill 0 ack 480 last 480 thr -0.1562 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1540 c 480 v 0
+> 4.479341 ts 4434 frames 489+10 new 1 size 18 time 3e097178
+538 q 17 fill 0 ack 481 last 481 thr -0.1484 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1548 c 481 v 0
+539 q 16 fill 0 ack 482 last 482 thr -0.1406 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1548 c 482 v 0
+w 16 19 0 0 0
+> 4.495836 ts 4451 frames 491+10 new 1 size 18 time 3e09603d
+540 q 17 fill 0 ack 483 last 483 thr -0.1328 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1556 c 483 v 0
+> 4.508559 ts 4468 frames 493+10 new 1 size 18 time 3e094f77
+541 q 18 fill 0 ack 484 last 484 thr -0.1250 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1564 c 484 v 0
+542 q 17 fill 0 ack 485 last 485 thr -0.1172 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1564 c 485 v 0
+543 q 16 fill 0 ack 486 last 486 thr -0.1094 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1564 c 486 v 0
+> 4.533301 ts 4484 frames 495+10 new 1 size 18 time 3e093989
+544 q 17 fill 0 ack 487 last 487 thr -0.1016 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1572 c 487 v 0
+> 4.545037 ts 4501 frames 497+10 new 1 size 18 time 3e0928c9
+545 q 18 fill 0 ack 488 last 488 thr -0.0938 jump 1 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1580 c 488 v 0
+> 4.546037 ts 4501 frames 497+10 new 0 size 18 time 3e0928c9
+546 q 17 fill 0 ack 489 last 489 thr -0.0859 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1590 c 489 v 0
+> 4.562240 ts 4518 frames 499+10 new 1 size 18 time 3e0916fa
+547 q 18 fill 0 ack 490 last 490 thr -0.0781 jump 1 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1598 c 490 v 0
+548 q 17 fill 0 ack 491 last 491 thr -0.0703 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1598 c 491 v 0
+549 q 16 fill 0 ack 492 last 492 thr -0.0625 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1598 c 492 v 0
+550 q 15 fill 0 ack 493 last 493 thr -0.0547 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1598 c 493 v 0
+551 q 14 fill 0 ack 494 last 494 thr -0.0469 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1598 c 494 v 0
+w 14 19 0 0 0
+> 4.597400 ts 4551 frames 503+10 new 1 size 18 time 3e090736
+> 4.602283 ts 4534 frames 501+10 new 0 size 18 time 3e090736
+552 q 17 fill 0 ack 495 last 495 thr -0.0391 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1614 c 495 v 0
+553 q 16 fill 0 ack 496 last 496 thr -0.0312 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1614 c 496 v 0
+> 4.617559 ts 4568 frames 505+10 new 1 size 18 time 3e08f336
+554 q 17 fill 0 ack 497 last 497 thr -0.0234 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1622 c 497 v 0
+> 4.626785 ts 4584 frames 507+10 new 1 size 18 time 3e08e280
+555 q 18 fill 0 ack 498 last 498 thr -0.0156 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1630 c 498 v 0
+556 q 17 fill 0 ack 499 last 499 thr -0.0078 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1630 c 499 v 0
+> 4.642233 ts 4601 frames 509+10 new 1 size 18 time 3e08d1cc
+557 q 18 fill 0 ack 500 last 500 thr 0.0000 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1638 c 500 v 0
+558 q 17 fill 0 ack 501 last 501 thr 0.0079 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1638 c 501 v 0
+> 4.657998 ts 4618 frames 511+10 new 1 size 18 time 3e08c11b
+559 q 18 fill 0 ack 502 last 502 thr 0.0157 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1646 c 502 v 0
+560 q 17 fill 0 ack 503 last 503 thr 0.0236 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1646 c 503 v 0
+561 q 16 fill 0 ack 504 last 504 thr 0.0315 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1646 c 504 v 0
+> 4.679186 ts 4634 frames 513+10 new 1 size 18 time 3e08ac8e
+562 q 17 fill 0 ack 505 last 505 thr 0.0394 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1654 c 505 v 0
+> 4.693064 ts 4651 frames 515+10 new 1 size 18 time 3e089be2
+563 q 18 fill 0 ack 506 last 506 thr 0.0472 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1662 c 506 v 0
+w 16 19 0 0 0
+564 q 17 fill 0 ack 507 last 507 thr 0.0551 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1662 c 507 v 0
+565 q 16 fill 0 ack 508 last 508 thr 0.0630 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1662 c 508 v 0
+> 4.718106 ts 4668 frames 517+10 new 1 size 17 time 3e08860d
+566 q 17 fill 0 ack 509 last 509 thr 0.0709 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1670 c 509 v 0
+567 q 16 fill 0 ack 510 last 510 thr 0.0787 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1670 c 510 v 0
+> 4.729428 ts 4684 frames 519+10 new 1 size 17 time 3e087566
+568 q 17 fill 0 ack 511 last 511 thr 0.0866 jump 0 rep 0 axes 0 | o 6 u 36 r 36 z 0 s 28 x 0 l 524 d 1678 c 511 v 0
+> 4.740859 ts 4701 frames 521+10 new 1 size 17 time 3e0864c2
+569 q 17 fill 0 ack 513 last 513 thr 0.1024 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1686 c 513 v 0
+570 q 16 fill 0 ack 514 last 514 thr 0.1102 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1686 c 514 v 0
+> 4.758771 ts 4718 frames 523+10 new 1 size 17 time 3e08527b
+571 q 17 fill 0 ack 515 last 515 thr 0.1181 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1694 c 515 v 0
+572 q 16 fill 0 ack 516 last 516 thr 0.1260 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1694 c 516 v 0
+573 q 15 fill 0 ack 517 last 517 thr 0.1339 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1694 c 517 v 0
+> 4.782241 ts 4734 frames 525+10 new 1 size 17 time 3e083d0c
+574 q 16 fill 0 ack 518 last 518 thr 0.1417 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1702 c 518 v 0
+> 4.792130 ts 4751 frames 527+10 new 1 size 17 time 3e082c70
+575 q 17 fill 0 ack 519 last 519 thr 0.1496 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1710 c 519 v 0
+w 15 19 1 0 0
+576 q 16 fill 0 ack 520 last 520 thr 0.1575 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1710 c 520 v 0
+577 q 15 fill 0 ack 521 last 521 thr 0.1654 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1710 c 521 v 0
+> 4.815668 ts 4768 frames 529+10 new 1 size 17 time 3e081703
+578 q 16 fill 0 ack 522 last 522 thr 0.1732 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1718 c 522 v 0
+579 q 15 fill 0 ack 523 last 523 thr 0.1811 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1718 c 523 v 0
+> 4.831291 ts 4784 frames 531+10 new 1 size 17 time 3e08066c
+580 q 16 fill 0 ack 524 last 524 thr 0.1890 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1726 c 524 v 0
+> 4.841311 ts 4801 frames 533+10 new 1 size 17 time 3e07f5d6
+581 q 17 fill 0 ack 525 last 525 thr 0.1969 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1734 c 525 v 0
+582 q 16 fill 0 ack 526 last 526 thr 0.2047 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1734 c 526 v 0
+583 q 15 fill 0 ack 527 last 527 thr 0.2126 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1734 c 527 v 0
+584 q 14 fill 0 ack 528 last 528 thr 0.2205 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1734 c 528 v 0
+585 q 13 fill 0 ack 529 last 529 thr 0.2283 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1734 c 529 v 0
+> 4.880143 ts 4834 frames 537+10 new 1 size 17 time 3e07ed5c
+> 4.880664 ts 4818 frames 535+10 new 0 size 17 time 3e07ed5c
+586 q 16 fill 0 ack 530 last 530 thr 0.2362 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1750 c 530 v 0
+587 q 15 fill 0 ack 531 last 531 thr 0.2441 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1750 c 531 v 0
+w 13 18 0 0 0
+> 4.895951 ts 4851 frames 539+10 new 1 size 17 time 3e07dcca
+588 q 16 fill 0 ack 532 last 532 thr 0.2520 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1758 c 532 v 0
+> 4.906673 ts 4868 frames 541+10 new 1 size 17 time 3e07cc3b
+589 q 17 fill 0 ack 533 last 533 thr 0.2598 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1766 c 533 v 0
+590 q 16 fill 0 ack 534 last 534 thr 0.2677 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1766 c 534 v 0
+> 4.927843 ts 4884 frames 543+10 new 1 size 17 time 3e07b7da
+> 4.928843 ts 4884 frames 543+10 new 0 size 17 time 3e07b7da
+591 q 17 fill 0 ack 535 last 535 thr 0.2756 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1784 c 535 v 0
+592 q 16 fill 0 ack 536 last 536 thr 0.2835 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1784 c 536 v 0
+593 q 15 fill 0 ack 537 last 537 thr 0.2913 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1784 c 537 v 0
+> 4.950912 ts 4901 frames 545+10 new 1 size 17 time 3e07a2a8
+594 q 16 fill 0 ack 538 last 538 thr 0.2992 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1792 c 538 v 0
+595 q 15 fill 0 ack 539 last 539 thr 0.3071 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1792 c 539 v 0
+> 4.965175 ts 4918 frames 547+10 new 1 size 17 time 3e079221
+596 q 16 fill 0 ack 540 last 540 thr 0.3150 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1800 c 540 v 0
+597 q 15 fill 0 ack 541 last 541 thr 0.3228 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1800 c 541 v 0
+> 4.985132 ts 4934 frames 549+10 new 1 size 17 time 3e077e81
+598 q 16 fill 0 ack 542 last 542 thr 0.3307 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1808 c 542 v 0
+599 q 15 fill 0 ack 543 last 543 thr 0.3386 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1808 c 543 v 0
+w 15 18 0 0 0
+> 4.997259 ts 4951 frames 551+10 new 1 size 17 time 3e076dff
+600 q 16 fill 0 ack 544 last 544 thr 0.3465 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1816 c 544 v 0
+> 5.008298 ts 4968 frames 553+10 new 1 size 17 time 3e075d7f
+601 q 17 fill 0 ack 545 last 545 thr 0.3543 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1824 c 545 v 0
+602 q 16 fill 0 ack 546 last 546 thr 0.3622 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1824 c 546 v 0
+603 q 15 fill 0 ack 547 last 547 thr 0.3701 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1824 c 547 v 0
+> 5.034796 ts 4984 frames 555+10 new 1 size 17 time 3e0747e5
+604 q 16 fill 0 ack 548 last 548 thr 0.3780 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 548 v 0
+605 q 15 fill 0 ack 549 last 549 thr 0.3858 jump 1 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 549 v 0
+606 q 14 fill 0 ack 550 last 550 thr 0.3937 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 550 v 0
+607 q 13 fill 0 ack 551 last 551 thr 0.4016 jump 1 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 551 v 0
+608 q 12 fill 0 ack 552 last 552 thr 0.4094 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 552 v 0
+609 q 11 fill 0 ack 553 last 553 thr 0.4173 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 553 v 0
+610 q 10 fill 0 ack 554 last 554 thr 0.4252 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 554 v 0
+611 q 9 fill 0 ack 555 last 555 thr 0.4331 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 555 v 0
+w 9 18 0 0 0
+612 q 8 fill 0 ack 556 last 556 thr 0.4409 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 556 v 0
+613 q 7 fill 0 ack 557 last 557 thr 0.4488 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 557 v 0
+614 q 6 fill 0 ack 558 last 558 thr 0.4567 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 558 v 0
+615 q 5 fill 0 ack 559 last 559 thr 0.4646 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 559 v 0
+616 q 4 fill 0 ack 560 last 560 thr 0.4724 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 560 v 0
+617 q 3 fill 0 ack 561 last 561 thr 0.4803 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 561 v 0
+618 q 2 fill 0 ack 562 last 562 thr 0.4882 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 562 v 0
+619 q 1 fill 0 ack 563 last 563 thr 0.4961 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 563 v 0
+620 q 0 fill 0 ack 564 last 564 thr 0.5039 jump 0 rep 0 axes 0 | o 7 u 36 r 36 z 0 s 28 x 0 l 524 d 1832 c 564 v 0
+621 q 0 fill 1 ack 565 last 564 thr 0.5039 jump 0 rep 0 axes 0 | o 7 u 37 r 37 z 0 s 28 x 0 l 524 d 1832 c 564 v 0
+622 q 0 fill 1 ack 566 last 564 thr 0.5039 jump 0 rep 0 axes 0 | o 7 u 38 r 38 z 0 s 28 x 0 l 524 d 1832 c 564 v 0
+623 q 0 fill 1 ack 567 last 564 thr 0.5039 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 28 x 0 l 524 d 1832 c 564 v 0
+w 0 9 0 3 0
+> 5.200475 ts 5151 frames 575+10 new 1 size 19 time 3e180c3d
+624 q 10 fill 1 ack 568 last 564 thr 0.5039 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 29 x 0 l 524 d 1832 c 564 v 0
+625 q 9 fill 1 ack 575 last 575 thr 0.5906 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 29 x 0 l 524 d 1832 c 565 v 10
+> 5.212633 ts 5168 frames 577+10 new 1 size 19 time 3e17f97b
+626 q 11 fill 1 ack 576 last 575 thr 0.5906 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 30 x 0 l 524 d 1840 c 565 v 10
+> 5.226281 ts 5184 frames 579+10 new 1 size 19 time 3e17e6bc
+627 q 12 fill 1 ack 576 last 576 thr 0.5984 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 30 x 0 l 524 d 1848 c 566 v 10
+628 q 12 fill 1 ack 577 last 576 thr 0.5984 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 31 x 0 l 524 d 1848 c 566 v 10
+629 q 11 fill 1 ack 577 last 577 thr 0.6063 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 31 x 0 l 524 d 1848 c 567 v 10
+> 5.249247 ts 5201 frames 581+10 new 1 size 19 time 3e17cde1
+630 q 13 fill 1 ack 578 last 577 thr 0.6063 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 32 x 0 l 524 d 1856 c 567 v 10
+631 q 12 fill 1 ack 578 last 578 thr 0.6142 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 32 x 0 l 524 d 1856 c 568 v 10
+> 5.265299 ts 5218 frames 583+10 new 1 size 19 time 3e17bb19
+632 q 14 fill 1 ack 579 last 578 thr 0.6142 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 33 x 0 l 524 d 1864 c 568 v 10
+633 q 13 fill 1 ack 579 last 579 thr 0.6220 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 33 x 0 l 524 d 1864 c 569 v 10
+> 5.282255 ts 5234 frames 585+10 new 1 size 19 time 3e17a75e
+634 q 15 fill 1 ack 580 last 579 thr 0.6220 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 34 x 0 l 524 d 1872 c 569 v 10
+> 5.295693 ts 5251 frames 587+10 new 1 size 19 time 3e1794ab
+635 q 16 fill 1 ack 580 last 580 thr 0.6299 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 34 x 0 l 524 d 1880 c 570 v 10
+w 9 17 0 0 0
+636 q 16 fill 1 ack 581 last 580 thr 0.6299 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 35 x 0 l 524 d 1880 c 570 v 10
+637 q 15 fill 1 ack 581 last 581 thr 0.6378 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 35 x 0 l 524 d 1880 c 571 v 10
+> 5.314201 ts 5268 frames 589+10 new 1 size 19 time 3e177f69
+> 5.315201 ts 5268 frames 589+10 new 0 size 19 time 3e177f69
+638 q 17 fill 1 ack 582 last 581 thr 0.6378 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 36 x 0 l 524 d 1898 c 571 v 10
+> 5.327079 ts 5284 frames 591+10 new 1 size 19 time 3e176cba
+639 q 18 fill 1 ack 582 last 582 thr 0.6457 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 36 x 0 l 524 d 1906 c 572 v 10
+640 q 18 fill 1 ack 583 last 582 thr 0.6457 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 37 x 0 l 524 d 1906 c 572 v 10
+641 q 17 fill 1 ack 583 last 583 thr 0.6535 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 37 x 0 l 524 d 1906 c 573 v 10
+> 5.348809 ts 5301 frames 593+10 new 1 size 19 time 3e1754ca
+642 q 19 fill 1 ack 584 last 583 thr 0.6535 jump 0 rep 0 axes 0 | o 7 u 39 r 39 z 0 s 38 x 0 l 524 d 1914 c 573 v 10
+> 5.359753 ts 5318 frames 595+10 new 1 size 19 time 3e174222
+643 q 19 fill 0 ack 585 last 585 thr 0.6693 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1922 c 575 v 10
+644 q 18 fill 0 ack 586 last 586 thr 0.6772 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1922 c 576 v 10
+> 5.374247 ts 5334 frames 597+10 new 1 size 19 time 3e172f7d
+645 q 19 fill 0 ack 587 last 587 thr 0.6850 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1930 c 577 v 10
+646 q 18 fill 0 ack 588 last 588 thr 0.6929 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1930 c 578 v 10
+> 5.393022 ts 5351 frames 599+10 new 1 size 19 time 3e171a0a
+647 q 19 fill 0 ack 589 last 589 thr 0.7008 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1938 c 579 v 10
+w 15 21 1 0 0
+648 q 18 fill 0 ack 590 last 590 thr 0.7087 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1938 c 580 v 10
+649 q 17 fill 0 ack 591 last 591 thr 0.7165 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1938 c 581 v 10
+> 5.415222 ts 5368 frames 601+10 new 1 size 19 time 3e1701d8
+650 q 18 fill 0 ack 592 last 592 thr 0.7244 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1946 c 582 v 10
+651 q 17 fill 0 ack 593 last 593 thr 0.7323 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1946 c 583 v 10
+652 q 16 fill 0 ack 594 last 594 thr 0.7402 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1946 c 584 v 10
+653 q 15 fill 0 ack 595 last 595 thr 0.7480 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1946 c 585 v 10
+> 5.449747 ts 5401 frames 605+10 new 1 size 19 time 3e16ea0b
+> 5.450371 ts 5384 frames 603+10 new 0 size 19 time 3e16ea0b
+654 q 18 fill 0 ack 596 last 596 thr 0.7559 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1962 c 586 v 10
+> 5.456947 ts 5418 frames 607+10 new 1 size 19 time 3e16d772
+655 q 19 fill 0 ack 597 last 597 thr 0.7638 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1970 c 587 v 10
+656 q 18 fill 0 ack 598 last 598 thr 0.7717 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1970 c 588 v 10
+657 q 17 fill 0 ack 599 last 599 thr 0.7795 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1970 c 589 v 10
+> 5.483987 ts 5434 frames 609+10 new 1 size 19 time 3e16bd2e
+658 q 18 fill 0 ack 600 last 600 thr -0.7812 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1978 c 590 v 10
+> 5.493290 ts 5451 frames 611+10 new 1 size 19 time 3e16aa9c
+659 q 19 fill 0 ack 601 last 601 thr -0.7734 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1986 c 591 v 10
+w 15 20 0 0 0
+660 q 18 fill 0 ack 602 last 602 thr -0.7656 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1986 c 592 v 10
+661 q 17 fill 0 ack 603 last 603 thr -0.7578 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1986 c 593 v 10
+> 5.513332 ts 5468 frames 613+10 new 1 size 19 time 3e16941e
+662 q 18 fill 0 ack 604 last 604 thr -0.7500 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 1994 c 594 v 10
+> 5.523905 ts 5484 frames 615+10 new 1 size 19 time 3e168192
+663 q 19 fill 0 ack 605 last 605 thr -0.7422 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2002 c 595 v 10
+664 q 18 fill 0 ack 606 last 606 thr -0.7344 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2002 c 596 v 10
+> 5.540960 ts 5501 frames 617+10 new 1 size 19 time 3e166deb
+665 q 19 fill 0 ack 607 last 607 thr -0.7266 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2010 c 597 v 10
+666 q 18 fill 0 ack 608 last 608 thr -0.7188 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2010 c 598 v 10
+667 q 17 fill 0 ack 609 last 609 thr -0.7109 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2010 c 599 v 10
+> 5.564517 ts 5518 frames 619+10 new 1 size 19 time 3e165505
+668 q 18 fill 0 ack 610 last 610 thr -0.7031 jump 1 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2018 c 600 v 10
+> 5.575789 ts 5534 frames 621+10 new 1 size 19 time 3e164280
+669 q 19 fill 0 ack 611 last 611 thr -0.6953 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2026 c 601 v 10
+670 q 18 fill 0 ack 612 last 612 thr -0.6875 jump 1 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2026 c 602 v 10
+671 q 17 fill 0 ack 613 last 613 thr -0.6797 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2026 c 603 v 10
+w 17 20 0 0 0
+> 5.595979 ts 5551 frames 623+10 new 1 size 19 time 3e162bf7
+672 q 18 fill 0 ack 614 last 614 thr -0.6719 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2034 c 604 v 10
+673 q 17 fill 0 ack 615 last 615 thr -0.6641 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2034 c 605 v 10
+> 5.616775 ts 5568 frames 625+10 new 1 size 19 time 3e1614f5
+674 q 18 fill 0 ack 616 last 616 thr -0.6562 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2042 c 606 v 10
+675 q 17 fill 0 ack 617 last 617 thr -0.6484 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2042 c 607 v 10
+> 5.634168 ts 5584 frames 627+10 new 1 size 19 time 3e160106
+676 q 18 fill 0 ack 618 last 618 thr -0.6406 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2050 c 608 v 10
+> 5.643997 ts 5601 frames 629+10 new 1 size 19 time 3e15ee8e
+677 q 19 fill 0 ack 619 last 619 thr -0.6328 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2058 c 609 v 10
+678 q 18 fill 0 ack 620 last 620 thr -0.6250 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2058 c 610 v 10
+> 5.662025 ts 5618 frames 631+10 new 1 size 19 time 3e15da04
+679 q 19 fill 0 ack 621 last 621 thr -0.6172 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2066 c 611 v 10
+680 q 18 fill 0 ack 622 last 622 thr -0.6094 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2066 c 612 v 10
+681 q 17 fill 0 ack 623 last 623 thr -0.6016 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2066 c 613 v 10
+> 5.685187 ts 5634 frames 633+10 new 1 size 19 time 3e15c176
+682 q 18 fill 0 ack 624 last 624 thr -0.5938 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2074 c 614 v 10
+> 5.690935 ts 5651 frames 635+10 new 1 size 19 time 3e15af06
+> 5.691935 ts 5651 frames 635+10 new 0 size 19 time 3e15af06
+683 q 19 fill 0 ack 625 last 625 thr -0.5859 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2092 c 615 v 10
+w 17 20 0 0 0
+684 q 18 fill 0 ack 626 last 626 thr -0.5781 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2092 c 616 v 10
+685 q 17 fill 0 ack 627 last 627 thr -0.5703 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2092 c 617 v 10
+686 q 16 fill 0 ack 628 last 628 thr -0.5625 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2092 c 618 v 10
+> 5.727830 ts 5684 frames 639+10 new 1 size 19 time 3e159a62
+687 q 19 fill 0 ack 629 last 629 thr -0.5547 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2098 c 619 v 10
+> 5.729755 ts 5668 frames 637+10 new 0 size 19 time 3e159a62
+688 q 18 fill 0 ack 630 last 630 thr -0.5469 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2108 c 620 v 10
+> 5.745134 ts 5701 frames 641+10 new 1 size 19 time 3e15869c
+689 q 19 fill 0 ack 631 last 631 thr -0.5391 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2116 c 621 v 10
+690 q 18 fill 0 ack 632 last 632 thr -0.5312 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2116 c 622 v 10
+> 5.761957 ts 5718 frames 643+10 new 1 size 19 time 3e157358
+691 q 19 fill 0 ack 633 last 633 thr -0.5234 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2124 c 623 v 10
+692 q 18 fill 0 ack 634 last 634 thr -0.5156 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2124 c 624 v 10
+693 q 17 fill 0 ack 635 last 635 thr -0.5078 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2124 c 625 v 10
+> 5.779719 ts 5734 frames 645+10 new 1 size 19 time 3e155f24
+694 q 18 fill 0 ack 636 last 636 thr -0.5000 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2132 c 626 v 10
+695 q 17 fill 0 ack 637 last 637 thr -0.4922 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2132 c 627 v 10
+w 16 20 0 0 0
+> 5.798858 ts 5751 frames 647+10 new 1 size 19 time 3e1549a8
+696 q 18 fill 0 ack 638 last 638 thr -0.4844 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2140 c 628 v 10
+697 q 17 fill 0 ack 639 last 639 thr -0.4766 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2140 c 629 v 10
+> 5.812740 ts 5768 frames 649+10 new 1 size 19 time 3e153749
+698 q 18 fill 0 ack 640 last 640 thr -0.4688 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2148 c 630 v 10
+699 q 17 fill 0 ack 641 last 641 thr -0.4609 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2148 c 631 v 10
+> 5.831483 ts 5784 frames 651+10 new 1 size 19 time 3e152230
+700 q 18 fill 0 ack 642 last 642 thr -0.4531 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2156 c 632 v 10
+> 5.841841 ts 5801 frames 653+10 new 1 size 19 time 3e150fd7
+701 q 19 fill 0 ack 643 last 643 thr -0.4453 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2164 c 633 v 10
+702 q 18 fill 0 ack 644 last 644 thr -0.4375 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2164 c 634 v 10
+703 q 17 fill 0 ack 645 last 645 thr -0.4297 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2164 c 635 v 10
+> 5.864519 ts 5818 frames 655+10 new 1 size 19 time 3e14f7ba
+704 q 18 fill 0 ack 646 last 646 thr -0.4219 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2172 c 636 v 10
+> 5.877917 ts 5834 frames 657+10 new 1 size 19 time 3e14e567
+705 q 19 fill 0 ack 647 last 647 thr -0.4141 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2180 c 637 v 10
+706 q 18 fill 0 ack 648 last 648 thr -0.4062 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2180 c 638 v 10
+707 q 17 fill 0 ack 649 last 649 thr -0.3984 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2180 c 639 v 10
+w 17 20 0 0 0
+> 5.896160 ts 5851 frames 659+10 new 1 size 19 time 3e14d0d2
+708 q 18 fill 0 ack 650 last 650 thr -0.3906 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2188 c 640 v 10
+> 5.909038 ts 5868 frames 661+10 new 1 size 19 time 3e14be84
+709 q 19 fill 0 ack 651 last 651 thr -0.3828 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2196 c 641 v 10
+710 q 18 fill 0 ack 652 last 652 thr -0.3750 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2196 c 642 v 10
+> 5.927793 ts 5884 frames 663+10 new 1 size 19 time 3e14a97c
+711 q 19 fill 0 ack 653 last 653 thr -0.3672 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2204 c 643 v 10
+712 q 18 fill 0 ack 654 last 654 thr -0.3594 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2204 c 644 v 10
+> 5.941416 ts 5901 frames 665+10 new 1 size 19 time 3e149734
+713 q 19 fill 0 ack 655 last 655 thr -0.3516 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2212 c 645 v 10
+714 q 18 fill 0 ack 656 last 656 thr -0.3438 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2212 c 646 v 10
+715 q 17 fill 0 ack 657 last 657 thr -0.3359 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2212 c 647 v 10
+> 5.966927 ts 5918 frames 667+10 new 1 size 19 time 3e147ddc
+716 q 18 fill 0 ack 658 last 658 thr -0.3281 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2220 c 648 v 10
+717 q 17 fill 0 ack 659 last 659 thr -0.3203 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2220 c 649 v 10
+> 5.980268 ts 5934 frames 669+10 new 1 size 19 time 3e146b9a
+718 q 18 fill 0 ack 660 last 660 thr -0.3125 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2228 c 650 v 10
+719 q 17 fill 0 ack 661 last 661 thr -0.3047 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2228 c 651 v 10
+w 17 20 0 0 0
+720 q 16 fill 0 ack 662 last 662 thr -0.2969 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2228 c 652 v 10
+> 6.007130 ts 5968 frames 673+10 new 1 size 19 time 3e1451f8
+721 q 19 fill 0 ack 663 last 663 thr -0.2891 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2234 c 653 v 10
+> 6.018427 ts 5951 frames 671+10 new 0 size 19 time 3e1451f8
+722 q 18 fill 0 ack 664 last 664 thr -0.2812 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2244 c 654 v 10
+723 q 17 fill 0 ack 665 last 665 thr -0.2734 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2244 c 655 v 10
+> 6.032254 ts 5984 frames 675+10 new 1 size 19 time 3e1438d1
+724 q 18 fill 0 ack 666 last 666 thr -0.2656 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2252 c 656 v 10
+725 q 17 fill 0 ack 667 last 667 thr -0.2578 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2252 c 657 v 10
+> 6.045963 ts 6001 frames 677+10 new 1 size 19 time 3e142698
+726 q 18 fill 0 ack 668 last 668 thr -0.2500 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2260 c 658 v 10
+727 q 17 fill 0 ack 669 last 669 thr -0.2422 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2260 c 659 v 10
+> 6.068181 ts 6018 frames 679+10 new 1 size 19 time 3e140ef3
+728 q 18 fill 0 ack 670 last 670 thr -0.2344 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2268 c 660 v 10
+729 q 17 fill 0 ack 671 last 671 thr -0.2266 jump 1 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2268 c 661 v 10
+> 6.084777 ts 6034 frames 681+10 new 1 size 19 time 3e13fc20
+> 6.085777 ts 6034 frames 681+10 new 0 size 19 time 3e13fc20
+730 q 18 fill 0 ack 672 last 672 thr -0.2188 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2286 c 662 v 10
+> 6.091309 ts 6051 frames 683+10 new 1 size 19 time 3e13e9f0
+731 q 19 fill 0 ack 673 last 673 thr -0.2109 jump 1 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2294 c 663 v 10
+w 16 20 0 0 0
+732 q 18 fill 0 ack 674 last 674 thr -0.2031 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2294 c 664 v 10
+733 q 17 fill 0 ack 675 last 675 thr -0.1953 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2294 c 665 v 10
+> 6.112558 ts 6068 frames 685+10 new 1 size 19 time 3e13d300
+734 q 18 fill 0 ack 676 last 676 thr -0.1875 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2302 c 666 v 10
+735 q 17 fill 0 ack 677 last 677 thr -0.1797 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2302 c 667 v 10
+> 6.134463 ts 6084 frames 687+10 new 1 size 19 time 3e13bb9f
+736 q 18 fill 0 ack 678 last 678 thr -0.1719 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2310 c 668 v 10
+> 6.145033 ts 6101 frames 689+10 new 1 size 19 time 3e13a978
+737 q 19 fill 0 ack 679 last 679 thr -0.1641 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2318 c 669 v 10
+738 q 18 fill 0 ack 680 last 680 thr -0.1562 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2318 c 670 v 10
+739 q 17 fill 0 ack 681 last 681 thr -0.1484 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2318 c 671 v 10
+> 6.165750 ts 6118 frames 691+10 new 1 size 19 time 3e1392f9
+740 q 18 fill 0 ack 682 last 682 thr -0.1406 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2326 c 672 v 10
+741 q 17 fill 0 ack 683 last 683 thr -0.1328 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2326 c 673 v 10
+> 6.181783 ts 6134 frames 693+10 new 1 size 19 time 3e1380ce
+742 q 18 fill 0 ack 684 last 684 thr -0.1250 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2334 c 674 v 10
+> 6.191430 ts 6151 frames 695+10 new 1 size 19 time 3e136eaf
+743 q 19 fill 0 ack 685 last 685 thr -0.1172 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2342 c 675 v 10
+w 17 20 0 0 0
+744 q 18 fill 0 ack 686 last 686 thr -0.1094 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2342 c 676 v 10
+> 6.207245 ts 6168 frames 697+10 new 1 size 19 time 3e135c93
+745 q 19 fill 0 ack 687 last 687 thr -0.1016 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2350 c 677 v 10
+746 q 18 fill 0 ack 688 last 688 thr -0.0938 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2350 c 678 v 10
+747 q 17 fill 0 ack 689 last 689 thr -0.0859 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2350 c 679 v 10
+> 6.230618 ts 6184 frames 699+10 new 1 size 19 time 3e134469
+748 q 18 fill 0 ack 690 last 690 thr -0.0781 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2358 c 680 v 10
+> 6.242048 ts 6201 frames 701+10 new 1 size 19 time 3e133252
+749 q 19 fill 0 ack 691 last 691 thr -0.0703 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2366 c 681 v 10
+750 q 18 fill 0 ack 692 last 692 thr -0.0625 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2366 c 682 v 10
+751 q 17 fill 0 ack 693 last 693 thr -0.0547 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2366 c 683 v 10
+> 6.265605 ts 6218 frames 703+10 new 1 size 19 time 3e131a1a
+752 q 18 fill 0 ack 694 last 694 thr -0.0469 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2374 c 684 v 10
+753 q 17 fill 0 ack 695 last 695 thr -0.0391 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2374 c 685 v 10
+754 q 16 fill 0 ack 696 last 696 thr -0.0312 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2374 c 686 v 10
+755 q 15 fill 0 ack 697 last 697 thr -0.0234 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2374 c 687 v 10
+w 15 20 0 0 0
+> 6.298012 ts 6251 frames 707+10 new 1 size 19 time 3e130207
+756 q 18 fill 0 ack 698 last 698 thr -0.0156 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2380 c 688 v 10
+> 6.304682 ts 6234 frames 705+10 new 0 size 19 time 3e130207
+> 6.309356 ts 6268 frames 709+10 new 1 size 19 time 3e12effa
+757 q 19 fill 0 ack 699 last 699 thr -0.0078 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2398 c 689 v 10
+758 q 18 fill 0 ack 700 last 700 thr 0.0000 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2398 c 690 v 10
+> 6.328422 ts 6284 frames 711+10 new 1 size 19 time 3e12daf6
+759 q 19 fill 0 ack 701 last 701 thr 0.0079 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2406 c 691 v 10
+760 q 18 fill 0 ack 702 last 702 thr 0.0157 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2406 c 692 v 10
+> 6.343551 ts 6301 frames 713+10 new 1 size 19 time 3e12c8ef
+761 q 19 fill 0 ack 703 last 703 thr 0.0236 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2414 c 693 v 10
+762 q 18 fill 0 ack 704 last 704 thr 0.0315 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2414 c 694 v 10
+763 q 17 fill 0 ack 705 last 705 thr 0.0394 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2414 c 695 v 10
+> 6.367019 ts 6318 frames 715+10 new 1 size 19 time 3e12b0d6
+764 q 18 fill 0 ack 706 last 706 thr 0.0472 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2422 c 696 v 10
+> 6.378886 ts 6334 frames 717+10 new 1 size 19 time 3e129ed4
+765 q 19 fill 0 ack 707 last 707 thr 0.0551 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2430 c 697 v 10
+766 q 18 fill 0 ack 708 last 708 thr 0.0630 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2430 c 698 v 10
+767 q 17 fill 0 ack 709 last 709 thr 0.0709 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2430 c 699 v 10
+w 17 20 0 0 0
+> 6.398499 ts 6351 frames 719+10 new 1 size 19 time 3e128965
+768 q 18 fill 0 ack 710 last 710 thr 0.0787 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2438 c 700 v 10
+769 q 17 fill 0 ack 711 last 711 thr 0.0866 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2438 c 701 v 10
+> 6.415583 ts 6368 frames 721+10 new 1 size 19 time 3e12764d
+770 q 18 fill 0 ack 712 last 712 thr 0.0945 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2446 c 702 v 10
+771 q 17 fill 0 ack 713 last 713 thr 0.1024 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2446 c 703 v 10
+> 6.431646 ts 6384 frames 723+10 new 1 size 19 time 3e126443
+772 q 18 fill 0 ack 714 last 714 thr 0.1102 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2454 c 704 v 10
+773 q 17 fill 0 ack 715 last 715 thr 0.1181 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2454 c 705 v 10
+> 6.448880 ts 6401 frames 725+10 new 1 size 19 time 3e12510b
+774 q 18 fill 0 ack 716 last 716 thr 0.1260 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2462 c 706 v 10
+> 6.462029 ts 6418 frames 727+10 new 1 size 19 time 3e123f16
+775 q 19 fill 0 ack 717 last 717 thr 0.1339 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2470 c 707 v 10
+> 6.463029 ts 6418 frames 727+10 new 0 size 19 time 3e123f16
+776 q 18 fill 0 ack 718 last 718 thr 0.1417 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2480 c 708 v 10
+777 q 17 fill 0 ack 719 last 719 thr 0.1496 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2480 c 709 v 10
+> 6.483366 ts 6434 frames 729+10 new 1 size 19 time 3e122865
+778 q 18 fill 0 ack 720 last 720 thr 0.1575 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2488 c 710 v 10
+779 q 17 fill 0 ack 721 last 721 thr 0.1654 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2488 c 711 v 10
+w 17 20 0 0 0
+> 6.497276 ts 6451 frames 731+10 new 1 size 19 time 3e121676
+780 q 18 fill 0 ack 722 last 722 thr 0.1732 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2496 c 712 v 10
+> 6.508129 ts 6468 frames 733+10 new 1 size 19 time 3e12048a
+781 q 19 fill 0 ack 723 last 723 thr 0.1811 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2504 c 713 v 10
+782 q 18 fill 0 ack 724 last 724 thr 0.1890 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2504 c 714 v 10
+783 q 17 fill 0 ack 725 last 725 thr 0.1969 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2504 c 715 v 10
+> 6.529342 ts 6484 frames 735+10 new 1 size 19 time 3e11edfa
+784 q 18 fill 0 ack 726 last 726 thr 0.2047 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2512 c 716 v 10
+785 q 17 fill 0 ack 727 last 727 thr 0.2126 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2512 c 717 v 10
+> 6.549397 ts 6501 frames 737+10 new 1 size 19 time 3e11d84e
+786 q 18 fill 0 ack 728 last 728 thr 0.2205 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2520 c 718 v 10
+787 q 17 fill 0 ack 729 last 729 thr 0.2283 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2520 c 719 v 10
+788 q 16 fill 0 ack 730 last 730 thr 0.2362 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2520 c 720 v 10
+789 q 15 fill 0 ack 731 last 731 thr 0.2441 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2520 c 721 v 10
+> 6.583181 ts 6534 frames 741+10 new 1 size 19 time 3e11c1b6
+> 6.583504 ts 6518 frames 739+10 new 0 size 19 time 3e11c1b6
+790 q 18 fill 0 ack 732 last 732 thr 0.2520 jump 1 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2536 c 722 v 10
+791 q 17 fill 0 ack 733 last 733 thr 0.2598 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2536 c 723 v 10
+w 15 20 0 0 0
+> 6.596278 ts 6551 frames 743+10 new 1 size 19 time 3e11afd6
+792 q 18 fill 0 ack 734 last 734 thr 0.2677 jump 1 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2544 c 724 v 10
+> 6.607927 ts 6568 frames 745+10 new 1 size 19 time 3e119df9
+793 q 19 fill 0 ack 735 last 735 thr 0.2756 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2552 c 725 v 10
+794 q 18 fill 0 ack 736 last 736 thr 0.2835 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2552 c 726 v 10
+> 6.628386 ts 6584 frames 747+10 new 1 size 19 time 3e118809
+795 q 19 fill 0 ack 737 last 737 thr 0.2913 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2560 c 727 v 10
+796 q 18 fill 0 ack 738 last 738 thr 0.2992 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2560 c 728 v 10
+797 q 17 fill 0 ack 739 last 739 thr 0.3071 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2560 c 729 v 10
+> 6.646286 ts 6601 frames 749+10 new 1 size 19 time 3e11744e
+798 q 18 fill 0 ack 740 last 740 thr 0.3150 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2568 c 730 v 10
+799 q 17 fill 0 ack 741 last 741 thr 0.3228 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2568 c 731 v 10
+> 6.663323 ts 6618 frames 751+10 new 1 size 19 time 3e11616c
+800 q 18 fill 0 ack 742 last 742 thr 0.3307 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2576 c 732 v 10
+801 q 17 fill 0 ack 743 last 743 thr 0.3386 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2576 c 733 v 10
+> 6.685268 ts 6634 frames 753+10 new 1 size 19 time 3e114a7c
+802 q 18 fill 0 ack 744 last 744 thr 0.3465 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2584 c 734 v 10
+803 q 17 fill 0 ack 745 last 745 thr 0.3543 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2584 c 735 v 10
+w 17 20 0 0 0
+> 6.698088 ts 6651 frames 755+10 new 1 size 19 time 3e1138ac
+804 q 18 fill 0 ack 746 last 746 thr 0.3622 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2592 c 736 v 10
+805 q 17 fill 0 ack 747 last 747 thr 0.3701 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2592 c 737 v 10
+> 6.712910 ts 6668 frames 757+10 new 1 size 19 time 3e1126df
+806 q 18 fill 0 ack 748 last 748 thr 0.3780 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2600 c 738 v 10
+807 q 17 fill 0 ack 749 last 749 thr 0.3858 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2600 c 739 v 10
+> 6.733316 ts 6684 frames 759+10 new 1 size 18 time 3e111110
+808 q 18 fill 0 ack 750 last 750 thr 0.3937 jump 0 rep 0 axes 0 | o 8 u 39 r 39 z 0 s 38 x 0 l 524 d 2608 c 740 v 10
+> 6.745389 ts 6701 frames 761+10 new 1 size 18 time 3e10ff48
+809 q 18 fill 0 ack 752 last 752 thr 0.4094 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2616 c 742 v 10
+810 q 17 fill 0 ack 753 last 753 thr 0.4173 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2616 c 743 v 10
+811 q 16 fill 0 ack 754 last 754 thr 0.4252 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2616 c 744 v 10
+> 6.765516 ts 6718 frames 763+10 new 1 size 18 time 3e10e9b7
+812 q 17 fill 0 ack 755 last 755 thr 0.4331 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2624 c 745 v 10
+> 6.778138 ts 6734 frames 765+10 new 1 size 18 time 3e10d7f4
+813 q 18 fill 0 ack 756 last 756 thr 0.4409 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2632 c 746 v 10
+814 q 17 fill 0 ack 757 last 757 thr 0.4488 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2632 c 747 v 10
+815 q 16 fill 0 ack 758 last 758 thr 0.4567 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2632 c 748 v 10
+w 16 20 1 0 0
+> 6.800203 ts 6751 frames 767+10 new 1 size 18 time 3e10c10c
+816 q 17 fill 0 ack 759 last 759 thr 0.4646 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2640 c 749 v 10
+817 q 16 fill 0 ack 760 last 760 thr 0.4724 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2640 c 750 v 10
+> 6.813390 ts 6768 frames 769+10 new 1 size 18 time 3e10af4f
+818 q 17 fill 0 ack 761 last 761 thr 0.4803 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2648 c 751 v 10
+> 6.824582 ts 6784 frames 771+10 new 1 size 18 time 3e109d95
+819 q 18 fill 0 ack 762 last 762 thr 0.4882 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2656 c 752 v 10
+820 q 17 fill 0 ack 763 last 763 thr 0.4961 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2656 c 753 v 10
+821 q 16 fill 0 ack 764 last 764 thr 0.5039 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2656 c 754 v 10
+822 q 15 fill 0 ack 765 last 765 thr 0.5118 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2656 c 755 v 10
+823 q 14 fill 0 ack 766 last 766 thr 0.5197 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2656 c 756 v 10
+> 6.864373 ts 6818 frames 775+10 new 1 size 18 time 3e10902f
+> 6.869666 ts 6801 frames 773+10 new 0 size 18 time 3e10902f
+> 6.870666 ts 6801 frames 773+10 new 0 size 18 time 3e10902f
+824 q 17 fill 0 ack 767 last 767 thr 0.5276 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2682 c 757 v 10
+825 q 16 fill 0 ack 768 last 768 thr 0.5354 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2682 c 758 v 10
+> 6.880043 ts 6834 frames 777+10 new 1 size 18 time 3e107e7a
+826 q 17 fill 0 ack 769 last 769 thr 0.5433 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2690 c 759 v 10
+> 6.892325 ts 6851 frames 779+10 new 1 size 18 time 3e106cc6
+827 q 18 fill 0 ack 770 last 770 thr 0.5512 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2698 c 760 v 10
+w 14 19 0 0 0
+828 q 17 fill 0 ack 771 last 771 thr 0.5591 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2698 c 761 v 10
+> 6.909581 ts 6868 frames 781+10 new 1 size 18 time 3e1059d4
+829 q 18 fill 0 ack 772 last 772 thr 0.5669 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2706 c 762 v 10
+830 q 17 fill 0 ack 773 last 773 thr 0.5748 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2706 c 763 v 10
+> 6.928473 ts 6884 frames 783+10 new 1 size 18 time 3e104563
+831 q 18 fill 0 ack 774 last 774 thr 0.5827 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2714 c 764 v 10
+832 q 17 fill 0 ack 775 last 775 thr 0.5906 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2714 c 765 v 10
+833 q 16 fill 0 ack 776 last 776 thr 0.5984 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2714 c 766 v 10
+> 6.949759 ts 6901 frames 785+10 new 1 size 18 time 3e102f19
+834 q 17 fill 0 ack 777 last 777 thr 0.6063 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2722 c 767 v 10
+835 q 16 fill 0 ack 778 last 778 thr 0.6142 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2722 c 768 v 10
+> 6.965218 ts 6918 frames 787+10 new 1 size 18 time 3e101d71
+836 q 17 fill 0 ack 779 last 779 thr 0.6220 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2730 c 769 v 10
+> 6.973959 ts 6934 frames 789+10 new 1 size 18 time 3e100bcb
+837 q 18 fill 0 ack 780 last 780 thr 0.6299 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2738 c 770 v 10
+838 q 17 fill 0 ack 781 last 781 thr 0.6378 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2738 c 771 v 10
+839 q 16 fill 0 ack 782 last 782 thr 0.6457 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2738 c 772 v 10
+w 16 19 0 0 0
+> 7.001183 ts 6951 frames 791+10 new 1 size 18 time 3e0ff335
+840 q 17 fill 0 ack 783 last 783 thr 0.6535 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2746 c 773 v 10
+841 q 16 fill 0 ack 784 last 784 thr 0.6614 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2746 c 774 v 10
+> 7.017272 ts 6968 frames 793+10 new 1 size 18 time 3e0fe17e
+842 q 17 fill 0 ack 785 last 785 thr 0.6693 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2754 c 775 v 10
+843 q 16 fill 0 ack 786 last 786 thr 0.6772 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2754 c 776 v 10
+> 7.032714 ts 6984 frames 795+10 new 1 size 18 time 3e0fcfe1
+844 q 17 fill 0 ack 787 last 787 thr 0.6850 jump 0 rep 0 axes 0 | o 9 u 39 r 39 z 0 s 38 x 0 l 524 d 2762 c 777 v 10
+> 7.041349 ts 7001 frames 805+80 new 1 size 18 time 3e0fbe46
+845 q 58 fill 0 ack 826 last 826 thr -0.5781 jump 0 rep 0 axes 0 | o 10 u 39 r 39 z 0 s 38 x 37 l 524 d 2762 c 779 v 47
+846 q 56 fill 0 ack 828 last 828 thr -0.5625 jump 0 rep 0 axes 0 | o 11 u 39 r 39 z 0 s 38 x 37 l 524 d 2762 c 781 v 47
+> 7.060481 ts 7018 frames 877+10 new 1 size 18 time 3e0fa9bb
+847 q 56 fill 0 ack 830 last 830 thr -0.5469 jump 0 rep 0 axes 0 | o 12 u 39 r 39 z 0 s 38 x 37 l 524 d 2770 c 783 v 47
+848 q 54 fill 0 ack 832 last 832 thr -0.5312 jump 0 rep 0 axes 0 | o 13 u 39 r 39 z 0 s 38 x 37 l 524 d 2770 c 785 v 47
+> 7.073456 ts 7034 frames 879+10 new 1 size 18 time 3e0f9825
+849 q 54 fill 0 ack 834 last 834 thr -0.5156 jump 0 rep 0 axes 0 | o 14 u 39 r 39 z 0 s 38 x 37 l 524 d 2778 c 787 v 47
+850 q 52 fill 0 ack 836 last 836 thr -0.5000 jump 0 rep 0 axes 0 | o 15 u 39 r 39 z 0 s 38 x 37 l 524 d 2778 c 789 v 47
+851 q 50 fill 0 ack 838 last 838 thr -0.4844 jump 0 rep 0 axes 0 | o 16 u 39 r 39 z 0 s 38 x 37 l 524 d 2778 c 791 v 47
+w 16 60 7 0 0
+> 7.100820 ts 7051 frames 881+10 new 1 size 18 time 3e0f7fac
+852 q 50 fill 0 ack 840 last 840 thr -0.4688 jump 0 rep 0 axes 0 | o 17 u 39 r 39 z 0 s 38 x 37 l 524 d 2786 c 793 v 47
+853 q 48 fill 0 ack 842 last 842 thr -0.4531 jump 0 rep 0 axes 0 | o 18 u 39 r 39 z 0 s 38 x 37 l 524 d 2786 c 795 v 47
+> 7.118233 ts 7068 frames 883+10 new 1 size 18 time 3e0f6cb7
+854 q 48 fill 0 ack 844 last 844 thr -0.4375 jump 0 rep 0 axes 0 | o 19 u 39 r 39 z 0 s 38 x 37 l 524 d 2794 c 797 v 47
+855 q 46 fill 0 ack 846 last 846 thr -0.4219 jump 0 rep 0 axes 0 | o 20 u 39 r 39 z 0 s 38 x 37 l 524 d 2794 c 799 v 47
+856 q 44 fill 0 ack 848 last 848 thr -0.4062 jump 0 rep 0 axes 0 | o 21 u 39 r 39 z 0 s 38 x 37 l 524 d 2794 c 801 v 47
+> 7.143305 ts 7101 frames 887+10 new 1 size 18 time 3e0f54ae
+857 q 46 fill 0 ack 850 last 850 thr -0.3906 jump 0 rep 0 axes 0 | o 22 u 39 r 39 z 0 s 38 x 37 l 524 d 2800 c 803 v 47
+> 7.147549 ts 7084 frames 885+10 new 0 size 18 time 3e0f54ae
+858 q 44 fill 0 ack 852 last 852 thr -0.3750 jump 0 rep 0 axes 0 | o 23 u 39 r 39 z 0 s 38 x 37 l 524 d 2810 c 805 v 47
+859 q 42 fill 0 ack 854 last 854 thr -0.3594 jump 1 rep 0 axes 0 | o 24 u 39 r 39 z 0 s 38 x 37 l 524 d 2810 c 807 v 47
+> 7.165994 ts 7118 frames 889+10 new 1 size 18 time 3e0f3db2
+860 q 42 fill 0 ack 856 last 856 thr -0.3438 jump 1 rep 1 axes 0 | o 25 u 39 r 39 z 0 s 38 x 37 l 524 d 2818 c 809 v 47
+861 q 40 fill 0 ack 858 last 858 thr -0.3281 jump 0 rep 0 axes 0 | o 26 u 39 r 39 z 0 s 38 x 37 l 524 d 2818 c 811 v 47
+> 7.184809 ts 7134 frames 891+10 new 1 size 18 time 3e0f2981
+862 q 40 fill 0 ack 860 last 860 thr -0.3125 jump 0 rep 0 axes 0 | o 27 u 39 r 39 z 0 s 38 x 37 l 524 d 2826 c 813 v 47
+> 7.192995 ts 7151 frames 893+10 new 1 size 18 time 3e0f17fe
+863 q 40 fill 0 ack 862 last 862 thr -0.2969 jump 0 rep 0 axes 0 | o 28 u 39 r 39 z 0 s 38 x 37 l 524 d 2834 c 815 v 47
+w 40 52 12 0 0
+864 q 38 fill 0 ack 864 last 864 thr -0.2812 jump 0 rep 0 axes 0 | o 29 u 39 r 39 z 0 s 38 x 37 l 524 d 2834 c 817 v 47
+865 q 36 fill 0 ack 866 last 866 thr -0.2656 jump 0 rep 0 axes 0 | o 30 u 39 r 39 z 0 s 38 x 37 l 524 d 2834 c 819 v 47
+> 7.218631 ts 7168 frames 895+10 new 1 size 18 time 3e0effe0
+866 q 36 fill 0 ack 868 last 868 thr -0.2500 jump 0 rep 0 axes 0 | o 31 u 39 r 39 z 0 s 38 x 37 l 524 d 2842 c 821 v 47
+867 q 34 fill 0 ack 870 last 870 thr -0.2344 jump 0 rep 0 axes 0 | o 32 u 39 r 39 z 0 s 38 x 37 l 524 d 2842 c 823 v 47
+> 7.230281 ts 7184 frames 897+10 new 1 size 18 time 3e0eee62
+> 7.231281 ts 7184 frames 897+10 new 0 size 18 time 3e0eee62
+868 q 34 fill 0 ack 872 last 872 thr -0.2188 jump 0 rep 0 axes 0 | o 33 u 39 r 39 z 0 s 38 x 37 l 524 d 2860 c 825 v 47
+> 7.240049 ts 7201 frames 899+10 new 1 size 18 time 3e0edce8
+869 q 34 fill 0 ack 874 last 874 thr -0.2031 jump 0 rep 0 axes 0 | o 34 u 39 r 39 z 0 s 38 x 37 l 524 d 2868 c 827 v 47
+870 q 32 fill 0 ack 876 last 876 thr -0.1875 jump 0 rep 0 axes 0 | o 35 u 39 r 39 z 0 s 38 x 37 l 524 d 2868 c 829 v 47
+871 q 30 fill 0 ack 878 last 878 thr -0.1719 jump 0 rep 0 axes 0 | o 36 u 39 r 39 z 0 s 38 x 37 l 524 d 2868 c 831 v 47
+> 7.267453 ts 7218 frames 901+10 new 1 size 18 time 3e0ec49b
+872 q 30 fill 0 ack 880 last 880 thr -0.1562 jump 0 rep 0 axes 0 | o 37 u 39 r 39 z 0 s 38 x 37 l 524 d 2876 c 833 v 47
+873 q 28 fill 0 ack 882 last 882 thr -0.1406 jump 0 rep 0 axes 0 | o 38 u 39 r 39 z 0 s 38 x 37 l 524 d 2876 c 835 v 47
+> 7.284366 ts 7234 frames 903+10 new 1 size 18 time 3e0eb23d
+874 q 28 fill 0 ack 884 last 884 thr -0.1250 jump 0 rep 0 axes 0 | o 39 u 39 r 39 z 0 s 38 x 37 l 524 d 2884 c 837 v 47
+875 q 26 fill 0 ack 886 last 886 thr -0.1094 jump 0 rep 0 axes 0 | o 40 u 39 r 39 z 0 s 38 x 37 l 524 d 2884 c 839 v 47
+w 26 40 12 0 0
+> 7.297626 ts 7251 frames 905+10 new 1 size 18 time 3e0ea0ca
+876 q 26 fill 0 ack 888 last 888 thr -0.0938 jump 0 rep 0 axes 0 | o 41 u 39 r 39 z 0 s 38 x 37 l 524 d 2892 c 841 v 47
+877 q 24 fill 0 ack 890 last 890 thr -0.0781 jump 0 rep 0 axes 0 | o 42 u 39 r 39 z 0 s 38 x 37 l 524 d 2892 c 843 v 47
+> 7.314149 ts 7268 frames 907+10 new 1 size 18 time 3e0e8ed3
+878 q 24 fill 0 ack 892 last 892 thr -0.0625 jump 0 rep 0 axes 0 | o 43 u 39 r 39 z 0 s 38 x 37 l 524 d 2900 c 845 v 47
+879 q 22 fill 0 ack 894 last 894 thr -0.0469 jump 0 rep 0 axes 0 | o 44 u 39 r 39 z 0 s 38 x 37 l 524 d 2900 c 847 v 47
+> 7.330238 ts 7284 frames 909+10 new 1 size 18 time 3e0e7d4e
+880 q 22 fill 0 ack 896 last 896 thr -0.0312 jump 0 rep 0 axes 0 | o 45 u 39 r 39 z 0 s 38 x 37 l 524 d 2908 c 849 v 47
+881 q 20 fill 0 ack 898 last 898 thr -0.0156 jump 0 rep 0 axes 0 | o 46 u 39 r 39 z 0 s 38 x 37 l 524 d 2908 c 851 v 47
+> 7.349733 ts 7301 frames 911+10 new 1 size 18 time 3e0e68ab
+882 q 20 fill 0 ack 900 last 900 thr 0.0000 jump 0 rep 0 axes 0 | o 47 u 39 r 39 z 0 s 38 x 37 l 524 d 2916 c 853 v 47
+883 q 18 fill 0 ack 902 last 902 thr 0.0157 jump 0 rep 0 axes 0 | o 48 u 39 r 39 z 0 s 38 x 37 l 524 d 2916 c 855 v 47
+> 7.362684 ts 7318 frames 913+10 new 1 size 18 time 3e0e5743
+884 q 18 fill 0 ack 904 last 904 thr 0.0315 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2924 c 857 v 47
+885 q 17 fill 0 ack 905 last 905 thr 0.0394 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2924 c 858 v 47
+> 7.382381 ts 7334 frames 915+10 new 1 size 18 time 3e0e427e
+886 q 18 fill 0 ack 906 last 906 thr 0.0472 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2932 c 859 v 47
+887 q 17 fill 0 ack 907 last 907 thr 0.0551 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2932 c 860 v 47
+w 17 28 9 0 0
+> 7.401474 ts 7351 frames 917+10 new 1 size 18 time 3e0e2e3a
+888 q 18 fill 0 ack 908 last 908 thr 0.0630 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2940 c 861 v 47
+889 q 17 fill 0 ack 909 last 909 thr 0.0709 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2940 c 862 v 47
+890 q 16 fill 0 ack 910 last 910 thr 0.0787 jump 0 rep 0 axes 0 | o 49 u 39 r 39 z 0 s 38 x 37 l 524 d 2940 c 863 v 47
+> 7.427058 ts 7384 frames 921+10 new 1 size 18 time 3e0e1657
+891 q 18 fill 0 ack 912 last 912 thr 0.0945 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2946 c 865 v 47
+892 q 17 fill 0 ack 913 last 913 thr 0.1024 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2946 c 866 v 47
+> 7.438464 ts 7368 frames 919+10 new 0 size 18 time 3e0e1657
+> 7.444877 ts 7401 frames 923+10 new 1 size 18 time 3e0e0338
+893 q 18 fill 0 ack 914 last 914 thr 0.1102 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2964 c 867 v 47
+894 q 17 fill 0 ack 915 last 915 thr 0.1181 jump 1 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2964 c 868 v 47
+895 q 16 fill 0 ack 916 last 916 thr 0.1260 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2964 c 869 v 47
+> 7.465623 ts 7418 frames 925+10 new 1 size 18 time 3e0dedb7
+896 q 17 fill 0 ack 917 last 917 thr 0.1339 jump 1 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2972 c 870 v 47
+> 7.478577 ts 7434 frames 927+10 new 1 size 18 time 3e0ddc60
+897 q 18 fill 0 ack 918 last 918 thr 0.1417 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2980 c 871 v 47
+898 q 17 fill 0 ack 919 last 919 thr 0.1496 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2980 c 872 v 47
+899 q 16 fill 0 ack 920 last 920 thr 0.1575 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2980 c 873 v 47
+w 16 20 1 0 0
+> 7.496427 ts 7451 frames 929+10 new 1 size 18 time 3e0dc942
+900 q 17 fill 0 ack 921 last 921 thr 0.1654 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2988 c 874 v 47
+901 q 16 fill 0 ack 922 last 922 thr 0.1732 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2988 c 875 v 47
+> 7.518342 ts 7468 frames 931+10 new 1 size 18 time 3e0db308
+902 q 17 fill 0 ack 923 last 923 thr 0.1811 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2996 c 876 v 47
+903 q 16 fill 0 ack 924 last 924 thr 0.1890 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 2996 c 877 v 47
+> 7.533294 ts 7484 frames 933+10 new 1 size 18 time 3e0da1b8
+904 q 17 fill 0 ack 925 last 925 thr 0.1969 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3004 c 878 v 47
+> 7.544735 ts 7501 frames 935+10 new 1 size 18 time 3e0d906b
+905 q 18 fill 0 ack 926 last 926 thr 0.2047 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3012 c 879 v 47
+906 q 17 fill 0 ack 927 last 927 thr 0.2126 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3012 c 880 v 47
+907 q 16 fill 0 ack 928 last 928 thr 0.2205 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3012 c 881 v 47
+> 7.563928 ts 7518 frames 937+10 new 1 size 18 time 3e0d7c30
+908 q 17 fill 0 ack 929 last 929 thr 0.2283 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3020 c 882 v 47
+909 q 16 fill 0 ack 930 last 930 thr 0.2362 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3020 c 883 v 47
+> 7.584028 ts 7534 frames 939+10 new 1 size 18 time 3e0d6740
+910 q 17 fill 0 ack 931 last 931 thr 0.2441 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3028 c 884 v 47
+> 7.591522 ts 7551 frames 941+10 new 1 size 18 time 3e0d55fc
+911 q 18 fill 0 ack 932 last 932 thr 0.2520 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3036 c 885 v 47
+w 16 19 0 0 0
+912 q 17 fill 0 ack 933 last 933 thr 0.2598 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3036 c 886 v 47
+> 7.609766 ts 7568 frames 943+10 new 1 size 18 time 3e0d4298
+> 7.610766 ts 7568 frames 943+10 new 0 size 18 time 3e0d4298
+913 q 18 fill 0 ack 934 last 934 thr 0.2677 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3054 c 887 v 47
+914 q 17 fill 0 ack 935 last 935 thr 0.2756 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3054 c 888 v 47
+> 7.625479 ts 7584 frames 945+10 new 1 size 18 time 3e0d3158
+915 q 18 fill 0 ack 936 last 936 thr 0.2835 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3062 c 889 v 47
+916 q 17 fill 0 ack 937 last 937 thr 0.2913 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3062 c 890 v 47
+> 7.645657 ts 7601 frames 947+10 new 1 size 18 time 3e0d1c68
+917 q 18 fill 0 ack 938 last 938 thr 0.2992 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3070 c 891 v 47
+918 q 17 fill 0 ack 939 last 939 thr 0.3071 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3070 c 892 v 47
+919 q 16 fill 0 ack 940 last 940 thr 0.3150 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3070 c 893 v 47
+> 7.663009 ts 7618 frames 949+10 new 1 size 18 time 3e0d09dd
+920 q 17 fill 0 ack 941 last 941 thr 0.3228 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3078 c 894 v 47
+921 q 16 fill 0 ack 942 last 942 thr 0.3307 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3078 c 895 v 47
+> 7.681395 ts 7634 frames 951+10 new 1 size 18 time 3e0cf666
+922 q 17 fill 0 ack 943 last 943 thr 0.3386 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3086 c 896 v 47
+923 q 16 fill 0 ack 944 last 944 thr 0.3465 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3086 c 897 v 47
+w 16 19 0 0 0
+924 q 15 fill 0 ack 945 last 945 thr 0.3543 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3086 c 898 v 47
+> 7.709566 ts 7668 frames 955+10 new 1 size 18 time 3e0cdea7
+925 q 18 fill 0 ack 946 last 946 thr 0.3622 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3092 c 899 v 47
+> 7.717098 ts 7651 frames 953+10 new 0 size 18 time 3e0cdea7
+926 q 17 fill 0 ack 947 last 947 thr 0.3701 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3102 c 900 v 47
+927 q 16 fill 0 ack 948 last 948 thr 0.3780 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3102 c 901 v 47
+> 7.731834 ts 7684 frames 957+10 new 1 size 18 time 3e0cc865
+928 q 17 fill 0 ack 949 last 949 thr 0.3858 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3110 c 902 v 47
+929 q 16 fill 0 ack 950 last 950 thr 0.3937 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3110 c 903 v 47
+> 7.745834 ts 7701 frames 959+10 new 1 size 18 time 3e0cb737
+930 q 17 fill 0 ack 951 last 951 thr 0.4016 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3118 c 904 v 47
+> 7.757962 ts 7718 frames 961+10 new 1 size 18 time 3e0ca60a
+931 q 18 fill 0 ack 952 last 952 thr 0.4094 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3126 c 905 v 47
+932 q 17 fill 0 ack 953 last 953 thr 0.4173 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3126 c 906 v 47
+> 7.777771 ts 7734 frames 963+10 new 1 size 18 time 3e0c9179
+933 q 18 fill 0 ack 954 last 954 thr 0.4252 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3134 c 907 v 47
+934 q 17 fill 0 ack 955 last 955 thr 0.4331 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3134 c 908 v 47
+935 q 16 fill 0 ack 956 last 956 thr 0.4409 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3134 c 909 v 47
+w 15 19 0 0 0
+> 7.796630 ts 7751 frames 965+10 new 1 size 18 time 3e0c7dae
+936 q 17 fill 0 ack 957 last 957 thr 0.4488 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3142 c 910 v 47
+937 q 16 fill 0 ack 958 last 958 thr 0.4567 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3142 c 911 v 47
+> 7.816452 ts 7768 frames 967+10 new 1 size 18 time 3e0c6921
+938 q 17 fill 0 ack 959 last 959 thr 0.4646 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3150 c 912 v 47
+> 7.824503 ts 7784 frames 969+10 new 1 size 18 time 3e0c5800
+939 q 18 fill 0 ack 960 last 960 thr 0.4724 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3158 c 913 v 47
+940 q 17 fill 0 ack 961 last 961 thr 0.4803 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3158 c 914 v 47
+941 q 16 fill 0 ack 962 last 962 thr 0.4882 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3158 c 915 v 47
+> 7.850933 ts 7801 frames 971+10 new 1 size 18 time 3e0c406a
+942 q 17 fill 0 ack 963 last 963 thr 0.4961 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3166 c 916 v 47
+943 q 16 fill 0 ack 964 last 964 thr 0.5039 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3166 c 917 v 47
+> 7.867107 ts 7818 frames 973+10 new 1 size 18 time 3e0c2f22
+944 q 17 fill 0 ack 965 last 965 thr 0.5118 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3174 c 918 v 47
+945 q 16 fill 0 ack 966 last 966 thr 0.5197 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3174 c 919 v 47
+> 7.880078 ts 7834 frames 975+10 new 1 size 18 time 3e0c1e09
+946 q 17 fill 0 ack 967 last 967 thr 0.5276 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3182 c 920 v 47
+> 7.893461 ts 7851 frames 977+10 new 1 size 18 time 3e0c0cf2
+947 q 18 fill 0 ack 968 last 968 thr 0.5354 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3190 c 921 v 47
+w 16 19 0 0 0
+948 q 17 fill 0 ack 969 last 969 thr 0.5433 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3190 c 922 v 47
+949 q 16 fill 0 ack 970 last 970 thr 0.5512 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3190 c 923 v 47
+> 7.913095 ts 7868 frames 979+10 new 1 size 18 time 3e0bf89d
+950 q 17 fill 0 ack 971 last 971 thr 0.5591 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3198 c 924 v 47
+951 q 16 fill 0 ack 972 last 972 thr 0.5669 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3198 c 925 v 47
+> 7.932960 ts 7884 frames 981+10 new 1 size 18 time 3e0be41f
+952 q 17 fill 0 ack 973 last 973 thr 0.5748 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3206 c 926 v 47
+> 7.945693 ts 7901 frames 983+10 new 1 size 18 time 3e0bd310
+953 q 18 fill 0 ack 974 last 974 thr 0.5827 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3214 c 927 v 47
+954 q 17 fill 0 ack 975 last 975 thr 0.5906 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3214 c 928 v 47
+> 7.957267 ts 7918 frames 985+10 new 1 size 18 time 3e0bc204
+955 q 18 fill 0 ack 976 last 976 thr 0.5984 jump 1 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3222 c 929 v 47
+956 q 17 fill 0 ack 977 last 977 thr 0.6063 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3222 c 930 v 47
+957 q 16 fill 0 ack 978 last 978 thr 0.6142 jump 1 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3222 c 931 v 47
+958 q 15 fill 0 ack 979 last 979 thr 0.6220 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3222 c 932 v 47
+959 q 14 fill 0 ack 980 last 980 thr 0.6299 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3222 c 933 v 47
+w 14 19 0 0 0
+> 7.997573 ts 7934 frames 987+10 new 1 size 18 time 3e0bb847
+> 7.997863 ts 7951 frames 989+10 new 1 size 18 time 3e0ba740
+> 7.998863 ts 7951 frames 989+10 new 0 size 18 time 3e0ba740
+960 q 17 fill 0 ack 981 last 981 thr 0.6378 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3248 c 934 v 47
+961 q 16 fill 0 ack 982 last 982 thr 0.6457 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3248 c 935 v 47
+> 8.017078 ts 7968 frames 991+10 new 1 size 18 time 3e0b9350
+962 q 17 fill 0 ack 983 last 983 thr 0.6535 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3256 c 936 v 47
+> 8.025776 ts 7984 frames 993+10 new 1 size 18 time 3e0b824d
+963 q 18 fill 0 ack 984 last 984 thr 0.6614 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3264 c 937 v 47
+964 q 17 fill 0 ack 985 last 985 thr 0.6693 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3264 c 938 v 47
+965 q 16 fill 0 ack 986 last 986 thr 0.6772 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3264 c 939 v 47
+> 8.050647 ts 8001 frames 995+10 new 1 size 18 time 3e0b6b35
+966 q 17 fill 0 ack 987 last 987 thr 0.6850 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3272 c 940 v 47
+967 q 16 fill 0 ack 988 last 988 thr 0.6929 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3272 c 941 v 47
+> 8.066583 ts 8018 frames 997+10 new 1 size 18 time 3e0b5a38
+968 q 17 fill 0 ack 989 last 989 thr 0.7008 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3280 c 942 v 47
+969 q 16 fill 0 ack 990 last 990 thr 0.7087 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3280 c 943 v 47
+> 8.083883 ts 8034 frames 999+10 new 1 size 18 time 3e0b47fd
+970 q 17 fill 0 ack 991 last 991 thr 0.7165 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3288 c 944 v 47
+> 8.094901 ts 8051 frames 1001+10 new 1 size 18 time 3e0b3705
+971 q 18 fill 0 ack 992 last 992 thr 0.7244 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3296 c 945 v 47
+w 16 19 0 0 0
+972 q 17 fill 0 ack 993 last 993 thr 0.7323 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3296 c 946 v 47
+973 q 16 fill 0 ack 994 last 994 thr 0.7402 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3296 c 947 v 47
+> 8.118329 ts 8068 frames 1003+10 new 1 size 18 time 3e0b2083
+974 q 17 fill 0 ack 995 last 995 thr 0.7480 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3304 c 948 v 47
+975 q 16 fill 0 ack 996 last 996 thr 0.7559 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3304 c 949 v 47
+> 8.133297 ts 8084 frames 1005+10 new 1 size 18 time 3e0b0f90
+976 q 17 fill 0 ack 997 last 997 thr 0.7638 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3312 c 950 v 47
+> 8.143897 ts 8101 frames 1007+10 new 1 size 18 time 3e0afe9f
+977 q 18 fill 0 ack 998 last 998 thr 0.7717 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3320 c 951 v 47
+978 q 17 fill 0 ack 999 last 999 thr 0.7795 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3320 c 952 v 47
+> 8.158639 ts 8118 frames 1009+10 new 1 size 18 time 3e0aedb0
+979 q 18 fill 0 ack 1000 last 1000 thr -0.7812 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3328 c 953 v 47
+980 q 17 fill 0 ack 1001 last 1001 thr -0.7734 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3328 c 954 v 47
+> 8.173720 ts 8134 frames 1011+10 new 1 size 18 time 3e0adcc4
+981 q 18 fill 0 ack 1002 last 1002 thr -0.7656 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3336 c 955 v 47
+982 q 17 fill 0 ack 1003 last 1003 thr -0.7578 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3336 c 956 v 47
+> 8.192642 ts 8151 frames 1013+10 new 1 size 18 time 3e0ac934
+983 q 18 fill 0 ack 1004 last 1004 thr -0.7500 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3344 c 957 v 47
+w 16 19 0 0 0
+984 q 17 fill 0 ack 1005 last 1005 thr -0.7422 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3344 c 958 v 47
+985 q 16 fill 0 ack 1006 last 1006 thr -0.7344 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3344 c 959 v 47
+> 8.212823 ts 8168 frames 1015+10 new 1 size 18 time 3e0ab4ae
+986 q 17 fill 0 ack 1007 last 1007 thr -0.7266 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3352 c 960 v 47
+987 q 16 fill 0 ack 1008 last 1008 thr -0.7188 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3352 c 961 v 47
+> 8.232725 ts 8184 frames 1017+10 new 1 size 18 time 3e0aa060
+988 q 17 fill 0 ack 1009 last 1009 thr -0.7109 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3360 c 962 v 47
+> 8.243606 ts 8201 frames 1019+10 new 1 size 18 time 3e0a8f7e
+989 q 18 fill 0 ack 1010 last 1010 thr -0.7031 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3368 c 963 v 47
+990 q 17 fill 0 ack 1011 last 1011 thr -0.6953 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3368 c 964 v 47
+991 q 16 fill 0 ack 1012 last 1012 thr -0.6875 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3368 c 965 v 47
+992 q 15 fill 0 ack 1013 last 1013 thr -0.6797 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3368 c 966 v 47
+993 q 14 fill 0 ack 1014 last 1014 thr -0.6719 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3368 c 967 v 47
+> 8.279436 ts 8234 frames 1023+10 new 1 size 18 time 3e0a7e09
+> 8.286653 ts 8218 frames 1021+10 new 0 size 18 time 3e0a7e09
+994 q 17 fill 0 ack 1015 last 1015 thr -0.6641 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3384 c 968 v 47
+> 8.294222 ts 8251 frames 1025+10 new 1 size 18 time 3e0a6d2c
+995 q 18 fill 0 ack 1016 last 1016 thr -0.6562 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3392 c 969 v 47
+w 14 19 0 0 0
+996 q 17 fill 0 ack 1017 last 1017 thr -0.6484 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3392 c 970 v 47
+> 8.309256 ts 8268 frames 1027+10 new 1 size 18 time 3e0a5c53
+997 q 18 fill 0 ack 1018 last 1018 thr -0.6406 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3400 c 971 v 47
+998 q 17 fill 0 ack 1019 last 1019 thr -0.6328 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3400 c 972 v 47
+> 8.326101 ts 8284 frames 1029+10 new 1 size 18 time 3e0a4aaa
+999 q 18 fill 0 ack 1020 last 1020 thr -0.6250 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3408 c 973 v 47
+1000 q 17 fill 0 ack 1021 last 1021 thr -0.6172 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3408 c 974 v 47
+> 8.342436 ts 8301 frames 1031+10 new 1 size 18 time 3e0a3982
+1001 q 18 fill 0 ack 1022 last 1022 thr -0.6094 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3416 c 975 v 47
+1002 q 17 fill 0 ack 1023 last 1023 thr -0.6016 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3416 c 976 v 47
+> 8.362341 ts 8318 frames 1033+10 new 1 size 18 time 3e0a2548
+1003 q 18 fill 0 ack 1024 last 1024 thr -0.5938 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3424 c 977 v 47
+1004 q 17 fill 0 ack 1025 last 1025 thr -0.5859 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3424 c 978 v 47
+> 8.373349 ts 8334 frames 1035+10 new 1 size 18 time 3e0a1478
+> 8.374349 ts 8334 frames 1035+10 new 0 size 18 time 3e0a1478
+1005 q 18 fill 0 ack 1026 last 1026 thr -0.5781 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3442 c 979 v 47
+1006 q 17 fill 0 ack 1027 last 1027 thr -0.5703 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3442 c 980 v 47
+> 8.390315 ts 8351 frames 1037+10 new 1 size 18 time 3e0a02bd
+1007 q 18 fill 0 ack 1028 last 1028 thr -0.5625 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3450 c 981 v 47
+w 17 19 0 0 0
+1008 q 17 fill 0 ack 1029 last 1029 thr -0.5547 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3450 c 982 v 47
+1009 q 16 fill 0 ack 1030 last 1030 thr -0.5469 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3450 c 983 v 47
+> 8.415728 ts 8368 frames 1039+10 new 1 size 18 time 3e09ebdc
+1010 q 17 fill 0 ack 1031 last 1031 thr -0.5391 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3458 c 984 v 47
+1011 q 16 fill 0 ack 1032 last 1032 thr -0.5312 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3458 c 985 v 47
+> 8.432442 ts 8384 frames 1041+10 new 1 size 18 time 3e09da64
+1012 q 17 fill 0 ack 1033 last 1033 thr -0.5234 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3466 c 986 v 47
+1013 q 16 fill 0 ack 1034 last 1034 thr -0.5156 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3466 c 987 v 47
+> 8.447273 ts 8401 frames 1043+10 new 1 size 18 time 3e09c99e
+1014 q 17 fill 0 ack 1035 last 1035 thr -0.5078 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3474 c 988 v 47
+1015 q 16 fill 0 ack 1036 last 1036 thr -0.5000 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3474 c 989 v 47
+> 8.464061 ts 8418 frames 1045+10 new 1 size 18 time 3e09b81a
+1016 q 17 fill 0 ack 1037 last 1037 thr -0.4922 jump 1 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3482 c 990 v 47
+> 8.476328 ts 8434 frames 1047+10 new 1 size 18 time 3e09a758
+1017 q 18 fill 0 ack 1038 last 1038 thr -0.4844 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3490 c 991 v 47
+1018 q 17 fill 0 ack 1039 last 1039 thr -0.4766 jump 1 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3490 c 992 v 47
+1019 q 16 fill 0 ack 1040 last 1040 thr -0.4688 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3490 c 993 v 47
+w 16 19 0 0 0
+> 8.498603 ts 8451 frames 1049+10 new 1 size 18 time 3e0991b7
+1020 q 17 fill 0 ack 1041 last 1041 thr -0.4609 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3498 c 994 v 47
+> 8.508282 ts 8468 frames 1051+10 new 1 size 18 time 3e0980fb
+1021 q 18 fill 0 ack 1042 last 1042 thr -0.4531 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3506 c 995 v 47
+1022 q 17 fill 0 ack 1043 last 1043 thr -0.4453 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3506 c 996 v 47
+> 8.527816 ts 8484 frames 1053+10 new 1 size 18 time 3e096d28
+1023 q 18 fill 0 ack 1044 last 1044 thr -0.4375 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3514 c 997 v 47
+1024 q 17 fill 0 ack 1045 last 1045 thr -0.4297 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3514 c 998 v 47
+1025 q 16 fill 0 ack 1046 last 1046 thr -0.4219 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3514 c 999 v 47
+1026 q 15 fill 0 ack 1047 last 1047 thr -0.4141 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3514 c 1000 v 47
+> 8.560931 ts 8518 frames 1057+10 new 1 size 18 time 3e0958f9
+1027 q 18 fill 0 ack 1048 last 1048 thr -0.4062 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3520 c 1001 v 47
+> 8.565809 ts 8501 frames 1055+10 new 0 size 18 time 3e0958f9
+1028 q 17 fill 0 ack 1049 last 1049 thr -0.3984 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3530 c 1002 v 47
+1029 q 16 fill 0 ack 1050 last 1050 thr -0.3906 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3530 c 1003 v 47
+> 8.581848 ts 8534 frames 1059+10 new 1 size 18 time 3e094432
+1030 q 17 fill 0 ack 1051 last 1051 thr -0.3828 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3538 c 1004 v 47
+1031 q 16 fill 0 ack 1052 last 1052 thr -0.3750 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3538 c 1005 v 47
+w 15 19 0 0 0
+> 8.598106 ts 8551 frames 1061+10 new 1 size 18 time 3e093342
+1032 q 17 fill 0 ack 1053 last 1053 thr -0.3672 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3546 c 1006 v 47
+1033 q 16 fill 0 ack 1054 last 1054 thr -0.3594 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3546 c 1007 v 47
+> 8.613001 ts 8568 frames 1063+10 new 1 size 18 time 3e092294
+1034 q 17 fill 0 ack 1055 last 1055 thr -0.3516 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3554 c 1008 v 47
+> 8.626635 ts 8584 frames 1065+10 new 1 size 18 time 3e0911e8
+1035 q 18 fill 0 ack 1056 last 1056 thr -0.3438 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3562 c 1009 v 47
+1036 q 17 fill 0 ack 1057 last 1057 thr -0.3359 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3562 c 1010 v 47
+1037 q 16 fill 0 ack 1058 last 1058 thr -0.3281 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3562 c 1011 v 47
+> 8.650252 ts 8601 frames 1067+10 new 1 size 18 time 3e08fbc5
+1038 q 17 fill 0 ack 1059 last 1059 thr -0.3203 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3570 c 1012 v 47
+> 8.658436 ts 8618 frames 1069+10 new 1 size 18 time 3e08eb1e
+1039 q 18 fill 0 ack 1060 last 1060 thr -0.3125 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3578 c 1013 v 47
+1040 q 17 fill 0 ack 1061 last 1061 thr -0.3047 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3578 c 1014 v 47
+> 8.677628 ts 8634 frames 1071+10 new 1 size 18 time 3e08d7a8
+1041 q 18 fill 0 ack 1062 last 1062 thr -0.2969 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3586 c 1015 v 47
+1042 q 17 fill 0 ack 1063 last 1063 thr -0.2891 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3586 c 1016 v 47
+1043 q 16 fill 0 ack 1064 last 1064 thr -0.2812 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3586 c 1017 v 47
+w 16 19 0 0 0
+> 8.700302 ts 8651 frames 1073+10 new 1 size 18 time 3e08c1fb
+1044 q 17 fill 0 ack 1065 last 1065 thr -0.2734 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3594 c 1018 v 47
+1045 q 16 fill 0 ack 1066 last 1066 thr -0.2656 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3594 c 1019 v 47
+> 8.715110 ts 8668 frames 1075+10 new 1 size 18 time 3e08b15c
+1046 q 17 fill 0 ack 1067 last 1067 thr -0.2578 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3602 c 1020 v 47
+1047 q 16 fill 0 ack 1068 last 1068 thr -0.2500 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3602 c 1021 v 47
+> 8.729495 ts 8684 frames 1077+10 new 1 size 18 time 3e08a0c1
+1048 q 17 fill 0 ack 1069 last 1069 thr -0.2422 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3610 c 1022 v 47
+> 8.740738 ts 8701 frames 1079+10 new 1 size 18 time 3e089027
+1049 q 18 fill 0 ack 1070 last 1070 thr -0.2344 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3618 c 1023 v 47
+1050 q 17 fill 0 ack 1071 last 1071 thr -0.2266 jump 0 rep 0 axes 0 | o 50 u 39 r 39 z 0 s 38 x 37 l 524 d 3618 c 1024 v 47
+> 8.761910 ts 8718 frames 1081+10 new 1 size 17 time 3e087b5c
+1051 q 17 fill 0 ack 1073 last 1073 thr -0.2109 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3626 c 1026 v 47
+> 8.762910 ts 8718 frames 1081+10 new 0 size 17 time 3e087b5c
+1052 q 16 fill 0 ack 1074 last 1074 thr -0.2031 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3636 c 1027 v 47
+> 8.777985 ts 8734 frames 1083+10 new 1 size 17 time 3e086ab5
+1053 q 17 fill 0 ack 1075 last 1075 thr -0.1953 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3644 c 1028 v 47
+1054 q 16 fill 0 ack 1076 last 1076 thr -0.1875 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3644 c 1029 v 47
+1055 q 15 fill 0 ack 1077 last 1077 thr -0.1797 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3644 c 1030 v 47
+w 15 19 1 0 0
+> 8.799672 ts 8751 frames 1085+10 new 1 size 17 time 3e0855a3
+1056 q 16 fill 0 ack 1078 last 1078 thr -0.1719 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3652 c 1031 v 47
+1057 q 15 fill 0 ack 1079 last 1079 thr -0.1641 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3652 c 1032 v 47
+> 8.818465 ts 8768 frames 1087+10 new 1 size 17 time 3e084297
+1058 q 16 fill 0 ack 1080 last 1080 thr -0.1562 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3660 c 1033 v 47
+1059 q 15 fill 0 ack 1081 last 1081 thr -0.1484 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3660 c 1034 v 47
+1060 q 14 fill 0 ack 1082 last 1082 thr -0.1406 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3660 c 1035 v 47
+> 8.845521 ts 8784 frames 1089+10 new 1 size 17 time 3e082bfc
+1061 q 15 fill 0 ack 1083 last 1083 thr -0.1328 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3668 c 1036 v 47
+> 8.846559 ts 8801 frames 1091+10 new 1 size 17 time 3e081b73
+1062 q 16 fill 0 ack 1084 last 1084 thr -0.1250 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3676 c 1037 v 47
+1063 q 15 fill 0 ack 1085 last 1085 thr -0.1172 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3676 c 1038 v 47
+> 8.868028 ts 8818 frames 1093+10 new 1 size 17 time 3e080690
+1064 q 16 fill 0 ack 1086 last 1086 thr -0.1094 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3684 c 1039 v 47
+1065 q 15 fill 0 ack 1087 last 1087 thr -0.1016 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3684 c 1040 v 47
+> 8.882289 ts 8834 frames 1095+10 new 1 size 17 time 3e07f60c
+1066 q 16 fill 0 ack 1088 last 1088 thr -0.0938 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3692 c 1041 v 47
+1067 q 15 fill 0 ack 1089 last 1089 thr -0.0859 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3692 c 1042 v 47
+w 14 17 0 0 0
+> 8.900543 ts 8851 frames 1097+10 new 1 size 17 time 3e07e380
+1068 q 16 fill 0 ack 1090 last 1090 thr -0.0781 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3700 c 1043 v 47
+1069 q 15 fill 0 ack 1091 last 1091 thr -0.0703 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3700 c 1044 v 47
+> 8.916158 ts 8868 frames 1099+10 new 1 size 17 time 3e07d300
+1070 q 16 fill 0 ack 1092 last 1092 thr -0.0625 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3708 c 1045 v 47
+> 8.924898 ts 8884 frames 1101+10 new 1 size 17 time 3e07c283
+1071 q 17 fill 0 ack 1093 last 1093 thr -0.0547 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3716 c 1046 v 47
+1072 q 16 fill 0 ack 1094 last 1094 thr -0.0469 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3716 c 1047 v 47
+> 8.945179 ts 8901 frames 1103+10 new 1 size 17 time 3e07ae73
+1073 q 17 fill 0 ack 1095 last 1095 thr -0.0391 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3724 c 1048 v 47
+1074 q 16 fill 0 ack 1096 last 1096 thr -0.0312 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3724 c 1049 v 47
+1075 q 15 fill 0 ack 1097 last 1097 thr -0.0234 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3724 c 1050 v 47
+> 8.963814 ts 8918 frames 1105+10 new 1 size 17 time 3e079ba2
+1076 q 16 fill 0 ack 1098 last 1098 thr -0.0156 jump 1 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3732 c 1051 v 47
+1077 q 15 fill 0 ack 1099 last 1099 thr -0.0078 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3732 c 1052 v 47
+> 8.982877 ts 8934 frames 1107+10 new 1 size 17 time 3e07887e
+1078 q 16 fill 0 ack 1100 last 1100 thr 0.0000 jump 1 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3740 c 1053 v 47
+> 8.990837 ts 8951 frames 1109+10 new 1 size 17 time 3e07780b
+1079 q 17 fill 0 ack 1101 last 1101 thr 0.0079 jump 0 rep 0 axes 0 | o 51 u 39 r 39 z 0 s 38 x 37 l 524 d 3748 c 1054 v 47
+w 15 18 0 0 0
+> 9.011860 ts 8968 frames 1111+10 new 1 size 17 time 3e07638c
+> 9.025563 ts 8984 frames 1113+10 new 1 size 17 time 3e07531f

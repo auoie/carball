@@ -7,18 +7,18 @@ const memory = (): Pick<Storage, "getItem" | "setItem" | "removeItem"> & { map: 
 };
 
 describe("the storage keys' new names (carball.*)", () => {
-  it("carry a player's settings, playlist and browser key over once, never over newer values", () => {
+  it("carry a player's settings and playlist over once, never over newer values; the retired browser key dropped (RV-1062)", () => {
     const store = memory();
     store.setItem("rl-clone.settings.v1", '{"camera":{"fov":110}}');
     store.setItem("rl-clone.playlist", "2");
     store.setItem("rl-clone.browserKey", "123456789");
+    store.setItem("carball.browserKey", "987654321");
     store.setItem("carball.playlist", "3"); // (already the new name's: kept)
     store.setItem("other", "x");
-    expect(migrateStorageKeys(store)).toBe(3);
+    expect(migrateStorageKeys(store)).toBe(2);
     expect(Object.fromEntries(store.map)).toEqual({
       "carball.settings.v1": '{"camera":{"fov":110}}',
       "carball.playlist": "3",
-      "carball.browserKey": "123456789",
       other: "x",
     });
     expect(migrateStorageKeys(store), "once").toBe(0);

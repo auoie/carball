@@ -54,16 +54,15 @@ on the dev server, boxes and wheels of their size in builds (`src/render/demolit
 ```sh
 npm run check        # tsc (3 projects) + ESLint (strict type-aware) + Prettier's check + Vitest
 npm run format       # Prettier over the client (pinned: package.json; .prettierrc, .prettierignore)
-npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive, ball cam, reset, settings, and
-                               # two players online against a local carball-server (built and started by the config)
-                               # (e2e/fixtures.ts hides real gamepads from the page); the specs that search against
-                               # the deployment's services in Docker (e2e/services: Postgres, the accounts service,
-                               # game servers, the web image, built from the working tree; needs docker compose)
-npx playwright test --project=local      # the local specs alone (no Docker)
-npx playwright test --project=services   # the services' alone (CARBALL_E2E_IMAGES=TAG: images already built)
-# (a full run builds the images while the local specs run, which can trip their timing; build them first instead:
-#  scripts/build_images.sh --worktree --e2e e2e, then CARBALL_E2E_IMAGES=e2e npm run e2e)
-# A run that's stopped takes its stacks down (Ctrl-C, SIGTERM); one killed outright leaves them to the next run, or:
+npm run build && npm run e2e   # Playwright in the installed Chrome, two runs one after the other (never together: the
+                               # services' stacks coming up beside the local specs trip their timing):
+npm run e2e:local              #   load, drive, ball cam, reset, settings, two players online against a local
+                               #   carball-server (built and started by the config); e2e/fixtures.ts hides real gamepads
+npm run e2e:services           #   the specs that search, against the deployment's services in Docker (e2e/services:
+                               #   Postgres, the accounts service, game servers, the web image, built from the working
+                               #   tree first; CARBALL_E2E_IMAGES=TAG runs images already built; needs docker compose)
+# One services run at a time on the machine (its lock: $XDG_RUNTIME_DIR/carball-e2e-stacks.lock). A run that's stopped
+# takes its stacks down (Ctrl-C, SIGTERM); one killed outright leaves them to the next run, or:
 #  for s in queue edges regions flows; do docker compose -p carball-e2e-$s down -v; done
 ```
 - **TypeScript** (`tsconfig.app.json`): `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no unused

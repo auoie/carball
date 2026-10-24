@@ -115,6 +115,28 @@ export function searchPlan(
   return { chosen: regions, automatic, request: searchRequest(listed, open, measured, playlists, outdated), outdatedOnly };
 }
 
+/** A ping's answer on the regions whose server refused this page's version (RV-1030, RV-1063): a refusal on version marks
+ *  its region, a pong clears it, no answer leaves it as it was. Whether the page's version is to be checked (a refusal) */
+export function markVersion(marks: Set<string>, id: string, answer: { readonly ms: number; readonly server: string } | "outdated" | null): boolean {
+  if (answer === "outdated") {
+    marks.add(id);
+    return true;
+  }
+  if (answer !== null) marks.delete(id);
+  return false;
+}
+
+/** What a refusal on version comes to (RV-1030, RV-1063): the reload's modal when this page's version isn't its
+ *  deployment's (`pageApart`: a reload brings the deployment's page) and none was shown yet; a search left with only such
+ *  regions (`outdatedOnly`) refused with the reload's words then, else as those servers being updated; null, it goes on */
+export function versionVerdict(
+  outdatedOnly: boolean,
+  pageApart: boolean,
+  reloadShown: boolean,
+): { readonly showReload: boolean; readonly refuse: "reload" | "updating" | null } {
+  return { showReload: pageApart && !reloadShown, refuse: outdatedOnly ? (pageApart ? "reload" : "updating") : null };
+}
+
 /** A region's ping from its server's answer (pingServer's): its ms and the name its Pong gives (the search sends it); a
  *  server naming itself outside the matchmaker's pattern counted as unanswered (no search can go there, RV-893), one
  *  naming none (from before the name) known by its URL: no name */

@@ -11,12 +11,13 @@ import { SendClock } from "../game/cameraInput";
 import { postGoalDilation } from "../game/goalSequence";
 import { Interpolated } from "../game/interpolated";
 import { SyncError } from "../game/syncError";
-import type { LocalHost } from "../local/host";
+import type { InputStats, LocalHost } from "../local/host";
 import { FixedStep, frameTimes } from "../loop/fixedStep";
 import { type RemoteModel, inputControls } from "../net/predictor";
 import {
   BIT_BOOST,
   BIT_JUMP,
+  type ControlMessage,
   type InputFrame,
   PROTOCOL_VERSION,
   type Update,
@@ -27,7 +28,7 @@ import {
   quantizeAxis,
 } from "../net/protocol";
 import { NetSession, type SmoothedCar } from "../net/session";
-import { NetSim, type Profile } from "./netsim";
+import { NetSim, Pcg32, type Profile } from "./netsim";
 
 type Engine = Awaited<ReturnType<typeof createEngine>>;
 
@@ -71,9 +72,10 @@ export interface NetRunResult {
   readonly depth: Summary;
   /** The client's smoothed round trip at the end (ms) */
   readonly ping: number | null;
-  /** The server's input buffer as its updates tell it (each update's window since the last, summed over the measured
-   *  span, HUD-21): its target at the end, the ticks it had no frame for (under), the frames it skipped (over), the
-   *  client's input datagrams it never got (lost, of `sent`), and the ticks measured */
+  /** The server's input buffer as its updates tell it (each update's window since the last, once an update: its parts
+   *  carry the same, RV-1039; summed over the measured span, HUD-21): its target at the end, the ticks it had no frame for
+   *  (under), the frames it skipped (over), the client's input datagrams it never got (lost, of `sent`), and the ticks
+   *  measured */
   readonly buffer: {
     readonly target: number;
     readonly under: number;
@@ -98,6 +100,8 @@ export interface NetRunResult {
   /** How far corrections moved each class a second, all summed (uu/s; the per-correction sizes depend on how often a
    *  body's state comes, this doesn't) */
   readonly movedPerSecond: { readonly local: number; readonly remote: number; readonly ball: number };
+  /** The server's own input buffer counters for the client at the end, the whole run's (the host's: RV-1034) */
+  readonly serverInput: InputStats | null;
 }
 
 export interface NetRunOptions {
@@ -117,6 +121,10 @@ export interface NetRunOptions {
   readonly replayEachUpdate?: boolean;
   /** Spans the client draws no frame (a hidden tab, a stall: its updates queue; the next frame is a hitch) */
   readonly clientStalls?: readonly { readonly atS: number; readonly seconds: number }[];
+  /** The page's frame rate (its display's: 60 by default; 59.94, 144) and its frames' jitter (ms, normal: 0 by
+   *  default), the game's fixed step taking what each frame's time gives (RV-1033) */
+  readonly frameHz?: number;
+  readonly frameJitterMs?: number;
 }
 
 /** The default drivers: the client chases the ball as it predicts it; the others chase it with a weave (a bot) */
@@ -188,8 +196,6 @@ function hello(team: number, name: string): Uint8Array {
 const RESET_INPUT_BUFFER = encodeControl({ type: "resetInputBuffer" });
 /** A frame's inputs while the match is frozen (online.ts: the replay, the podium, its end) */
 const NO_INPUT: InputFrame = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 };
-/** The client's rendered frames (s of real time) */
-const FRAME_SECONDS = 1 / 60;
 const NO_CONTROLS = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, handbrake: false };
 
 /** The run, on the host's match: `host` the local host's module set up (LocalHost.create), its match opened anew */
@@ -226,8 +232,14 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
   let clock = 0; // virtual time (s)
   const upPath = new NetSim(options.up, options.seed);
   const downPath = new NetSim(options.down, options.seed + 1);
+  // (the reliable streams' paths: the same delays and stalls, nothing lost or twice (QUIC resends), in order: RV-1033)
+  const reliable = (p: Profile): Profile => ({ ...p, loss: { kind: "none" }, duplicate: 0, outages: [] });
+  const streamUp = new NetSim(reliable(options.up), options.seed + 2);
+  const streamDown = new NetSim(reliable(options.down), options.seed + 3);
+  const streamAt = { up: 0, down: 0 };
   const toServer: InFlight<Uint8Array>[] = [];
   const toClient: InFlight<Update>[] = [];
+  const controls: InFlight<ControlMessage>[] = []; // (the server's control messages on their way down)
   const resets: number[] = []; // (the reset requests on their way up)
   let resetsDone = 0;
   const bufferTargets: number[] = [];
@@ -247,9 +259,10 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
         if (clock >= (options.warmUp ?? 3)) sent++;
         for (const at of upPath.send(clock)) toServer.push({ at, value: bytes });
       },
-      // (a reliable control message: never lost, RV-337)
+      // (a reliable control message: never lost, RV-337; its stream's delay, RV-1033)
       resetInputBuffer: () => {
-        resets.push(clock + options.up.baseMs / 1000);
+        streamAt.up = Math.max(streamAt.up, streamUp.send(clock)[0] ?? clock);
+        resets.push(streamAt.up);
       },
       nowMs: () => clock * 1000,
     },
@@ -275,6 +288,15 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
     const stalled = (options.clientStalls ?? []).some((st) => clock >= st.atS && clock < st.atS + st.seconds);
     for (const u of deliver(toClient, clock)) session.receive(u);
     if (stalled) return; // (no frame drawn: its updates queue, the next a hitch)
+    // (the control messages come in at the page's frame, before its updates apply: online.ts's #frame, RV-1033)
+    for (const c of deliver(controls, clock)) {
+      if (c.type === "world") session.reload(c.frame, c.snapshot, syncCars);
+      else if (c.type === "event" && c.event.kind === "goal") goalTick = c.serverTick;
+      else if (c.type === "match" && c.phase !== phase) {
+        phase = c.phase;
+        phases.push({ at: clock, phase: c.phase });
+      }
+    }
     const raw = clock - lastFrameAt;
     session.applyUpdates();
     session.watchHitches(raw);
@@ -305,29 +327,31 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
       host.control(CLIENT, RESET_INPUT_BUFFER, at);
       resetsDone++;
     }
-    for (const d of deliverTimed(toServer, clock)) host.datagram(CLIENT, d.value, d.at);
+    // (the server's game thread reads a session's inputs once a pass, a millisecond apart at most: of the datagrams that
+    // came within one, the newest alone, its InputSlot's, RV-991, RV-1033)
+    const passes = new Map<number, InFlight<Uint8Array>>();
+    for (const d of deliverTimed(toServer, clock)) passes.set(Math.floor(d.at * 1000), d);
+    for (const d of passes.values()) host.datagram(CLIENT, d.value, d.at);
     host.tick(clock);
     if (measuring) measuredTicks++;
     if (late.from === null && clock >= options.seconds - 5) late.from = session.predictor.stats.localMispredictions;
     for (const m of host.drain()) {
       if (m.id !== CLIENT || m.kind === "end") continue;
       if (m.kind === "control") {
-        const c = decodeControl(m.bytes.subarray(2));
-        if (c.type === "world") session.reload(c.frame, c.snapshot, syncCars);
-        else if (c.type === "event" && c.event.kind === "goal") goalTick = c.serverTick;
-        else if (c.type === "match" && c.phase !== phase) {
-          phase = c.phase;
-          phases.push({ at: clock, phase: c.phase });
-        }
+        streamAt.down = Math.max(streamAt.down, streamDown.send(clock)[0] ?? clock);
+        controls.push({ at: streamAt.down, value: decodeControl(m.bytes.subarray(2)) });
         continue;
       }
       const u = decodeDatagram(m.bytes);
       if (u.type !== "update") continue;
       buffer.target = u.bufferTarget;
       if (measuring) {
-        buffer.under += u.bufferUnder;
-        buffer.over += u.bufferOver;
-        buffer.lost += u.inputLoss;
+        // (an update's window once: each of its parts carries it, RV-1039)
+        if (u.part === 0) {
+          buffer.under += u.bufferUnder;
+          buffer.over += u.bufferOver;
+          buffer.lost += u.inputLoss;
+        }
         downBytes += m.bytes.byteLength;
       }
       for (const at of downPath.send(clock)) toClient.push({ at, value: u });
@@ -347,15 +371,17 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
   };
 
   // (both on one virtual clock: the client's frame first when they fall together, as a page's frame before the server
-  // hears it)
-  for (let frames = 1; ;) {
+  // hears it; the page's frames at its display's rate, jittered as asked, RV-1033)
+  const frameRng = new Pcg32(BigInt(options.seed), 77n);
+  const frameSeconds = 1 / (options.frameHz ?? 60);
+  const frameGap = (): number => Math.max(0.001, frameSeconds + ((options.frameJitterMs ?? 0) / 1000) * frameRng.normal());
+  for (let frameAt = frameGap(); ;) {
     const tickAt = host.nextTick();
-    const frameAt = frames * FRAME_SECONDS;
     if (tickAt === null) break;
     if (frameAt <= tickAt + 1e-9) {
       if (frameAt > options.seconds + 1e-9) break;
       clock = frameAt;
-      frames++;
+      frameAt += frameGap();
       clientFrame();
     } else {
       if (tickAt > options.seconds + 1e-9) break;
@@ -388,6 +414,7 @@ export function netRun(engine: Engine, host: LocalHost, options: NetRunOptions):
       remote: sum(session.metrics.remoteErrors) / measuredSeconds,
       ball: sum(session.metrics.ballErrors) / measuredSeconds,
     },
+    serverInput: host.inputStats(CLIENT),
   };
   botWorld.dispose();
   client.dispose();

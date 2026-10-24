@@ -11,6 +11,18 @@ export type HostMessage =
   | { readonly id: number; readonly kind: "end" };
 
 /** A bot's controls (as the engine's: axes -1..1, throttle too; buttons held) */
+/** A player's input buffer counters on the host (server/src/input_buffer.rs Stats) */
+export interface InputStats {
+  readonly consumed: number;
+  readonly neverConsumed: number;
+  readonly over: number;
+  readonly under: number;
+  readonly fillSkips: number;
+  readonly duplicates: number;
+  readonly late: number;
+  readonly trimmed: number;
+}
+
 export interface BotControls {
   readonly throttle: number;
   readonly steer: number;
@@ -119,6 +131,23 @@ export class LocalHost {
   phase(id: number): number | null {
     const phase = this.#m._host_phase(id);
     return phase < 0 ? null : phase;
+  }
+
+  /** A player's input buffer counters on the host (the network tests'), or null for no such player */
+  inputStats(id: number): InputStats | null {
+    const read = (which: number): number => this.#m._host_input_stat(id, which);
+    if (read(0) < 0) return null;
+    const [consumed, neverConsumed, over, under, fillSkips, duplicates, late, trimmed] = [0, 1, 2, 3, 4, 5, 6, 7].map(read);
+    return {
+      consumed: consumed ?? 0,
+      neverConsumed: neverConsumed ?? 0,
+      over: over ?? 0,
+      under: under ?? 0,
+      fillSkips: fillSkips ?? 0,
+      duplicates: duplicates ?? 0,
+      late: late ?? 0,
+      trimmed: trimmed ?? 0,
+    };
   }
 
   /** The whole match's state as a welcome's snapshot (World.loadState); empty for no such player */

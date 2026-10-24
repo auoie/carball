@@ -34,7 +34,13 @@ indicator), the full §13 harness, free-play polish.
   2026-10-23's design 5; a TS port of the input buffer before it) at 80 ms round trip, 20 ms jitter, 2 % loss: the
   buffer rarely dry, at 11, the local car's corrections p95 up to 3 uu, the bot's p95 ≈ 20 uu; the ball's p95 0 (seed 5's
   ~3 s with its car demolished not counted: states applied as they come, no prediction to correct, G5; RV-1029).
-  Before G1 (the port's replication): 42.9 → 3.9 KB/s, local mispredictions 97 → 32.
+  Before G1 (the port's replication): 42.9 → 3.9 KB/s, local mispredictions 97 → 32. Since the review batch of
+  2026-10-24: the buffer refills on the frame being run's parity, as the exe (`(tick_count()+1) % 2`, RV-1032; one-way
+  up delays of 26–33 and 42–49 ms then hold it over its target, pinned at 33/34 and 41/42 ms, RV-1037), its high
+  sampled before the consumes (RV-1038), its behaviour pinned by a golden trace (`server/tests/input_buffer_trace.txt`,
+  `REGENERATE_VECTORS=1`, RV-1031); the harness paces frames with jitter at 60, 144 and 59.94 Hz, sends control
+  messages and the reset on reliable paths, keeps the newest datagram per server pass, and reads the server's own
+  input counts (`host_input_stat`: none passed over for good, RV-1033/1034).
 - Kept from the first harness step: `server/src/netsim.rs` (seeded paths; `client/src/testing/netsim.ts` its twin,
   checked against the vectors it writes), the input buffer's T2 tests (`server/src/net_tests.rs`).
 
@@ -150,12 +156,14 @@ thread per match): every match stays on the one game thread.
 QUIC Retry before it takes a slot, keys IPv6 by /64 (IPv4-mapped addresses as IPv4) and gives the QUIC handshake 4 s
 (RV-366); a certificate whose key isn't its pair is an error, not wtransport's panic (`net::load_identity`, RV-368); a
 blank `ALLOWED_ORIGIN` fails closed and origins compare without case (RV-372); a queue server needs a certificate or
-`--dev` (RV-381; the image's development run is `--dev`); input floods close a session too and overrun counts drain
+`--dev` (RV-381; the image's development run is `--dev`; since design 4, 2026-10-24, `--dev` is the open match's alone
+and a queue server needs its certificate); input floods close a session too and overrun counts drain
 (RV-373). The queue's no-shows (RV-367, the user's decision): a found match waits 12 s; cancelled for someone, the
 players who claimed (or were still loading, refused their claim) search again with their token in the search hello and
 go back to the front in their first search's order; whoever stalled it (didn't claim, or left before the start) gets
 `SearchCooldown` for 2 minutes by browser key (`carball.browserKey`, local storage; their address only after a second
-key's stall there: RX14's RV-385, RX15's RV-407). The wheel ray's hit
+key's stall there: RX14's RV-385, RX15's RV-407; the central matchmaker's cooldown goes by account since MX1, and the
+browser key went with design 4, 2026-10-24). The wheel ray's hit
 point is `setInterpolate3`, its normal never normalized again, the planes tested analytically (patch 108, RV-377); the
 candidates come in the game's SAP order, kept by the broadphase and carried by snapshots (patch 109, RV-375; the statics'
 keys are the engine's boxes: the remaining difference). The netstate gate counts divergences caused by the client's
@@ -1103,7 +1111,7 @@ PATH=/usr/lib/emscripten:$PATH emcmake cmake -S ../engine -B ../engine/build-was
 PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ../engine/wasm/test_node.mjs
 ../engine/tests/check_native_wasm.sh 600     # native == WebAssembly, bit for bit (must stay identical)
 ../engine/build/rollback ../out/arena/collision_meshes 300   # restored snapshots continue bit for bit
-cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser tests
+cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser tests (local, then services)
 cd ../server && cargo test && cargo clippy --all-targets -- -D warnings   # game server (cargo run --release to play)
 cargo clippy --no-default-features --features host --lib --bins -- -D warnings   # the local host's configuration (RV-552)
 python3 replay_pull.py ../out/replays && replay_extract/target/release/replay_extract ../out/replays/states.csv ../out/replays/*.replay
