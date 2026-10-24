@@ -45,7 +45,7 @@ goals server-authoritative; render interpolation between the last two ticks; no 
 |---|---|---|
 | Physics rate / substeps / history | 120 Hz / 5 per render frame / 120 frames | EngineShare_TA; `FUN_140f4ec60`; `FUN_140f03070` |
 | Input mode | ServerConsume (STS/CSTS opt-in) | NetworkSave_TA; `PlayerController_TA.GetInputBufferClass` |
-| Client input rate / frames per packet | 60 Hz (20/40/60) / ≤ 10 | PlayerController_TA; NetworkConfig_TA.MaxClientUploadFrames |
+| Client input rate / frames per packet | 60 Hz (20/40/60) / ≤ 10; a per-render-frame accumulator, ≤ 1 packet a frame (PERF1, below) | PlayerController_TA; NetworkConfig_TA.MaxClientUploadFrames |
 | Server queue cap | 60 frames | `TrimInputFrames` |
 | Jitter buffer | 0.016–0.25 s, 15 s, 4σ, ≥ 0.05 s, size ceil(t·120)+1, initial 7 | NetworkJitterSettings_TA; ClientJitterBuffer_TA |
 | Input timeout | 1 s → zero input | `FUN_140f1e780` → `FUN_140eb31f0` |
@@ -61,7 +61,8 @@ goals server-authoritative; render interpolation between the last two ticks; no 
 | Ping compensation | − (RealDeltaSeconds + 0.016)/2 | NetworkInputBuffer_TA.UpdatePing |
 
 ## Open
-TcpNetDriver rate defaults (60 / 15000 from the user's log; per-connection enforcement not decoded); client roles
+TcpNetDriver rate defaults (60 / 15000 from the user's log; the per-connection throttle now decoded: "Packet framing"
+below); client roles
 (AutonomousProxy / SimulatedProxy) inferred from gates; remote components not simulated on clients (inferred, can't
 be tested offline); ack-before-state order in a packet (UE3 assumption).
 
@@ -321,12 +322,55 @@ server-only forcing (FUN_140eed780 needs NetMode 1 or 2).
   "Correction smoothing (live build)" → N-4e).
 - The setter of EngineShare+0x170 bit 0x20 (deferred dirtying in FUN_140f643f0), probably states received before the
   ack.
-- UE3 bunch and packet framing in RL (≈ 26-bit bunch header, 14-bit packet id, acks, possible packet encryption) is
-  not decoded; byte totals use the UE3 layout [inf].
+- ~~UE3 bunch and packet framing in RL~~: **the packet framing is decoded** ("Packet framing" below: 512 B packets, a
+  14-bit packet id, acks sent twice, one datagram per connection a tick, encryption when set); still inferred: the bunch
+  header (≈ 26 bits [inf]), the cipher's overhead, KeepAliveTime (UE3's 0.2 s [inf]); byte totals keep the UE3 bunch
+  layout.
 - `NetServerMaxTickRate` 57 is a class default (`ServerConfig_X`, an online config); a live override would change the
   effective rates (at 120 Hz: cars ≈ 6.7/s, ball ≈ 27/s per client with the same gating [sim]).
 - Ping: repeated ack timestamps produce stale ping samples (`UpdatePing`); **PC.UpdatePing's filter: settled** (see
   "Correction smoothing (live build)" → Ping filter).
+
+### Packet framing and the client's input rate (PERF1 item 4, WHEEL1, 2026-10-24)
+Tags: [S] script (WHEEL1's dumps, the TA: lines as above), [A] class defaults, [N] native (the live build's copy), [I]
+inferred.
+- **The client's input packets** [S, A]: `ShouldSendClientMovePackets` (TA 70977), run from `ClientTick` once a render
+  frame: `T += dt / TimeDilation; if T ≥ 1/rate { T = clamp(T − 1/rate, 0, 1/rate); send }`, so at most one packet a
+  frame (every 2–3 frames at 144 fps, every 4th–5th at 240, every frame under 60). `Default__PlayerController_TA`:
+  Min/Median/Max 20/40/60, configured 60 (Net_High, `NetworkSave_TA`, TA 71206–71215), client-side only. At 120 Hz
+  physics, about 2 new frames a packet.
+- **Batching and redundancy** [S, A]: `ClientSendPacket` (TA 70994) drops the oldest frames past
+  `MaxInputFramesPerPacket` = `NetworkConfig_TA.MaxClientUploadFrames` 10 (online-overridable; under STS
+  min(ReplicatedInputBufferSize + 2, 30)) and sends every pending frame, the camera and `RealTimeSeconds` as the
+  unreliable `ServerReceivePacket`, then `SendPendingRPCs`. `ClientAckFrame` (TA 71042) drops frames once the server has
+  received them (by the ack's timestamp): a frame rides every packet until acked, ≈ RTT·120 + 2 frames (10 from ~70 ms).
+- **Encoding** [N] (FUN_140f16fe0 / FUN_140ed4120, as N-9d): a fixed ≈ 143 bits (TimeStamp 32, the camera's packed
+  vector and rotator, the frame count via SerializeInt max 31, the first frame's number 32), then per frame a "changed"
+  bit and, if changed, 7 axes (a bit and an optional byte each) and 7 buttons: 1–71 bits a frame.
+- **Server → client** [A, N]: ≤ 57 server frames a second (`ServerConfig_X.NetServerMaxTickRate` 57, idle 20); per
+  connection a timer `(0.5 + U)/ReplicationRate` (NetRepRate 60 at Net_High): ≈ 55 datagrams a second with the ack RPC,
+  then the actors (ball ≈ 35/s, car ≈ 13.4/s, N-9h).
+- **Packets** [N]: MaxPacket 0x200 (512 B) and PacketOverhead 0x2e (46 B), TcpipConnection InitConnection
+  (0x140c1ec00), stored at +0x184 by the base (0x140b9fc10); the default when a caller passes 0, the value in use
+  inferred. PreSend (0x140ba1270) flushes before an item that wouldn't fit, so a large tick splits into several
+  datagrams.
+- **Header** [N]: an optional 3-byte prefix (flag +0xb1dc, a session id [I]), then `WriteInt(OutPacketId, 0x4000)`: a
+  14-bit packet id.
+- **Acks** [N] (SendAck 0x140ba9100): a bit and the 14-bit id, piggybacked on the next outgoing packet and sent twice
+  (QueuedAcks → ResendAcks, PurgeAcks 0x140ba1790); not TimeSensitive, so a client's ride its 60 Hz input packets (the
+  receive side not checked).
+- **Flush** [N]: the connection's Tick (0x140bad250) flushes once a tick if TimeSensitive or past KeepAliveTime;
+  FlushNet (0x140b9e320) adds the end bit and padding, encrypts through `NetConnectionEncryptor` when one is set
+  (FUN_14051a6a0), and sends: one tick's traffic a connection shares one datagram, split only past 512 B.
+- **Throttle** [N]: QueuedBytes (+0x200) decays by CurrentNetSpeed bytes a second, floored at −NetSpeed/4; NetSpeed
+  15000 B/s at Net_High (the user's log; TcpNetDriver's values config only).
+- **Against Carball** (nothing new to change): the same 120 Hz tick (game.rs), 60 packets a second on a per-frame
+  accumulator, ≤ 1 a frame (`SendClock`, cameraInput.ts; online.ts), ≤ 10 frames with the oldest dropped (protocol.ts,
+  session.ts), the actors' cadence (replication.rs), acks equivalent (ackFrame / receivedFrame / echo; packet acks by
+  QUIC). Known and kept: resends dropped once consumed rather than received (G12), frames a fixed 7 B and a 12 B header
+  rather than delta bits (N-9d), server → client a fixed 60/s rather than ≈ 55 jittered, 1100 B parts rather than 512,
+  QUIC's congestion control rather than a 15 KB/s throttle, QUIC's TLS rather than NetConnectionEncryptor; no 20/40 Hz
+  option.
 
 ### Live addresses
 | Function | Live address |
