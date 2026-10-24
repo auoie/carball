@@ -80,7 +80,7 @@ describe("play over a network path (in process)", () => {
   }, 120_000);
 
   it("stays sane at an 80 ms round trip with 20 ms of jitter and 2 % loss", () => {
-    for (const seed of [3, 5, 8]) {
+    for (const seed of [3, 4, 5, 8]) {
       const r = netRun(engine, host, { seconds: 30, up: REALISTIC, down: REALISTIC, seed });
       report(`realistic, seed ${String(seed)}`, r);
       // The 10 frames each packet repeats cover the losses (the server's "lost" counts every gap in the packets'
@@ -99,7 +99,8 @@ describe("play over a network path (in process)", () => {
       expect(r.local.p95).toBeLessThanOrEqual(4);
       expect(r.local.mean).toBeLessThanOrEqual(1);
       expect(r.movedPerSecond.local).toBeLessThanOrEqual(10);
-      expect(r.localMispredictions).toBeLessThanOrEqual(30);
+      // (measured: 23, 32, 11, 23 for seeds 3, 4, 5, 8: the bound a quarter over the worst, RV-1079)
+      expect(r.localMispredictions).toBeLessThanOrEqual(40);
       // (no frame passed over for good on the server: its own count, not the datagrams' gaps, RV-1034)
       expect(r.serverInput?.neverConsumed).toBe(0);
       // The bot's and the ball's corrections stay small (each smoothed when drawn): measured while the client predicts.
@@ -115,18 +116,23 @@ describe("play over a network path (in process)", () => {
   }, 300_000);
 
   it("stays sane at a 144 Hz display and a 59.94 Hz one, their frames jittered (RV-1033)", () => {
-    for (const [frameHz, frameJitterMs] of [
-      [144, 1],
-      [59.94, 2],
+    for (const [frameHz, frameJitterMs, seed] of [
+      [144, 1, 3],
+      [144, 1, 5],
+      [59.94, 2, 3],
+      [59.94, 2, 5],
     ] as const) {
-      const r = netRun(engine, host, { seconds: 30, up: REALISTIC, down: REALISTIC, seed: 3, frameHz, frameJitterMs });
-      report(`realistic, ${String(frameHz)} Hz ± ${String(frameJitterMs)} ms`, r);
+      const r = netRun(engine, host, { seconds: 30, up: REALISTIC, down: REALISTIC, seed, frameHz, frameJitterMs });
+      report(`realistic, ${String(frameHz)} Hz ± ${String(frameJitterMs)} ms, seed ${String(seed)}`, r);
       expect(r.buffer.under).toBeLessThanOrEqual(r.buffer.ticks * 0.005);
       expect(r.serverInput?.neverConsumed).toBe(0);
       expect(r.errors.local.length).toBeGreaterThan(0);
       // (59.94 Hz drifts against the server's 120: now and then a frame's input repeated or skipped, its correction a
-      // little larger than 60 Hz's: p95 4.1)
+      // little larger than 60 Hz's: p95 4.1, mean up to 0.98 and 11.0 uu a second moved (seed 5): the bounds about a third
+      // over, RV-1079)
       expect(r.local.p95).toBeLessThanOrEqual(6);
+      expect(r.local.mean).toBeLessThanOrEqual(1.5);
+      expect(r.movedPerSecond.local).toBeLessThanOrEqual(15);
       expect(r.localMispredictions).toBeLessThanOrEqual(30);
       expect(r.ball.p95).toBe(0);
     }

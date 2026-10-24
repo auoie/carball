@@ -69,6 +69,9 @@ pub enum Report {
     Left { match_id: String, seat: u8 },
     /// A seat's player rejoined: in the match again
     Back { match_id: String, seat: u8 },
+    /// A rejoin the matchmaker let through, refused here (its match concluded, its seat gone): the matchmaker stops
+    /// holding the account's searches for a Back that won't come, shown by the rejoin's own ticket (RV-1076)
+    RejoinRefused { match_id: String, ticket: String },
     /// A match cancelled before its start: the seats that stalled it (not claimed in time, or left before the start)
     Cancelled { match_id: String, no_shows: Vec<u8> },
     /// A started match let go with no result (a no contest; seats without tickets): its accounts free
@@ -100,6 +103,7 @@ impl Report {
             Report::Started { match_id } => format!("match {match_id}: started"),
             Report::Left { match_id, seat } => format!("match {match_id}: seat {seat} left"),
             Report::Back { match_id, seat } => format!("match {match_id}: seat {seat} back"),
+            Report::RejoinRefused { match_id, .. } => format!("match {match_id}: a rejoin refused here"),
             Report::Cancelled { match_id, no_shows } => format!("match {match_id}: cancelled (no-shows {no_shows:?})"),
             Report::Over { match_id } => format!("match {match_id}: over, no result"),
             Report::Restarted { at } => format!("restarted at {at}"),
@@ -753,6 +757,12 @@ impl MatchHost {
     }
 
     /// When the next match tick is due (s); None without matches
+    /// A rejoin of match `match_id` (the matchmaker's id) refused by `rejoin`, its ticket (`ticket`): told to the
+    /// matchmaker, which let it through (RV-1076)
+    pub fn rejoin_refused(&mut self, match_id: u64, ticket: String) {
+        self.reports.push(Report::RejoinRefused { match_id: format!("{match_id:016x}"), ticket });
+    }
+
     /// The matches hosted and the players in them
     pub fn counts(&self) -> (usize, usize) {
         (self.matches.len(), self.players.len())
@@ -1034,6 +1044,7 @@ mod tests {
             Report::Result(result),
             Report::Quitter { match_id: "00000000000000a1".into(), ticket: "eyJh.secret.sig".into() },
             Report::Refilled { match_id: "00000000000000a1".into(), ticket: "eyJh.secret.sig".into() },
+            Report::RejoinRefused { match_id: "00000000000000a1".into(), ticket: "eyJh.secret.sig".into() },
         ] {
             let line = report.summary();
             assert!(line.contains("match 00000000000000a1") && !line.contains("secret"), "{line}");

@@ -262,6 +262,13 @@ fn dev_info_on(args: &Args) -> bool {
     args.dev_info.unwrap_or(args.cert.is_none())
 }
 
+/// Whether a public server (a certificate) serves its counters beyond this machine: asked for, on an address that isn't
+/// loopback (a bridged container's 0.0.0.0, published on the host's 127.0.0.1 alone, is fine; a host-networked one's
+/// isn't): said loudly at the start (RV-1085)
+fn metrics_beyond_loopback(args: &Args) -> bool {
+    dev_info_on(args) && args.cert.is_some() && !args.info_bind.is_loopback()
+}
+
 impl Cli {
     /// The arguments with the rules between them: a public server (a certificate) needs its page origins; a queue server
     /// needs a certificate, its tickets' keys, the accounts service and an outbox (`--dev` is the open match's alone)
@@ -709,6 +716,15 @@ async fn run() -> anyhow::Result<()> {
     if dev_info {
         tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, dev_hash, metrics));
         tracing::info!("the benchmark's counters on http://{}:{}/metrics", args.info_bind, args.info_port);
+        if metrics_beyond_loopback(&args) {
+            tracing::warn!(
+                "--info-bind {}: a public server's counters served beyond this machine; keep port {} off the internet \
+                 (a bridged container's publish on 127.0.0.1 alone; with host networking, the default 127.0.0.1: \
+                 notes/benchmarks.md)",
+                args.info_bind,
+                args.info_port
+            );
+        }
     }
     match (dev_info, dev_hash) {
         (true, Some(_)) => {
@@ -1195,8 +1211,16 @@ mod tests {
             ("OUTBOX_DIR", "/o"),
         ];
         assert!(!dev_info_on(&parse_with(&[], &env).unwrap()), "SEC-6: off with a certificate");
-        // (asked for: its /metrics alone, the benchmark's, on 127.0.0.1 unless --info-bind says otherwise)
+        // (asked for: its /metrics alone, the benchmark's, on 127.0.0.1 unless --info-bind says otherwise; beyond it, said
+        // loudly, RV-1085)
         assert!(dev_info_on(&parse_with(&["--dev-info", "on"], &env).unwrap()), "asked: on");
+        assert!(!metrics_beyond_loopback(&parse_with(&["--dev-info", "on"], &env).unwrap()));
+        assert!(metrics_beyond_loopback(&parse_with(&["--dev-info", "on", "--info-bind", "0.0.0.0"], &env).unwrap()));
+        assert!(!metrics_beyond_loopback(&parse_with(&["--info-bind", "0.0.0.0"], &env).unwrap()), "not asked: none");
+        assert!(
+            !metrics_beyond_loopback(&parse(&["--dev", "--info-bind", "0.0.0.0"]).unwrap()),
+            "a development server"
+        );
         assert!(dev_info_on(&parse(&[]).unwrap()));
         assert!(!dev_info_on(&parse(&["--dev-info", "off"]).unwrap()));
         assert!(dev_info_on(&parse(&["--dev"]).unwrap()));

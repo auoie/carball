@@ -463,6 +463,15 @@ async fn ticketed_server(quick: bool) -> (u16, [u8; 32], TestKey) {
 
 /// `ticketed_server` with these limits (its tickets and name added)
 async fn ticketed_server_limited(quick: bool, limits: NetLimits) -> (u16, [u8; 32], TestKey) {
+    ticketed_server_reporting(quick, limits, None).await
+}
+
+/// `ticketed_server_limited`, its game's reports (the outbox's) handed to `reports`
+async fn ticketed_server_reporting(
+    quick: bool,
+    limits: NetLimits,
+    reports: Option<tokio::sync::mpsc::UnboundedSender<carball_server::match_host::Report>>,
+) -> (u16, [u8; 32], TestKey) {
     engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = if quick {
@@ -488,7 +497,8 @@ async fn ticketed_server_limited(quick: bool, limits: NetLimits) -> (u16, [u8; 3
         })
         .to_vec();
     std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
+        let mode = game_loop::Mode::Queue(playlists);
+        game_loop::run_with_reports(messages, mode, None, heartbeat(), Instant::now(), reports)
     });
     let key = TestKey::new();
     let limits =
@@ -701,6 +711,33 @@ async fn a_queue_servers_unserved_intents_never_reach_the_game() {
     while let Ok(message) = messages.try_recv() {
         assert!(!matches!(message, net::ToGame::Join { .. }), "a join reached the game: {message:?}");
     }
+}
+
+/// RV-1076: a rejoin the matchmaker let through and the game then refused (a match this server doesn't have: concluded)
+/// is told to the matchmaker with its own ticket, so the account's searches aren't held for a Back that won't come; a
+/// rejoin the matchmaker refused itself isn't (it holds nothing)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rejoin_let_through_and_refused_here_is_reported() {
+    let service = rejoin_service(true).await;
+    let (tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
+    let (port, cert_hash, key) = ticketed_server_reporting(false, asking(service.uri()), Some(tx)).await;
+    let rejoin = key.issue([6; 16], "Fay", Purpose::Rejoin(0xd6));
+    let (reply, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd6, rejoin.clone())).await;
+    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_CONCLUDED });
+    let report = tokio::time::timeout(Duration::from_secs(2), reports.recv()).await.expect("a report").unwrap();
+    assert_eq!(
+        report,
+        carball_server::match_host::Report::RejoinRefused { match_id: "00000000000000d6".into(), ticket: rejoin }
+    );
+    // (the matchmaker's own no: nothing held there, nothing told)
+    service.reset().await;
+    answer_rejoins(&service, false).await;
+    let other = key.issue([6; 16], "Fay", Purpose::Rejoin(0xd7));
+    let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd7, other)).await;
+    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_REJOIN_GONE });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(reports.try_recv().is_err(), "a report for the matchmaker's own no");
 }
 
 /// RV-1008, RV-1020: a rejoin the matchmaker refuses (its account searched or was matched since, maybe at another server)

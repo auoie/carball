@@ -104,10 +104,16 @@ pub fn run_with_reports(
                         }
                         Intent::Rejoin { match_id } => {
                             let asked = format!("a rejoin of match {match_id:016x}");
+                            let ticket = request.ticket.as_ref().map(|t| t.encoded.clone());
                             if !queue_mode {
                                 refuse_logged(out, protocol::REFUSED_MODE, id, &who, &asked);
                             } else if let Err(reason) = host.rejoin(match_id, id, request, out.clone()) {
                                 refuse_logged(out, reason, id, &who, &asked);
+                                // (the matchmaker let it through and holds the account's searches for its Back: told
+                                // it won't come, RV-1076)
+                                if let Some(ticket) = ticket {
+                                    host.rejoin_refused(match_id, ticket);
+                                }
                             }
                         }
                     }

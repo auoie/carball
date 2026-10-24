@@ -30,6 +30,11 @@ export const RELOAD_TEXT = {
   title: "New Version",
 } as const;
 
+/** A reason in lower case (a refusal's, a ban's) as a modal's sentence: capitalized, a full stop */
+export function sentence(text: string): string {
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+}
+
 export class Modal {
   readonly #root: HTMLDivElement;
   readonly #box: HTMLDivElement;

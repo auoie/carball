@@ -224,6 +224,9 @@ protocol 29, 2026-10-23). One new call, `POST /api/fleet/events {event, server, 
 seat, noShows, at}`, carries:
 - `started`;
 - `left` and `back` (a seat's player leaving the started match, or rejoining it);
+- `rejoin-refused` (a rejoin the matchmaker let through, refused at the server: its match concluded, its seat gone),
+  with the rejoin's own `ticket`, which names the account: the matchmaker stops holding that account's searches for its
+  Back (RV-1076; the hold's fallback 2 minutes, a word lost);
 - `cancelled` (the seats that stalled it: unclaimed, or left before the start);
 - `over` (ended with no result);
 - `restarted` (this server's earlier matches are gone, whatever its `at`: RV-873's clamp removed, RV-901).

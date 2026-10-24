@@ -997,6 +997,64 @@ func TestARejoinHoldIsForAKnownMatchAndEndsWithIt(t *testing.T) {
 	}
 }
 
+// RV-1076: a rejoin let through and refused at its server frees the account's searches at that server's word; another
+// server's word, or one about another match, frees nothing
+func TestARejoinRefusedAtItsServerFreesItsHold(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("j", 1500), []byte{1}, near)
+	h.search(t, player("k", 1500), []byte{1}, near)
+	h.at(time.Second)
+	m := h.found(t, "j")
+	h.m.Started("eu:4433", m.ID, h.now)
+	h.m.Left("eu:4433", m.ID, slices.IndexFunc(h.m.matches[m.ID].accounts, func(a string) bool { return a == "j" }))
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433") {
+		t.Fatal("an ordinary rejoin refused")
+	}
+	elsewhere := map[string]int{"us:4433": 30}
+	held := func(why string) {
+		t.Helper()
+		if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); !errors.Is(err, ErrInMatch) {
+			t.Fatalf("%s: %v, want ErrInMatch (still held)", why, err)
+		}
+	}
+	held("before any word")
+	h.m.RejoinRefused("us:4433", "j", m.ID)
+	held("another server's word")
+	h.m.RejoinRefused("eu:4433", "j", m.ID+1)
+	held("a word about another match")
+	h.m.RejoinRefused("eu:4433", "j", m.ID)
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); err != nil {
+		t.Errorf("a search after its server refused the rejoin: %v", err)
+	}
+}
+
+// RV-1076: a Back later than the old 10 s (the outbox backing off) still finds the account held: never matched into a
+// second match meanwhile, so the Back puts it in its match
+func TestALateBackFindsItsAccountStillHeld(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("j", 1500), []byte{1}, near)
+	h.search(t, player("k", 1500), []byte{1}, near)
+	h.at(time.Second)
+	m := h.found(t, "j")
+	h.m.Started("eu:4433", m.ID, h.now)
+	seat := slices.IndexFunc(h.m.matches[m.ID].accounts, func(a string) bool { return a == "j" })
+	h.m.Left("eu:4433", m.ID, seat)
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433") {
+		t.Fatal("an ordinary rejoin refused")
+	}
+	h.alive(13 * time.Second)
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, map[string]int{"us:4433": 30}), h.now); !errors.Is(err, ErrInMatch) {
+		t.Fatalf("a search 12 s after the yes, no Back yet: %v, want ErrInMatch", err)
+	}
+	h.m.Back("eu:4433", m.ID, seat, h.now)
+	h.m.mu.Lock()
+	active, held := h.m.active["j"], len(h.m.rejoining)
+	h.m.mu.Unlock()
+	if active != m.ID || held != 0 {
+		t.Errorf("after the late Back: active %x (want %x), %d holds left", active, m.ID, held)
+	}
+}
+
 // RV-1009: a name with a line break (or Unicode's line separator) stays on its own line in the log: slog's text values
 // quoted, so it can't forge a line of its own
 func TestANamesLineBreaksStayOnItsLine(t *testing.T) {

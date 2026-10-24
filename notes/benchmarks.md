@@ -12,7 +12,8 @@ machine against another.
   `/info`). The info server listens on `--info-bind` (127.0.0.1 unless given) and `--info-port` (4434). With host
   networking (the deployment's), keep it on 127.0.0.1 and read it on the machine itself; never bind it to a public
   address. In a bridged container, `--info-bind 0.0.0.0` with the port published on the host's 127.0.0.1 alone
-  (`-p 127.0.0.1:4434:4434`).
+  (`-p 127.0.0.1:4434:4434`). A server with a certificate whose info server isn't on loopback says so in a warning at
+  its start (RV-1085).
 - **Off** (the default with a certificate): nothing is counted, and every counting site is a check of an empty cell.
 
 ## What they report

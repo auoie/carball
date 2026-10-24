@@ -221,6 +221,10 @@ pub fn call_of(report: &Report, server: &str, created: i64) -> Call {
         Report::Back { match_id, seat } => {
             event(json!({ "event": "back", "server": server, "match": match_id, "seat": seat }), created)
         }
+        // (the rejoin's own ticket: the account it names, its hold let go)
+        Report::RejoinRefused { match_id, ticket } => {
+            event(json!({ "event": "rejoin-refused", "server": server, "match": match_id, "ticket": ticket }), created)
+        }
         Report::Cancelled { match_id, no_shows } => {
             event(json!({ "event": "cancelled", "server": server, "match": match_id, "noShows": no_shows }), created)
         }
@@ -599,6 +603,13 @@ mod tests {
             body(Report::Back { match_id: m(), seat: 3 }),
             json!({"event": "back", "server": "game-eu.example:4433", "match": m(), "seat": 3})
         );
+        // (a rejoin let through and refused here: its own ticket names the account, RV-1076; the log leaves it out)
+        let refused = body(Report::RejoinRefused { match_id: m(), ticket: "r9".into() });
+        assert_eq!(
+            refused,
+            json!({"event": "rejoin-refused", "server": "game-eu.example:4433", "match": m(), "ticket": "r9"})
+        );
+        assert_eq!(logged_body(&refused)["ticket"], "(ticket)");
         assert_eq!(
             body(Report::Cancelled { match_id: m(), no_shows: vec![1] }),
             json!({"event": "cancelled", "server": "game-eu.example:4433", "match": m(), "noShows": [1]})

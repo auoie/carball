@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -55,6 +57,58 @@ func TestReserveAndGiveBack(t *testing.T) {
 	// (half the window: one token back, and the refused reservation took nothing from it)
 	if !l.Allow("a", at.Add(30*time.Second)) || l.Allow("a", at.Add(30*time.Second)) {
 		t.Fatal("the refill after a refused reservation isn't one per 30 s")
+	}
+}
+
+// RV-1083: refused reservations, however many at once, leave no debt: the next request goes through when the bucket's
+// next token is due (here 6 s), as Allow's would (run with -race)
+func TestRefusedReservationsLeaveNoDebt(t *testing.T) {
+	l := New(10, time.Minute)
+	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	for range 10 {
+		l.Allow("a", at)
+	}
+	var wg sync.WaitGroup
+	var allowed atomic.Int64
+	for range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				if ok, giveBack := l.Reserve("a", at); ok {
+					allowed.Add(1)
+				} else {
+					giveBack()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if allowed.Load() != 0 {
+		t.Fatalf("%d reservations allowed on an empty bucket", allowed.Load())
+	}
+	if !l.Allow("a", at.Add(6*time.Second)) {
+		t.Error("the next token, 6 s on, refused: the refused reservations left the bucket in debt")
+	}
+}
+
+// RV-1084: a give-back gives one token back however often it's called
+func TestAGiveBackWorksOnce(t *testing.T) {
+	l := New(3, time.Minute)
+	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	l.Allow("a", at)
+	ok, giveBack := l.Reserve("a", at)
+	if !ok {
+		t.Fatal("refused")
+	}
+	giveBack()
+	giveBack()
+	left := 0
+	for left < 10 && l.Allow("a", at) {
+		left++
+	}
+	if left != 2 {
+		t.Errorf("%d left after one taken and one reservation given back twice, want 2", left)
 	}
 }
 

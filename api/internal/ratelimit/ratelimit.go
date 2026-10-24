@@ -52,24 +52,39 @@ func NewSized(burst int, window time.Duration, size int) *Limiter {
 // Allow takes one request for key at now. A new key past the limit's size makes room by forgetting the longest idle (its
 // bucket the fullest anyway): a flood of new keys costs the flooder, never everyone else (AP-2)
 func (l *Limiter) Allow(key string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.of(key, now).AllowN(now, 1)
 }
 
 // Reserve is Allow that can be undone: whether the request is allowed (taken if so), and what gives its token back (a
-// request a later check refused, so it isn't charged here: RV-1077)
+// request a later check refused, so it isn't charged here: RV-1077), once however often it's called (RV-1084). A
+// refused request reserves nothing: an empty bucket's reservation cancelled with another landing between would leave
+// the bucket in debt (RV-1083), so the token's there or not under the limiter's lock, and taken at once if it is
 func (l *Limiter) Reserve(key string, now time.Time) (bool, func()) {
-	r := l.of(key, now).ReserveN(now, 1)
-	if !r.OK() || r.DelayFrom(now) > 0 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	bucket := l.of(key, now)
+	if bucket.TokensAt(now) < 1 {
+		return false, func() {}
+	}
+	r := bucket.ReserveN(now, 1)
+	if !r.OK() || r.DelayFrom(now) > 0 { // (not with a token there and the lock held: refused anyway, given back)
 		r.CancelAt(now)
 		return false, func() {}
 	}
-	return true, func() { r.CancelAt(now) }
+	var once sync.Once
+	return true, func() {
+		once.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			r.CancelAt(now)
+		})
+	}
 }
 
-// of is key's bucket, seen at now (Allow's rule for a new key past the size)
+// of is key's bucket, seen at now (Allow's rule for a new key past the size), under the limiter's lock
 func (l *Limiter) of(key string, now time.Time) *rate.Limiter {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if el := l.keys[key]; el != nil {
 		e, _ := el.Value.(*entry)
 		e.seen = now

@@ -36,10 +36,11 @@ const (
 	NoShowCooldown = 2 * time.Minute
 	// ReturnFor is how long a cancelled match's players who came keep their wait for their next search
 	ReturnFor = time.Minute
-	// RejoinHold is how long a rejoin the matchmaker let through holds its account's searches, waiting for its server's
-	// word that it's back (a rejoin then refused never comes back: its searches free again after it, RV-1026); its match
-	// freed first (ended, cancelled, its server restarted), the hold goes with it (RV-1075)
-	RejoinHold = 10 * time.Second
+	// RejoinHold is how long at most a rejoin the matchmaker let through holds its account's searches: till its server's
+	// word that it's back, or that it refused it there (RV-1076), or its match freed (ended, cancelled, its server
+	// restarted: RV-1075); this long only when that word is lost (a late word, an outbox backing off, still finds the
+	// account held: never matched into a second match meanwhile, RV-1026)
+	RejoinHold = 2 * time.Minute
 	// tickEvery is how often Run forms matches
 	tickEvery = time.Second
 )
@@ -684,6 +685,20 @@ func (m *Matchmaker) RejoinCheck(account string, id uint64, server string) bool 
 		m.rejoining[account] = hold{until: m.now().Add(RejoinHold), match: id}
 	}
 	return true
+}
+
+// RejoinRefused notes a game server's word that a rejoin let through was refused there (its match concluded, its seat
+// gone: RV-1076): the account's hold for that match let go, its searches free. A hold for another match stays, and a
+// match this matchmaker gave another server isn't this one's to tell of
+func (m *Matchmaker) RejoinRefused(server, account string, id uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mt := m.matches[id]; mt != nil && mt.server != server {
+		return
+	}
+	if h, ok := m.rejoining[account]; ok && h.match == id {
+		delete(m.rejoining, account)
+	}
 }
 
 // rejoinable: RejoinAllowed's rule, under the lock

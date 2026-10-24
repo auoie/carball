@@ -516,6 +516,60 @@ func TestFleetRejoinQuestion(t *testing.T) {
 	}
 }
 
+// RV-1076: a rejoin the matchmaker let through and its server then refused: the server's "rejoin-refused" event, with the
+// rejoin's own ticket, frees the account's searches at once; a ticket that isn't that match's rejoin is refused for good
+// (403 "ticket": the outbox drops it), freeing nothing
+func TestARejoinRefusedAtItsServerFreesTheSearch(t *testing.T) {
+	e := setup(t, nil)
+	b1, _, _ := e.player("sub-r1")
+	b2, _, _ := e.player("sub-r2")
+	pings := map[string]int{euServer: 30}
+	s1 := decode(t, e.searchAs(b1, []int{1}, pings))["search"].(string)
+	s2 := decode(t, e.searchAs(b2, []int{1}, pings))["search"].(string)
+	e.s.Matchmaker.Tick(e.clock.Now())
+	_, f1 := e.poll(b1, s1, 1)
+	e.poll(b2, s2, 1)
+	m1, _ := f1["match"].(map[string]any)
+	if m1 == nil {
+		t.Fatalf("not matched: %v", f1)
+	}
+	match := m1["id"].(string)
+	event := func(body map[string]any) int {
+		body["server"] = euServer
+		return e.gameCall(http.MethodPost, "/api/fleet/events", gameToken, body).StatusCode
+	}
+	if code := event(map[string]any{"event": "started", "match": match}); code != http.StatusNoContent {
+		t.Fatalf("started: %d", code)
+	}
+	if code := event(map[string]any{"event": "left", "match": match, "seat": int(seatOf(t, e, m1))}); code != http.StatusNoContent {
+		t.Fatalf("left: %d", code)
+	}
+	resp := e.write(b1, http.MethodPost, "/api/ticket?rejoin="+match, nil)
+	rejoin, _ := decode(t, resp)["ticket"].(string)
+	if rejoin == "" {
+		t.Fatalf("the leaver's rejoin ticket: %d", resp.StatusCode)
+	}
+	asked := e.gameCall(http.MethodPost, "/api/fleet/rejoin", gameToken, map[string]string{"match": match, "server": euServer, "ticket": rejoin})
+	if allowed := decode(t, asked)["rejoin"]; allowed != true {
+		t.Fatalf("the rejoin's question: %v", allowed)
+	}
+	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a search while the rejoin is held: %d, want 403", resp.StatusCode)
+	}
+	if code := event(map[string]any{"event": "rejoin-refused", "match": match, "ticket": m1["ticket"].(string)}); code != http.StatusForbidden {
+		t.Errorf("a seat's ticket in place of the rejoin's: %d, want 403", code)
+	}
+	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a search after a refused event: %d, want 403 (still held)", resp.StatusCode)
+	}
+	if code := event(map[string]any{"event": "rejoin-refused", "match": match, "ticket": rejoin}); code != http.StatusNoContent {
+		t.Fatalf("the rejoin refused at its server: %d", code)
+	}
+	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusOK {
+		t.Errorf("a search once its server refused the rejoin: %d, want 200", resp.StatusCode)
+	}
+}
+
 // RV-1024: the game servers' calls under a fleet-wide ceiling (here 5) above each name's (here 3): a holder of the shared
 // token naming a new server for each call can't outrun it
 func TestGameServerCallsUnderAFleetCeiling(t *testing.T) {

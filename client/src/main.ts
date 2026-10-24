@@ -8,7 +8,7 @@ import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import type { SessionEnd } from "./game/sessionEnd";
 import { type FoundMatch, Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS, type SearchHandlers } from "./game/matchmaking";
-import { Connection, type MatchSession, devServerAddress, refusalText } from "./net/connection";
+import { Connection, type MatchSession, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
 import {
   type MenuNotice,
@@ -38,20 +38,9 @@ import {
 import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import {
-  chooseRegions,
-  markVersion,
-  pingAnswer,
-  searchPlan,
-  storedPings,
-  storedRegions,
-  storePings,
-  storeRegions,
-  toggleRegion,
-  versionVerdict,
-} from "./net/regions";
+import { chooseRegions, pingAnswer, searchPlan, storedPings, storedRegions, storePings, storeRegions, toggleRegion } from "./net/regions";
 import { pingServer } from "./net/search";
-import { REFUSED_VERSION } from "./net/protocol";
+import { VersionCheck, reloadText } from "./net/versionCheck";
 import { MATCHMAKER_TEXT, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
@@ -96,7 +85,7 @@ import { type StatContext, StatGraphData, levelView, speedUnit } from "./game/st
 import { RefreshMeter } from "./game/refreshRate";
 import { EXPECTED_PACKETS, NetGraphFeed } from "./net/netStats";
 import { MainMenu } from "./ui/mainMenu";
-import { MODAL_TEXT, Modal, REJOIN_TEXT, RELOAD_TEXT } from "./ui/modal";
+import { MODAL_TEXT, Modal, REJOIN_TEXT, RELOAD_TEXT, sentence } from "./ui/modal";
 import { SearchView, cancelShown } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
 import { PauseMenu, TRAINING_PAUSE_TEXT } from "./ui/pauseMenu";
@@ -529,25 +518,20 @@ async function main(): Promise<void> {
     /** Each region's server's name as its Pong said it (the matchmaker's: RV-863); none, its URL's host:port */
     const serverNames = new Map<string, string>();
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
-    /** The regions whose server refused this page's version at its last ping: left out of a search, the others searched
-     *  (RV-1030); the reload asked once, and only of a page apart from its deployment (a reload brings the page its servers
-     *  take, RV-1021, RV-1066), never of the deployment's own beside a server not updated yet, which a reload can't help */
-    const outdatedRegions = new Set<string>();
-    let reloadShown = false;
-    /** The deployment's version against this page's (versionVerdict): the reload's modal, once, when they differ */
-    const checkVersion = async (outdatedOnly: boolean): Promise<"reload" | "updating" | null> => {
-      const verdict = versionVerdict(outdatedOnly, await pageOutdated(), reloadShown);
-      if (verdict.showReload) {
-        reloadShown = true;
-        const text = refusalText(REFUSED_VERSION);
-        modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
-      }
-      return verdict.refuse;
-    };
-    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer); a refusal on version marks its region
-     *  (markVersion) */
+    /** The page's version against its servers' (VersionCheck: the regions that refused it left out of a search, the
+     *  reload asked once and only of a page apart from its deployment, RV-1030, RV-1078) */
+    const versions = new VersionCheck({
+      apart: () => pageOutdated(),
+      reload: () => {
+        modal.show(RELOAD_TEXT.title, sentence(reloadText()));
+      },
+      notice: (text) => {
+        modal.show(MODAL_TEXT.title, sentence(text));
+      },
+    });
+    /** A region's ping from its answer, the name its Pong gives kept (pingAnswer); a refusal on version marks its region */
     const answered = (r: Region, answer: Awaited<ReturnType<typeof pingServer>>): number | null => {
-      if (markVersion(outdatedRegions, r.id, answer)) void checkVersion(false);
+      versions.answered(r.id, answer);
       const ping = pingAnswer(answer);
       if (ping?.name) serverNames.set(r.id, ping.name);
       return ping?.ms ?? null;
@@ -656,15 +640,9 @@ async function main(): Promise<void> {
             const request = async (): Promise<SearchRequest> => {
               const measured = await freshPings(all, PING_WAIT_MS);
               searchable = named(all);
-              const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists, outdatedRegions);
-              // (every region it would search refused this page's version: the page apart from its deployment, the reload's
-              // words; else those servers aren't updated yet, RV-1030)
-              if (plan.outdatedOnly) {
-                const refuse = await checkVersion(true);
-                if (refuse === "reload") throw new Error(refusalText(REFUSED_VERSION));
-                // (nothing ticked: the automatic pick's region; ticked: those, RV-1068)
-                throw new Error(plan.automatic ? MATCHMAKER_TEXT.updating : MATCHMAKER_TEXT.behind);
-              }
+              const plan = searchPlan(searchable, storedRegions(), chosen, measured, playlists, versions.outdated);
+              // (every region it would search refused this page's version: refused, as VersionCheck says, RV-1030)
+              if (plan.outdatedOnly) throw new Error(await versions.refusal(plan.automatic));
               if (plan.automatic) {
                 chosen = plan.chosen;
                 storeRegions(chosen, false);
@@ -1080,23 +1058,15 @@ async function main(): Promise<void> {
     } else if (notice?.modal === "elsewhere") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.elsewhere);
     } else if (notice?.modal === "reload") {
-      // (a claim or rejoin refused on version: the reload's modal when this page isn't its deployment's (the server
-      // updated since it loaded, RV-865), else that server is the one apart, not updated yet: said so, no reload that
-      // couldn't help, RV-1069)
-      void pageOutdated().then((apart) => {
-        if (apart) {
-          const text = refusalText(REFUSED_VERSION);
-          modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
-        } else modal.show(MODAL_TEXT.title, `${MATCHMAKER_TEXT.matchUpdating.charAt(0).toUpperCase()}${MATCHMAKER_TEXT.matchUpdating.slice(1)}.`);
-      });
+      // (a claim or rejoin refused on version: VersionCheck's reload or its server's update, RV-865, RV-1069)
+      void versions.claimRefused();
     } else if (notice?.modal === "rejoinGone") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.gone);
     } else if (notice?.modal === "rejoinUnconfirmed") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.unconfirmed, offerRejoin);
     } else if (notice?.modal === "banned" && notice.until !== undefined) {
       // (a rejoin refused for a ban from another match: the ban as a search says it, its seat gone, RX31)
-      const text = queueBanText(notice.until, Date.now());
-      modal.show(REJOIN_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
+      modal.show(REJOIN_TEXT.title, sentence(queueBanText(notice.until, Date.now())));
     } else if (notice?.modal === "signedOut") {
       // (once the account's read: still signed out, the sign-in's page with why; signed in again meanwhile, its own)
       void accountsReady.then(() => {

@@ -216,8 +216,9 @@ func (s *Server) NewMatchmaker() *matchmaker.Matchmaker {
 }
 
 // fleetEvent: a game server's event for the matchmaker (POST /api/fleet/events, through its outbox, kept and retried in
-// order): a match started, a player left it or came back (their seat), cancelled before its start (its no-shows'
-// seats), over with no result, or the server restarted (its matches before gone). Each names its server: an event
+// order): a match started, a player left it or came back (their seat), a rejoin let through refused there (the rejoin's
+// own ticket naming its account: RV-1076), cancelled before its start (its no-shows' seats), over with no result, or the
+// server restarted (its matches before gone). Each names its server: an event
 // about a match this matchmaker didn't assign to it (another's, one from before a restart, one already over) is taken
 // and ignored (204, never a retry that would hold the outbox's later calls: MX1R-2), each event once in effect
 func (s *Server) fleetEvent(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +229,7 @@ func (s *Server) fleetEvent(w http.ResponseWriter, r *http.Request) {
 		At      int64  `json:"at"`
 		Seat    *int   `json:"seat"`
 		NoShows []int  `json:"noShows"`
+		Ticket  string `json:"ticket"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		badBody(w, err)
@@ -249,6 +251,17 @@ func (s *Server) fleetEvent(w http.ResponseWriter, r *http.Request) {
 		s.Matchmaker.Left(body.Server, id, *body.Seat)
 	case body.Event == "back" && matchOK && body.Seat != nil:
 		s.Matchmaker.Back(body.Server, id, *body.Seat, now)
+	case body.Event == "rejoin-refused" && matchOK && body.Ticket != "":
+		// (a ticket not ours or not that match's rejoin: refused for good, so the outbox drops it, never a retry)
+		t, err := s.playerTicket(body.Ticket, ticket.PurposeRejoin, body.Match, now)
+		if err != nil {
+			s.log(r).Warn("a refused rejoin's ticket refused", "match", body.Match, "server", body.Server, "err", err)
+			writeError(w, http.StatusForbidden, "ticket")
+			return
+		}
+		s.Matchmaker.RejoinRefused(body.Server, accountID(t.Account), id)
+		s.log(r).Info("a rejoin refused at its server: the account's searches free", "match", body.Match, "server", body.Server,
+			"account", accountID(t.Account), "name", t.Name)
 	case body.Event == "over" && matchOK:
 		s.Matchmaker.Ended(body.Server, id)
 	case body.Event == "cancelled" && matchOK:
