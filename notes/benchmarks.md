@@ -77,10 +77,36 @@ ticks, six players driving, steering, boosting and jumping, their updates encode
 | fat LTO, 1 unit | 94.3 s | 59.0 s | 42.0 MB | 25.3 us |
 
 The game thread's tick is mostly the C++ engine's physics, which Rust's LTO doesn't reach (about 1.6 % faster, inside
-the spread); its gain, if any, is the network threads' (quinn, tokio, wtransport: 63 % of a match's CPU in PERF1),
-measured on the browser tests' specs by PERF2. Fat measured no better than thin for nearly twice the link. The engine's
+the spread); on the network threads (quinn, tokio, wtransport) PERF2 found no gain either (below). Fat measured no
+better than thin for nearly twice the link. The engine's
 C++ IPO (CMake's INTERPROCEDURAL_OPTIMIZATION, GCC `-flto`): its test programs' output bit-identical (the determinism
 hash dd0f56c02d85870e, the smoke test, rollback, net state, the patches, the stats), its physics within noise (300 s of
 the scripted 2v2: 0.42–0.44 s against 0.43–0.49 s), and the server's link failing under rust-lld (GCC's slim LTO
 objects unread: undefined engine symbols); not used.
+
+## The three changes measured together (PERF1/PERF2, 2026-10-24)
+The static session's profile of the browser tests' specs under perf (kernel samples; this machine, a Ryzen 7 3700X, over
+loopback), each commit against the one before; forfeit.spec's 3-player 34 s window, % of a core unless marked:
+
+| | before a58a37a | sleep a2af2a3 | queue 40b443d | thin LTO aeabad6 |
+|---|---|---|---|---|
+| process | 4.99 | 5.81 | 4.67 | 5.05 |
+| game thread (user / sys) | 1.73 (1.18 / 0.55) | 1.49 (1.31 / 0.18) | 1.38 (1.20 / 0.18) | 1.36 (1.22 / 0.14) |
+| network workers (user / sys) | 3.26 (1.92 / 1.34) | 4.32 (2.51 / 1.81) | 3.29 (1.93 / 1.36) | 3.69 (2.04 / 1.65) |
+| game thread switches a second (voluntary / not) | 943 / 22 | 120 / 18 | 120 / 21 | 120 / 6 |
+| idle open match (its game thread) | 0.73–0.74 (0.70) | 0.27–0.29 (0.23–0.25) | 0.23 (0.20) | 0.23–0.25 (0.19–0.22) |
+| longest pass in 2 s, median / max (ms) | 0.91 / 2.31 | 0.91 / 2.28 | 0.83 / 4.48 | 0.56 / 2.48 |
+| ticks a second, slipped | 120, 0 | 120, 0 | 120, 0 | 120, 0 |
+| a player's datagrams a second, down / up | 60.0 / 59.6 | 59.8 / 59.4 | 59.9 / 59.6 | 59.9 / 59.6 |
+
+- **The sleep to the next tick is the one real gain:** the game thread's wakeups 943 → 120 a second, its own sleep's cost
+  −80 %, its system time −67–83 %, an idle match −66–68 %.
+- **The per-pass input queue is neutral** (about 0.06 % of a core on the network threads).
+- **Thin LTO is neutral on average:** each network crate within noise, the game thread −1 % (the C++ engine isn't in
+  it); its only plausible gains a shorter worst pass (median 0.83 → 0.56 ms) and a third smaller binary.
+- **The network workers' kernel side** (loopback's delivery into Chrome) swings ±30 % with the machine's load: their
+  differences under about 15 % are noise.
+- **What a 3-player match costs now:** the network threads 65–75 % of it, 40–45 % of that the kernel's (sendmsg, futex,
+  epoll, the scheduler); quinn-proto, tokio, wtransport and the cipher the rest; the game thread 25–30 %, mostly the
+  physics.
 
