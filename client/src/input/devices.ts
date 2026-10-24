@@ -100,6 +100,17 @@ export class InputDevices {
       },
       { signal },
     ); // right button = jump
+    // (the thumb buttons, Mouse 4 and 5: bindable (air roll, often), never the browser's back and forward, which on a match
+    // page would leave the match, a loss and a ban; anywhere on the page, a menu's too)
+    for (const kind of ["mousedown", "mouseup", "auxclick"] as const) {
+      window.addEventListener(
+        kind,
+        (e) => {
+          if (e.button === 3 || e.button === 4) e.preventDefault();
+        },
+        { signal },
+      );
+    }
     window.addEventListener(
       "mousemove",
       (e) => {

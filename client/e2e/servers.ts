@@ -45,6 +45,14 @@ const SERVERS: readonly Server[] = [
     url: "http://127.0.0.1:14444/info",
     reuse: false,
   },
+  // The thumb buttons' test's own (e2e/mouseButtons.spec.ts: its player alone in its match, never another spec's)
+  {
+    name: "mouse",
+    command: GAME_COMMAND,
+    args: [...GAME, "--port", "14445", "--health-port", "18087", "--info-port", "14446"],
+    url: "http://127.0.0.1:14446/info",
+    reuse: false,
+  },
   // One whose rounds end in a goal 1 s after go (the goal sequence's test)
   {
     name: "goal",
