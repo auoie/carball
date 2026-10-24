@@ -275,6 +275,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/search/{id}", s.write(s.cancelSearch))
 	mux.HandleFunc("POST /api/fleet/events", s.gameServer(s.fleetEvent))
 	mux.HandleFunc("POST /api/fleet/rejoin", s.gameServerAsking(s.rejoinCheck))
+	s.e2eRoutes(mux)
 	return s.logged(headers(mux))
 }
 

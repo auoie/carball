@@ -102,8 +102,8 @@ sessionStorage: `src/net/pages.ts`); a queue match's end screen has Play Again (
 or a lost connection goes back to the menu with the modal (`src/ui/modal.ts`), the idle warning tip
 (`src/ui/idleTip.ts`). The game's texts verbatim per the user's decisions (the connection-lost line without "(Error:
 42)"). Tests: `server/src/match_host.rs`, `queue.rs`, the game's idle tests, `tests/end_to_end.rs` (two searches over
-WebTransport), `client/src/game/matchmaking.test.ts`, `src/net/pages.test.ts`, `client/e2e/queue.spec.ts` (a queue
-server on 14439/14440). The review of G3 (RX10, RV-332..339) and of FP1 (RX11, RV-340..352) came with it: a
+WebTransport), `client/src/game/matchmaking.test.ts`, `src/net/pages.test.ts`, `client/e2e/services/queue.spec.ts`
+(the services' queue stack since design 4). The review of G3 (RX10, RV-332..339) and of FP1 (RX11, RV-340..352) came with it: a
 demolition takes its car out of the vehicles' order at once, and copies write the order as the next sync leaves it
 (RV-340, RV-346), a snapshot's order count bounded before anything's allocated (RV-341), a demolished car doesn't
 send the wheel block (RV-345); the compact overlay leaves a car's last-tick controls but the jump to the client (in a
@@ -318,6 +318,18 @@ training's three WASM bindings (`setGoalScoring`, `hideBall`, `sibling`). notes/
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
+**The specs that search run against the real services** (design 4, 2026-10-23): Playwright's "services" project
+(`client/e2e/services/`: queue, queueEdges, regions) against three Docker Compose stacks (`stacks.ts`,
+`stack/compose.yaml`), one per spec group, each Postgres (in memory, no port), the one-shot migrate, the accounts
+service (`carball-api-e2e`: the `e2e` build tag's `POST /api/e2e/sign-in`, run `serve --dev` for the http localhost
+origin and no Turnstile), one or two game servers in real queue mode (`carball-game-e2e`: the cargo feature `e2e`, the
+test hooks and a plain-http `API_URL`), the web image, and an nginx edge putting the page and `/api/` on one origin (as
+the tunnel does). Its setup builds the images from the working tree (`scripts/build_images.sh --worktree --e2e e2e`;
+`CARBALL_E2E_IMAGES=TAG` skips it) and makes the stacks' secrets and a self-signed localhost certificate; Chrome takes
+it by `--origin-to-force-quic-on` plus `--ignore-certificate-errors-spki-list` (`services/fixtures.ts`: the Q1 probe
+showed WebTransport honours them; no certHash in config.json). Ports 14460..14468 and subnets 10.211.80-82.0/24, all on
+127.0.0.1; each stack's logs land in `client/test-results/services/<stack>.log` and its teardown runs `down -v`. The
+release images carry no hook: the checks stage greps both release binaries for the e2e markers.
 
 ## Earlier (2026-10-08)
 - **Where:** the repository is on the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, the

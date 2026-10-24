@@ -117,5 +117,8 @@ is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match do
 A queue's matches are ranked (online play is ranked only: the vote's 90 s wait and its "Forfeit" label, the leave
 penalty's warning); `--match-type casual|ranked|private` is the open match's (casual by default), and a queue server
 refuses any other than ranked (RX32).
-`--test-goal-after SECONDS` (browser tests only): each round, the ball is knocked into a goal that long after "go".
+The browser tests' hooks are in the `e2e` build alone (`cargo build --features e2e`; the Dockerfile's `game-e2e` image,
+never deployed): `--test-goal-after SECONDS`, each round's ball knocked into a goal that long after "go";
+`--forfeit-vote-wait SECONDS`, the clock time before forfeit votes in place of the match type's; and `API_URL` over
+plain http (an e2e stack's accounts service, on the stack's own network).
 

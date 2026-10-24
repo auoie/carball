@@ -1,23 +1,28 @@
-// The queue's edge cases against their own game server and development matchmaker (e2e/servers.ts "queue-edges", ports
-// 14441/14442, and "matchmaker-edges", 14451; its matches on
-// Night, the one map): Free Play during "Joining in" and a claim naming another map than the server's (RV-446). Nothing
-// drawn (`?render=off`).
+// The queue's edge cases against the services (stacks.ts' "edges" stack: the accounts service's matchmaker, its bans and
+// cooldowns, a game server, its matches on Night, the one map; each page signed in to an account of its own): Free Play
+// during "Joining in" and a claim naming another map than the server's (RV-446), the rejoin offer and a rejoin, leavers'
+// bans, no-shows' cooldowns, searches gone with their page. Nothing drawn (`?render=off`).
 import type { Browser, BrowserContext, Page } from "@playwright/test";
-import { expect, hideGamepads, test, tickPlaylists } from "./fixtures";
+import { expect, hideGamepads, tickPlaylists } from "../fixtures";
+import { STACKS, signIn, test } from "./fixtures";
 
-const QUEUE = "127.0.0.1:14442";
-/** The page's query: the server, its development matchmaker */
-const SEARCH = `queue=${QUEUE}&matchmaker=/dev-matchmaker/14451`; // (the preview's same-origin path: RV-911)
-
+test.use({ baseURL: STACKS.edges.origin });
 test.describe.configure({ mode: "serial" });
 
-async function menuPage(browser: Browser, errors: string[], setup?: (page: Page) => Promise<void>): Promise<Page> {
+/** A context of its own, signed in to an account of its own (its id) */
+async function player(browser: Browser): Promise<{ context: BrowserContext; account: string }> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
   await hideGamepads(context);
+  const { account } = await signIn(context, "Edges");
+  return { context, account };
+}
+
+async function menuPage(browser: Browser, errors: string[], setup?: (page: Page, account: string) => Promise<void>): Promise<Page> {
+  const { context, account } = await player(browser);
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
-  await setup?.(page);
-  await page.goto(`/?${SEARCH}&render=off`);
+  await setup?.(page, account);
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   return page;
 }
@@ -79,18 +84,17 @@ test("Free Play during Joining in keeps the page; the match's map is the server'
 test("no rejoin offer while another tab of this browser plays that match (its lock held), offered once it's let go (RX30C)", async ({ browser }) => {
   const errors: string[] = [];
   const matchId = "1311768467294899695";
-  const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
-  await hideGamepads(context);
+  const { context, account } = await player(browser);
   await context.addInitScript(
     (s) => {
       localStorage.setItem("carball.rankedSeat", s);
     },
-    JSON.stringify({ matchId, teamSize: 2, joinedAt: Date.now() - 60_000 }),
+    JSON.stringify({ matchId, teamSize: 2, joinedAt: Date.now() - 60_000, account }),
   );
   // (a tab playing the match: its lock held, as the match page holds it)
   const playing = await context.newPage();
   playing.on("pageerror", (e) => errors.push(e.message));
-  await playing.goto(`/?${SEARCH}&render=off`);
+  await playing.goto("/?render=off");
   await expect(playing.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await playing.evaluate(async (name) => {
     await new Promise<void>((held) => {
@@ -103,7 +107,7 @@ test("no rejoin offer while another tab of this browser plays that match (its lo
   // (a second tab: no offer while the first plays it)
   const second = await context.newPage();
   second.on("pageerror", (e) => errors.push(e.message));
-  await second.goto(`/?${SEARCH}&render=off`);
+  await second.goto("/?render=off");
   await expect(second.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await second.waitForTimeout(1500);
   await expect(second.locator("#modal")).toBeHidden();
@@ -118,21 +122,23 @@ test("no rejoin offer while another tab of this browser plays that match (its lo
 
 test("a ranked match left by accident is offered back for 900 s; a rejoin of a match that's over says so and forgets it (LV1)", async ({ browser }) => {
   const errors: string[] = [];
-  const seat = (joinedAt: number) => JSON.stringify({ matchId: "1311768467294899695", teamSize: 2, joinedAt });
+  // (the account's own seat: a record of another account's isn't offered, RX30C)
+  const seat = (joinedAt: number, account: string) => JSON.stringify({ matchId: "1311768467294899695", teamSize: 2, joinedAt, account });
   // (joined 20 minutes ago: past the 900 s, no offer)
-  const stale = await menuPage(browser, errors, async (p) => {
+  const stale = await menuPage(browser, errors, async (p, account) => {
     await p.addInitScript(
       (s) => {
         localStorage.setItem("carball.rankedSeat", s);
       },
-      seat(Date.now() - 20 * 60_000),
+      seat(Date.now() - 20 * 60_000, account),
     );
   });
   await expect(stale.locator("#main-menu")).toBeVisible();
   await expect(stale.locator("#modal")).toBeHidden();
   await stale.context().close();
-  // (joined a minute ago: offered; Yes tries it, the server has no such match: back, told, the offer gone)
-  const page = await menuPage(browser, errors, async (p) => {
+  // (joined a minute ago: offered; Yes tries it, the matchmaker lets it ask (the account in no other match), the server
+  // has no such match: back, told, the offer gone)
+  const page = await menuPage(browser, errors, async (p, account) => {
     await p.addInitScript(
       (s) => {
         if (!sessionStorage.getItem("seeded")) {
@@ -140,7 +146,7 @@ test("a ranked match left by accident is offered back for 900 s; a rejoin of a m
           sessionStorage.setItem("seeded", "1");
         }
       },
-      seat(Date.now() - 60_000),
+      seat(Date.now() - 60_000, account),
     );
   });
   const modal = page.locator("#modal");
@@ -163,7 +169,7 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   const menu = async (context: BrowserContext): Promise<Page> => {
     const page = await context.newPage();
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(`/?${SEARCH}&render=off`);
+    await page.goto("/?render=off");
     await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
     return page;
   };
@@ -181,8 +187,7 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   const contexts: BrowserContext[] = [];
   const pages: Page[] = [];
   for (let i = 0; i < 4; i++) {
-    const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
-    await hideGamepads(context);
+    const { context } = await player(browser);
     contexts.push(context);
     pages.push(await menu(context));
   }
@@ -247,7 +252,8 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   const cAgain = await menu(cContext);
   await expect(cAgain.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
   await cAgain.locator("#modal").getByRole("button", { name: /^no$/i }).click();
-  // A back: the offer declined; its search refused as the reported quitter's (the matchmaker's ban)
+  // A back: the offer declined; its search refused as the reported quitter's (the game server's report, the service's
+  // queue ban)
   const aBack = await menu(aContext);
   await expect(aBack.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
   await aBack.locator("#modal").getByRole("button", { name: /^no$/i }).click();
@@ -331,7 +337,7 @@ test("a match page that can't draw never claims: its seat the no-show, the other
   // (A the no-show: its next search refused with its cooldown)
   const again = await a.context().newPage();
   again.on("pageerror", (e) => errors.push(e.message));
-  await again.goto(`/?${SEARCH}&render=off`);
+  await again.goto("/?render=off");
   await expect(again.locator("#loading")).toBeHidden({ timeout: 60_000 });
   const menu = again.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
@@ -363,7 +369,7 @@ test("a no-show: the player who came is told and searches again, the no-show can
   // B's next search: refused with its cooldown's words
   const bAgain = await bContext.newPage();
   bAgain.on("pageerror", (e) => errors.push(e.message));
-  await bAgain.goto(`/?${SEARCH}&render=off`);
+  await bAgain.goto("/?render=off");
   await expect(bAgain.locator("#loading")).toBeHidden({ timeout: 60_000 });
   const menu = bAgain.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });

@@ -56,7 +56,11 @@ npm run check        # tsc (3 projects) + ESLint (strict type-aware) + Prettier'
 npm run format       # Prettier over the client (pinned: package.json; .prettierrc, .prettierignore)
 npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive, ball cam, reset, settings, and
                                # two players online against a local carball-server (built and started by the config)
-                               # (e2e/fixtures.ts hides real gamepads from the page)
+                               # (e2e/fixtures.ts hides real gamepads from the page); the specs that search against
+                               # the deployment's services in Docker (e2e/services: Postgres, the accounts service,
+                               # game servers, the web image, built from the working tree; needs docker compose)
+npx playwright test --project=local      # the local specs alone (no Docker)
+npx playwright test --project=services   # the services' alone (CARBALL_E2E_IMAGES=TAG: images already built)
 ```
 - **TypeScript** (`tsconfig.app.json`): `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no unused
   code, no implicit returns or fallthrough. Tests (`tsconfig.test.json`) and config/e2e files (`tsconfig.node.json`) are

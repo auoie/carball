@@ -148,10 +148,12 @@ struct Cli {
     /// The open match's type (a queue's are ranked)
     #[arg(long, value_enum)]
     match_type: Option<MatchTypeArg>,
-    /// The clock time before forfeit votes, s (default: the match type's)
+    /// The clock time before forfeit votes, s (default: the match type's; the e2e build's alone)
+    #[cfg(feature = "e2e")]
     #[arg(long)]
     forfeit_vote_wait: Option<f32>,
-    /// Browser tests: each round, the ball knocked into a goal this long after "go", s
+    /// Browser tests: each round, the ball knocked into a goal this long after "go", s (the e2e build's alone)
+    #[cfg(feature = "e2e")]
     #[arg(long)]
     test_goal_after: Option<f32>,
     /// The certificate chain (PEM)
@@ -288,6 +290,11 @@ impl Cli {
             Some(port) => Some(number("PUBLIC_PORT (--public-port)", &port)?),
             None => None,
         };
+        // (the browser tests' hooks: the e2e build's alone, a release's has none)
+        #[cfg(feature = "e2e")]
+        let (forfeit_vote_wait, test_goal_after) = (self.forfeit_vote_wait, self.test_goal_after);
+        #[cfg(not(feature = "e2e"))]
+        let (forfeit_vote_wait, test_goal_after) = (None, None);
         let mut args = Args {
             port: self.port,
             info_port: self.info_port,
@@ -296,8 +303,8 @@ impl Cli {
             meshes: self.meshes.filter(|d| !d.is_empty()).map_or_else(default_meshes, PathBuf::from),
             team_size: self.team_size,
             match_type: MatchType::Casual,
-            forfeit_vote_wait: self.forfeit_vote_wait,
-            test_goal_after: self.test_goal_after,
+            forfeit_vote_wait,
+            test_goal_after,
             queue: self.mode == Mode::Queue,
             cert: None,
             dev: self.dev,
@@ -406,8 +413,9 @@ impl Cli {
     }
 }
 
-/// The accounts service's settings: none without `API_URL`; with it, `https://HOST[:PORT]` (no path), the token's file,
-/// and the Access service token's id and secret file together or neither
+/// The accounts service's settings: none without `API_URL`; with it, `https://HOST[:PORT]` (no path; the e2e build's
+/// `http://` too: an e2e stack's service on its own network), the token's file, and the Access service token's id and
+/// secret file together or neither
 fn api_args(
     url: Option<String>,
     token_file: Option<String>,
@@ -416,7 +424,8 @@ fn api_args(
 ) -> anyhow::Result<Option<ApiArgs>> {
     let Some(url) = url else { return Ok(None) };
     let url = url.trim().trim_end_matches('/').to_string();
-    let host = url.strip_prefix("https://").unwrap_or("");
+    let host = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://").filter(|_| cfg!(feature = "e2e")));
+    let host = host.unwrap_or("");
     anyhow::ensure!(
         !host.is_empty() && !host.contains('/') && !host.contains(char::is_whitespace),
         "API_URL must be https://HOST[:PORT] (the accounts service's origin), got {url:?}"
@@ -470,7 +479,7 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
         server: args.server_name(),
         first_wait: Duration::from_secs(5),
         max_wait: Duration::from_secs(300),
-        https_only: args.dev_api.is_none(),
+        https_only: args.dev_api.is_none() && args.api.as_ref().is_none_or(|api| api.url.starts_with("https://")),
     })
 }
 
@@ -1066,6 +1075,7 @@ mod tests {
         };
         refused(&[], "no API_URL");
         refused(&[("API_URL", "https://carball.zolt.top")], "no GAME_SERVER_TOKEN_FILE");
+        #[cfg(not(feature = "e2e"))]
         refused(&[("API_URL", "http://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/t")], "http");
         refused(&[("API_URL", "https://carball.zolt.top/api"), ("GAME_SERVER_TOKEN_FILE", "/t")], "a path");
         refused(

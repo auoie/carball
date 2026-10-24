@@ -1,0 +1,140 @@
+# One of the browser tests' service stacks (e2e/services/stacks.ts brings each group of searching specs its own, their
+# searches apart): the deployment's services as the images run them (APP-CONTRACT.md), on a network of their own. Postgres
+# (its data in memory, no port), the one-shot migrate, the accounts service (the api-e2e image: the tests' sign-in;
+# `serve --dev` for its http localhost origin, sign-ups without Turnstile), one game server or two (the game-e2e image:
+# real queue mode, the stack's ticket key, its outbox to the service), the web image, and the edge: one origin for the
+# page and /api/, as the deployment's tunnel routes them. Only the edge's port and the game servers' are published, on
+# loopback (the game servers' on ::1 too: Chrome tries localhost's IPv6 address first, and QUIC doesn't fall back). The settings (stacks.ts): TAG, the images' tag; EDGE_PORT; GAME_A_PORT and GAME_B_PORT (the `regions`
+# profile's second server, given whether or not it runs); SUBNET; SECRETS and CERTS, the directories of the stacks' secrets and certificate;
+# GAME_SERVERS, the page's (40-carball-config.sh)
+x-game: &game
+  image: carball-game-e2e:${TAG:?}
+  # (every page from one address: the per-address limits out of the way)
+  command: ["--max-per-address", "1000", "--claims-per-address", "100000/100000", "--pings-per-address", "100000/100000"]
+  volumes:
+    - ${CERTS:?}:/certs:ro
+    - ${SECRETS:?}:/run/secrets:ro
+  # (started once the service answers through the edge: its first calls there at once, not after the outbox's backoff)
+  depends_on:
+    edge:
+      condition: service_healthy
+  healthcheck:
+    start_period: 30s
+    start_interval: 1s
+
+x-game-env: &game-env
+  ALLOWED_ORIGIN: http://localhost:${EDGE_PORT:?}
+  TICKET_PUBLIC_KEYS_FILE: /run/secrets/ticket_keys
+  API_URL: http://edge:8080
+  GAME_SERVER_TOKEN_FILE: /run/secrets/game_token
+
+services:
+  db:
+    image: postgres:18.6-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    environment:
+      POSTGRES_USER: carball_owner
+      POSTGRES_DB: carball
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_owner_password
+    volumes:
+      - ${SECRETS:?}:/run/secrets:ro
+      - ./db-init.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      # (over TCP: the first start's own server, making the role, listens on its socket alone)
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "carball_owner", "-d", "carball"]
+      interval: 10s
+      start_interval: 1s
+      start_period: 60s
+
+  migrate:
+    image: carball-api-e2e:${TAG:?}
+    command: ["migrate"]
+    environment:
+      MIGRATE_DATABASE_URL: postgres://carball_owner@db:5432/carball
+      MIGRATE_DATABASE_PASSWORD_FILE: /run/secrets/db_owner_password
+      DATABASE_URL: postgres://carball_app@db:5432/carball
+    volumes:
+      - ${SECRETS:?}:/run/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: carball-api-e2e:${TAG:?}
+    command: ["serve", "--dev"]
+    read_only: true
+    environment:
+      LISTEN_ADDR: :8080
+      PUBLIC_ORIGIN: http://localhost:${EDGE_PORT:?}
+      DATABASE_URL: postgres://carball_app@db:5432/carball
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      TICKET_KEY_ID: e2e
+      TICKET_SIGNING_KEY_FILE: /run/secrets/ticket_key
+      DELETION_HMAC_KEY_FILE: /run/secrets/deletion_key
+      GAME_SERVER_TOKEN_FILE: /run/secrets/game_token
+      TRUSTED_PROXIES: ${SUBNET:?}
+    volumes:
+      - ${SECRETS:?}:/run/secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      start_period: 60s
+      start_interval: 1s
+
+  web:
+    image: carball-web:${TAG:?}
+    environment:
+      GAME_SERVERS: ${GAME_SERVERS:?}
+    healthcheck:
+      start_period: 60s
+      start_interval: 1s
+
+  edge:
+    image: nginxinc/nginx-unprivileged:stable-alpine@sha256:782bb89768cc87b7f95c18b95baa1af250e5d451f26794f59363540161147c01
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./edge.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - 127.0.0.1:${EDGE_PORT:?}:8080
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      start_interval: 1s
+      start_period: 30s
+
+  game-a:
+    <<: *game
+    environment:
+      <<: *game-env
+      GAME_PORT: ${GAME_A_PORT:?}
+      PUBLIC_HOST: localhost
+    ports:
+      - 127.0.0.1:${GAME_A_PORT:?}:${GAME_A_PORT:?}/udp
+      - "[::1]:${GAME_A_PORT:?}:${GAME_A_PORT:?}/udp"
+
+  # (its name for the matchmaker unlike its URL's host: the page sends the name its Pong says, RV-863)
+  game-b:
+    <<: *game
+    profiles: [regions]
+    environment:
+      <<: *game-env
+      GAME_PORT: ${GAME_B_PORT:?}
+      PUBLIC_HOST: Region-B.Test
+    ports:
+      - 127.0.0.1:${GAME_B_PORT:?}:${GAME_B_PORT:?}/udp
+      - "[::1]:${GAME_B_PORT:?}:${GAME_B_PORT:?}/udp"
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${SUBNET:?}

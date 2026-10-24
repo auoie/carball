@@ -105,6 +105,21 @@ RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registr
        cargo build --release --locked --manifest-path server/Cargo.toml \
     && mkdir /out && cp /target/release/carball-server /out/
 
+# The server's e2e build (`--features e2e`: the browser tests' hooks, server/README.md), for the game-e2e image alone (the
+# release build's flags: the same dependencies' builds in the shared target)
+FROM rust AS server-e2e
+ARG JOBS
+WORKDIR /src
+COPY server/ server/
+COPY --from=server-engine /out/ /engine/
+RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=carball-target,target=/target,sharing=locked \
+    cargo clean --release -p carball-server --manifest-path server/Cargo.toml --target-dir /target \
+    && CARGO_BUILD_JOBS="$JOBS" CARBALL_ENGINE_NATIVE=/engine CARGO_TARGET_DIR=/target CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=symbols \
+       RUSTFLAGS="--remap-path-prefix=/usr/local/cargo=/cargo --remap-path-prefix=/root=/home" \
+       cargo build --release --locked --features e2e --manifest-path server/Cargo.toml \
+    && mkdir /out && cp /target/release/carball-server /out/
+
 # The notices of the Rust in the local host's module, the one Rust build that ships: its crates' (cargo-about's, its version
 # pinned: server/about.toml, the target's crates as Cargo.lock has them, a crate under a licence it doesn't accept failing
 # here) and the standard library's (the toolchain's own, the Rust image's above). Both are committed in client/public; the
@@ -137,6 +152,13 @@ RUN --mount=type=cache,id=carball-gomod,target=/go/pkg/mod --mount=type=cache,id
     CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local \
     go build -trimpath -ldflags="-s -w -buildid=" -o /out/carball-api ./cmd/carball-api
 
+# The accounts service's e2e build (`-tags e2e`: the browser tests' sign-in, api/internal/server/e2e.go), for the
+# api-e2e image alone
+FROM api-build AS api-e2e-build
+RUN --mount=type=cache,id=carball-gomod,target=/go/pkg/mod --mount=type=cache,id=carball-gobuild,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local \
+    go build -tags e2e -trimpath -ldflags="-s -w -buildid=" -o /out/carball-api-e2e ./cmd/carball-api
+
 # The client's production build, the shipped-data and names checks on what it built
 FROM node AS client
 WORKDIR /src/client
@@ -156,7 +178,8 @@ RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts
 # maker's or mode names, RV-384/423) over each image's files and its stage of this file (what ships of it: its
 # instructions, in the image's history; the build stages never ship), and no build paths in either binary (the home,
 # registry, target and prebuilt libraries' directories here, unremapped: RV-380, RV-414; the remapped /src and /cargo
-# paths of panic messages are the ones the old builds had too)
+# paths of panic messages are the ones the old builds had too), nor the e2e builds' hooks (the tests' sign-in route, the
+# game server's test flags: the game-e2e and api-e2e images' alone)
 FROM client AS checks
 COPY --from=engine-check /engine-identical /tmp/engine-identical
 COPY --from=rust-notices /out/ /tmp/rust-notices/
@@ -168,13 +191,15 @@ RUN for f in THIRD_PARTY_NOTICES-rust.txt THIRD_PARTY_NOTICES-rust-std.html; do 
          cmp -s "/tmp/rust-notices/$f" "dist/$f" || { echo "client/public/$f isn't this build's: scripts/gen_notices.sh"; exit 1; }; \
        done \
     && awk '/^FROM .* AS game$/ { p = 1 } /^FROM .* AS api$/ { p = 0 } p' /tmp/Dockerfile > /game/Dockerfile \
-    && awk '/^FROM .* AS api$/ { p = 1 } p' /tmp/Dockerfile > /api/Dockerfile \
+    && awk '/^FROM .* AS api$/ { p = 1 } /^FROM .* AS [a-z]+-e2e$/ { p = 0 } p' /tmp/Dockerfile > /api/Dockerfile \
     && grep -q '^ENTRYPOINT \["/app/carball-server"\]' /game/Dockerfile && grep -q '^ENTRYPOINT \["/app/carball-api"\]' /api/Dockerfile \
     && SHIPPED_GAME_DIR=/game node_modules/.bin/vitest run src/render/shippedNames.test.ts \
     && SHIPPED_API_DIR=/api node_modules/.bin/vitest run src/render/shippedNames.test.ts \
     && for f in /game/carball-server /api/carball-api; do \
          n=$(grep -a -c -E '/root/|/usr/local/cargo|/target/|/engine/lib' "$f" || true); \
          echo "build paths in $f: $n"; [ "$n" = 0 ] || exit 1; \
+         n=$(grep -a -c -E '/api/e2e/|test-goal-after|forfeit-vote-wait' "$f" || true); \
+         echo "e2e hooks in $f: $n"; [ "$n" = 0 ] || exit 1; \
        done
 
 # The web client: its static build, served by unprivileged nginx (uid 101) on :3000. The game server's WebTransport URL
@@ -243,3 +268,14 @@ LABEL org.opencontainers.image.title="carball-api" \
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 CMD ["/app/carball-api", "healthcheck"]
 ENTRYPOINT ["/app/carball-api"]
+
+# The browser tests' images (client/e2e/services: never pushed or deployed): the game and accounts images with their e2e
+# builds in place of the release binaries (scripts/build_images.sh --e2e)
+FROM game AS game-e2e
+COPY --from=server-e2e /out/carball-server /app/carball-server
+LABEL org.opencontainers.image.title="carball-game-e2e" \
+      org.opencontainers.image.description="Carball's game server, its e2e build: the browser tests' alone, never deployed"
+FROM api AS api-e2e
+COPY --from=api-e2e-build /out/carball-api-e2e /app/carball-api
+LABEL org.opencontainers.image.title="carball-api-e2e" \
+      org.opencontainers.image.description="Carball's accounts service, its e2e build: the browser tests' alone, never deployed"

@@ -56,6 +56,10 @@ net = [
     "dep:clap",
     "dep:jsonwebtoken",
 ]
+# The browser tests' hooks (the Dockerfile's game-e2e image and the local browser tests' builds, never a release's):
+# --test-goal-after, --forfeit-vote-wait, and an e2e stack's accounts service over plain http (API_URL http://HOST:PORT,
+# on the stack's own network)
+e2e = ["net"]
 # The browser's local host (src/bin/host.rs: an offline match against bots, in a worker): built for
 # wasm32-unknown-emscripten with --no-default-features --features host (scripts/build_host.sh)
 host = ["dep:tracing-subscriber"]

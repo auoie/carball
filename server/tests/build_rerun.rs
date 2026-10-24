@@ -367,7 +367,7 @@ fn the_image_builds_clean_the_servers_crate_before_each_build() {
         .lines()
         .filter(|l| l.starts_with("RUN ") && (l.contains("cargo build") || l.contains("build_host.sh host")))
         .collect();
-    assert_eq!(builds.len(), 2, "the server's and the local host's: {builds:?}");
+    assert_eq!(builds.len(), 3, "the server's, its e2e build's and the local host's: {builds:?}");
     for run in builds {
         let clean = run.find("cargo clean --release -p carball-server");
         let build = run.find("cargo build").or_else(|| run.find("build_host.sh host"));

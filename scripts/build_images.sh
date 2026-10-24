@@ -10,6 +10,9 @@
 #                                               first 7 characters, YYYYMMDD-HHMM-hash: the same commit, the same tag)
 #   scripts/build_images.sh --worktree TAG     (testing a change before its commit: the working tree's files that are
 #                                               committed or would be, never git-ignored ones)
+#   scripts/build_images.sh [--worktree] --e2e TAG   (the browser tests' two images as well, carball-game-e2e:TAG and
+#                                               carball-api-e2e:TAG: the e2e builds, never pushed or deployed;
+#                                               client/e2e/services)
 # Then export or push, e.g.:
 #   docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz      (docker load < carball-web-TAG.tar.gz on the host)
 #   docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carball-web:TAG    (the same for carball-game
@@ -18,9 +21,13 @@ set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd -P)
 COMMIT=$(git -C "$R" rev-parse --short HEAD)
 WORKTREE=0
-if [ "${1:-}" = "--worktree" ]; then
-	WORKTREE=1
+E2E=0
+while [ "${1:-}" = "--worktree" ] || [ "${1:-}" = "--e2e" ]; do
+	[ "$1" = "--worktree" ] && WORKTREE=1
+	[ "$1" = "--e2e" ] && E2E=1
 	shift
+done
+if [ $WORKTREE = 1 ]; then
 	[ -n "${1:-}" ] || { echo "--worktree needs a TAG (not the commit's: it isn't what's built)"; exit 1; }
 	# (nor a commit's dated tag, scripts/image_tag.sh's: RV-861)
 	if [[ "$1" =~ ^[0-9a-f]{7,40}$ || "$1" =~ ^[0-9]{8}-[0-9]{4}-[0-9a-f]{7,40}$ ]]; then
@@ -57,7 +64,13 @@ LABELS=(--label "org.opencontainers.image.revision=$COMMIT" --label "carball.sou
 for image in web game api; do
 	docker buildx build --target "$image" --load "${LABELS[@]}" -t "carball-$image:$TAG" - < "$CONTEXT"
 done
+if [ $E2E = 1 ]; then
+	for image in game-e2e api-e2e; do
+		docker buildx build --target "$image" --load "${LABELS[@]}" -t "carball-$image:$TAG" - < "$CONTEXT"
+	done
+fi
 # (the WebAssembly's hashes, so an image's engine and local host can be matched)
 docker run --rm --network none --entrypoint sh "carball-web:$TAG" -c 'cd /usr/share/nginx/html/assets && sha256sum carball_*.wasm'
 echo "built carball-web:$TAG, carball-game:$TAG and carball-api:$TAG from $SOURCE"
+[ $E2E = 0 ] || echo "and the browser tests' carball-game-e2e:$TAG and carball-api-e2e:$TAG (never pushed or deployed)"
 echo "tag: $TAG"

@@ -1,24 +1,24 @@
-// The queue against a local game server and its development matchmaker (e2e/servers.ts, ports 14439/14440 and 14450):
-// two players find a 1v1 from the main menu,
+// The queue against the services (stacks.ts' "queue" stack: the accounts service's matchmaker, a game server; each page
+// signed in to an account of its own): two players find a 1v1 from the main menu,
 // count "Joining in 3, 2, 1" under the banner, land in the match on its page and see each other; a search under the banner
 // alone (no panel: MS1, the user's decision) into free play and cancelled; the pad's Y cancelling it from the menus
 // (notes/matchmaking.md v1 queue checklist, MM-5, MM-10). Nothing drawn (`?render=off`).
 import type { Browser, Page } from "@playwright/test";
-import { expect, fakeGamepad, hideGamepads, test, tickPlaylists } from "./fixtures";
+import { expect, fakeGamepad, hideGamepads, tickPlaylists } from "../fixtures";
+import { STACKS, signIn, test } from "./fixtures";
 
-const QUEUE = "127.0.0.1:14440";
-/** The page's query: the server, its development matchmaker */
-const SEARCH = `queue=${QUEUE}&matchmaker=/dev-matchmaker/14450`; // (the preview's same-origin path: RV-911)
+test.use({ baseURL: STACKS.queue.origin });
 
 async function menuPage(browser: Browser, errors: string[]): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
   await hideGamepads(context);
+  await signIn(context, "Queue");
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
-  await page.goto(`/?${SEARCH}&render=off`);
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   return page;
 }
@@ -106,9 +106,10 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
   await hideGamepads(context);
   await fakeGamepad(context);
+  await signIn(context, "Queue Pad");
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`/?${SEARCH}&render=off`);
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   const tap = async (button: number): Promise<void> => {
     await page.evaluate(async (b) => {

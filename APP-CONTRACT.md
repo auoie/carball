@@ -9,6 +9,9 @@ the hosting side's (not here).
 | `carball-game` | the game server: matches over WebTransport (HTTP/3, QUIC) | **4433/udp** (`GAME_PORT`), public, nothing else published | `game.carball.zolt.top` (DNS only, no proxy: it's UDP; **A and AAAA records**: see below) |
 | `carball-api` | the accounts service: sign-in (Google, Steam), sessions, accounts (Go; Postgres beside it) | **8080/tcp** (`LISTEN_ADDR`, plain HTTP), on its docker network only: **never published** | `https://carball.zolt.top/api/` (the tunnel routes `/api/` to it, the rest to `carball-web`: same origin) |
 
+(`carball-game-e2e` and `carball-api-e2e`, from `scripts/build_images.sh --e2e`, are the browser tests' alone: the test
+hooks and the tests' sign-in, `client/e2e/services`. They are never pushed or deployed.)
+
 **Dual-stack, on host networking (the user's decision of 2026-10-23, in place of RV-406's IPv4 only).** The game
 server listens on `[::]` (IPv6 and IPv4), and each game server's name has **A and AAAA records**. Its container runs
 with `--network host`: it sees every client's real address (an IPv6 one grouped by its /64 for the limits; an IPv4 one
@@ -411,6 +414,14 @@ window.
 | A game server call's ticket | ticket | issued within 24 h; each spent once |
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-24 (the working tree on 6660225, design 4's first step: `scripts/build_images.sh --worktree --e2e e2e`): the
+checks stage passed, now also finding none of the e2e builds' markers (the tests' sign-in route, the game server's test
+flags) in either release binary. The browser tests' three service stacks (`client/e2e/services`: Postgres 18.6 in
+memory, the one-shot `migrate`, `carball-api-e2e serve --dev`, one or two `carball-game-e2e` in queue mode with the
+stack's ticket key and token, `carball-web` from `GAME_SERVERS`, an nginx edge for one origin) came up healthy in about
+11 s, and the browser tests passed 85/85 (the services' 17: queue, queue edges, regions, against them; the online goal
+spec on its rerun, a timing flake while the images built beside it).
 
 2026-10-23 (the working tree on b524503, the build moved into the root `Dockerfile`: `scripts/build_images.sh --worktree
 dockertest`): the checks stage passed (the engine's native and WebAssembly builds simulating bit-identically, the
