@@ -33,6 +33,7 @@ import { lowQualityPath } from "./shaderQuality";
 import type { ArenaClock } from "./themes/theme";
 import { fullBright, linear } from "./teamColors";
 import { ARENA_PRIORITY } from "./translucentSort";
+import { TURF, turfTexture } from "./turf";
 import type { GlowRibbon } from "./themes/theme";
 import { WALL_FOOT, clip, fourWays, framePieces, wallParam } from "./wallFoot";
 
@@ -450,6 +451,9 @@ const PITCH_GLSL = /* glsl */ `
   uniform vec3 grassA;
   uniform vec3 grassB;
   uniform vec3 chalk;
+  uniform sampler2D turfMap;
+  uniform float turfTile;
+  uniform float turfGrain;
   varying vec2 vPitch;
   float sdRoundBox(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
   float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
@@ -459,6 +463,10 @@ const PITCH_GLSL = /* glsl */ `
     float s = p.y / pitchStripe;
     float stripe = clamp((abs(fract(s * 0.5) * 2.0 - 1.0) - 0.5) / max(fwidth(s), 1e-4) + 0.5, 0.0, 1.0);
     vec3 grass = mix(grassA, grassB, stripe);
+    // (the grain (turf.ts): the ground's motion seen under the car; its mips taking it to its mean far off, no shimmer;
+    // a second fetch, larger and turned, so the tile's repeat doesn't show; the chalk over it as it was)
+    float grain = texture2D(turfMap, p / turfTile).r + texture2D(turfMap, mat2(0.8, -0.6, 0.6, 0.8) * p / (turfTile * 2.7)).r - 1.0;
+    grass *= 1.0 + turfGrain * grain;
     vec2 e = abs(p);
     float yEnd = pitchHalf.y;
     float bound = sdRoundBox(p, pitchHalf, pitchCorner);
@@ -478,8 +486,9 @@ const PITCH_GLSL = /* glsl */ `
     return mix(grass, chalk, max(line, fill));
   }`;
 
-/** The pitch: the floor's grass, mown in wide stripes, with its chalk markings; lit as any floor */
+/** The pitch: the floor's grass, mown in wide stripes, with its grain (turf.ts) and its chalk markings; lit as any floor */
 export function pitchMaterial(layout: PitchLayout, grassA: Color, grassB: Color, chalk: Color): MeshStandardMaterial {
+  const map = turfTexture();
   const material = new MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.92,
@@ -504,6 +513,9 @@ export function pitchMaterial(layout: PitchLayout, grassA: Color, grassB: Color,
       grassA: { value: grassA },
       grassB: { value: grassB },
       chalk: { value: chalk },
+      turfMap: { value: map },
+      turfTile: { value: TURF.tile },
+      turfGrain: { value: TURF.grain },
     });
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec2 vPitch;")
