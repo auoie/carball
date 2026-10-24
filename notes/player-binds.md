@@ -415,3 +415,9 @@ Pages with a camera table only (in the camera statistics, not above): [2Piece](h
 - One camera table (Joyo) adds `demotransitiontime=0.00` and `invertswivel=no`.
 - Eraclesss has two control tables (Xbox and KBM); both are listed.
 - Values outside the page's slider grid (client/src/settings/settings.ts limits and steps): Cyrexal camera.transitionspeed=0, Smoog camera.transitionspeed=0.40.
+
+## Carball's own inputs: what needs a real device (RV-1129, INFO)
+
+Not testable here, so left as built: the wheel's notch size on each browser and mouse (a tap a 40 px notch or a line), a
+trackpad's or a free-spin wheel's tap rate, Shift+wheel in Firefox, whether Windows' Snipping Tool still lets PrintScreen's
+keyup reach the page, and the right-click swallow's timing on Windows (its context menu within one task of the release).

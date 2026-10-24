@@ -11,7 +11,7 @@ import { END_TEXT } from "../game/matchSequence";
 
 /** The pad's X Default asks first (MENU-14: a confirm, NO focused): our words, the game's YES / NO */
 export const DEFAULT_QUESTION = "Reset this page to its defaults?";
-import { KEYUP_ONLY, padUnmapped, readGamepad } from "../input/devices";
+import { KEYUP_ONLY, WheelNotches, padUnmapped, readGamepad } from "../input/devices";
 import {
   AUDIO_LIMITS,
   type AudioSettings,
@@ -407,14 +407,9 @@ export class SettingsPanel {
       textContent:
         "Click a slot, then press a key, click a mouse button or turn the wheel, or press/move a gamepad input. Right-click a slot to clear it. Esc cancels.",
     });
-    // (a pad the browser doesn't map: its numbers as it reports them, its binds to set here, RV-1095)
+    // (a pad the browser doesn't map: never read, RV-1124; the user's words)
     const unmapped = padUnmapped()
-      ? [
-          el("p", {
-            className: "settings-hint unmapped-pad",
-            textContent: "This controller isn't one the browser maps: its buttons and sticks are numbered as it reports them, so set its binds here.",
-          }),
-        ]
+      ? [el("p", { className: "settings-hint unmapped-pad", textContent: "This controller isn't one the browser maps, so it can't be used here." })]
       : [];
     // (a browser that can't take every bind: its limits, always here, RV-1104)
     const limits = currentBrowserLimits();
@@ -565,14 +560,16 @@ export class SettingsPanel {
           },
           { capture: true, signal: abort.signal },
         );
-        // (the wheel, a turn up or down: the game's MouseScrollUp and MouseScrollDown, RV-1096)
+        // (the wheel, a notch's turn up or down, Shift's too: the game's MouseScrollUp and MouseScrollDown, RV-1096,
+        // RV-1126)
+        const notches = new WheelNotches();
         window.addEventListener(
           "wheel",
           (e) => {
-            if (e.deltaY === 0) return;
             e.preventDefault();
             e.stopPropagation();
-            finish({ kind: "key", code: e.deltaY < 0 ? "WheelUp" : "WheelDown" });
+            const code = notches.turn(e);
+            if (code !== null) finish({ kind: "key", code });
           },
           { capture: true, passive: false, signal: abort.signal },
         );

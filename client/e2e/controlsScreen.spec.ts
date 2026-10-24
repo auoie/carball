@@ -50,7 +50,9 @@ test("the Fullscreen line, above the slots, whatever the binds; its button switc
   await expect(notice).toBeVisible();
 });
 
-test("the wheel binds by a turn, and fires its action in play; PrintScreen binds by its keyup alone (RV-1096, RV-1100)", async ({ page }) => {
+test("the wheel binds by a turn, Shift's sideways one too, and fires its action in play; PrintScreen binds by its keyup alone (RV-1096, RV-1100, RV-1126)", async ({
+  page,
+}) => {
   await controls(page);
   await slot(page, "launchBall").click();
   await page.waitForTimeout(100);
@@ -59,6 +61,11 @@ test("the wheel binds by a turn, and fires its action in play; PrintScreen binds
   await slot(page, "passBall").click();
   await page.keyboard.up("PrintScreen");
   await expect(slot(page, "passBall")).toHaveText("PrintScreen");
+  // (Shift's turn, which Chromium sends sideways: the same turn, RV-1126)
+  await slot(page, "defendShot").click();
+  await page.waitForTimeout(100);
+  await page.mouse.wheel(120, 0);
+  await expect(slot(page, "defendShot")).toHaveText("Wheel down");
   await page.keyboard.press("Escape");
   await expect(page.locator("#settings")).toBeHidden();
   await freePlay(page);
@@ -92,11 +99,28 @@ test("the wheel binds by a turn, and fires its action in play; PrintScreen binds
   await expect.poll(async () => page.evaluate(() => (window as unknown as { peakUp: number }).peakUp), { timeout: 10_000 }).toBeGreaterThan(400);
 });
 
-test("a controller the browser doesn't map: read by its own numbers, the Controls screen saying so (RV-1095)", async ({ browser }) => {
+test("a controller the browser doesn't map: never read in play, the Controls screen saying it can't be used (RV-1124)", async ({ browser }) => {
   const context = await browser.newContext();
   await fakeGamepad(context, "");
   const page = await context.newPage();
-  await controls(page);
-  await expect(page.locator("#settings .unmapped-pad")).toContainText("isn't one the browser maps");
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
+  // (its button held for a while: still the keyboard's prompts, no pad mode)
+  await page.evaluate(async () => {
+    const w = window as unknown as { carballSetPad: (down: number[], axes?: number[]) => void };
+    w.carballSetPad([0, 9], [-0.6, 0, 0, 0]);
+    await new Promise((r) => setTimeout(r, 1500));
+    w.carballSetPad([]);
+  });
+  await expect(page.locator("#ballcam-toggle .key-pad")).toHaveCount(0);
+  await expect(page.locator("#pause-menu")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await page
+    .locator("#pause-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
+  await page.locator(".settings-tab", { hasText: "Controls" }).click();
+  await expect(page.locator("#settings .unmapped-pad")).toHaveText("This controller isn't one the browser maps, so it can't be used here.");
   await context.close();
 });

@@ -105,9 +105,9 @@ Coordinates: the game's frame (x, y horizontal, z up, left-handed) maps to Three
 
 ## Controls and settings
 Esc opens the settings menu (`src/ui/settingsPanel.ts`): rebind every action (one keyboard/mouse and one gamepad
-input each; keys named by the keyboard's layout where the browser tells it, the mouse's buttons and wheel, gamepad
-buttons, triggers and stick directions all bindable, a pad the browser doesn't map read by its own numbers), the game's
-camera settings, and the
+input each; keys named by the keyboard's layout where the browser tells it, the mouse's buttons and wheel (a tap a
+notch), gamepad buttons, triggers and stick directions all bindable; pads with the browser's standard mapping only), the
+game's camera settings, and the
 controller settings (controller deadzone, dodge deadzone, steering and aerial sensitivity), all with the game's
 defaults and slider ranges, plus its options (ball/rear camera toggle or hold, invert swivel pitch, keyboard air
 pitch safety). Saved in localStorage (`src/settings/settings.ts`, validated field by field on load); the Controls tab lists

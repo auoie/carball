@@ -68,10 +68,15 @@ describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
         ["KeyQ", "a"],
         ["Semicolon", "m"],
         ["Digit1", "&"],
+        ["Minus", "ß"],
+        ["Quote", " "],
       ]),
     );
     try {
       expect([keyName("KeyW"), keyName("KeyQ"), keyName("Semicolon"), keyName("Digit1"), keyName("KeyE")]).toEqual(["Z", "A", "M", "1", "E"]);
+      // (German's ß its own, not "SS"; a blank the key's own name: RV-1128)
+      expect([keyName("Minus"), keyName("Quote")]).toEqual(["ß", keyName("Quote")]);
+      expect(keyName("Quote")).not.toBe(" ");
     } finally {
       setKeyboardLayout(null);
     }

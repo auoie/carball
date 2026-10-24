@@ -285,8 +285,12 @@ const LAYOUT_KEYS = /^(Key[A-Z]|Minus|Equal|BracketLeft|BracketRight|Backslash|S
 /** "KeyW" -> "W", "ShiftLeft" -> "Left Shift", "Digit1" -> "1", "ArrowUp" -> "Up arrow"; a layout's own letters and
  *  punctuation where the browser tells them (RV-1101). */
 export function keyName(code: string): string {
-  const typed = LAYOUT_KEYS.test(code) ? layout?.get(code) : undefined;
-  if (typed !== undefined && typed !== "") return typed.toUpperCase();
+  // (upper case only where it's one letter still: German's ß not "SS"; a blank, the key's own name: RV-1128)
+  const typed = LAYOUT_KEYS.test(code) ? layout?.get(code)?.trim() : undefined;
+  if (typed !== undefined && typed !== "") {
+    const upper = typed.toUpperCase();
+    return upper.length === typed.length ? upper : typed;
+  }
   if (code === "WheelUp") return "Wheel up";
   if (code === "WheelDown") return "Wheel down";
   if (/^Key[A-Z]$/.test(code)) return code.slice(3);

@@ -123,11 +123,25 @@ let matchGuard: LeaveGuard | null = null;
 async function main(): Promise<void> {
   // (the thumb buttons never the browser's back and forward, from the start: RV-1103)
   cancelThumbButtons();
-  // (the keyboard's layout for the keys' names, where the browser tells it: RV-1101)
-  void (navigator as { readonly keyboard?: { readonly getLayoutMap?: () => Promise<ReadonlyMap<string, string>> } }).keyboard
-    ?.getLayoutMap?.()
-    .then(setKeyboardLayout)
-    .catch(() => undefined);
+  // (the keyboard's layout for the keys' names, where the browser tells it (RV-1101); again at the window's focus and at
+  // the spec's layoutchange, a layout switched since, RV-1128)
+  const keyboard = (
+    navigator as {
+      readonly keyboard?: {
+        readonly getLayoutMap?: () => Promise<ReadonlyMap<string, string>>;
+        readonly addEventListener?: (type: string, listener: () => void) => void;
+      };
+    }
+  ).keyboard;
+  const readLayout = (): void => {
+    void keyboard
+      ?.getLayoutMap?.()
+      .then(setKeyboardLayout)
+      .catch(() => undefined);
+  };
+  readLayout();
+  window.addEventListener("focus", readLayout);
+  keyboard?.addEventListener?.("layoutchange", readLayout);
   const loading = new LoadingScreen(required("#loading", HTMLElement));
   const canvas = required("#game", HTMLCanvasElement);
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server

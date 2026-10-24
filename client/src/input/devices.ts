@@ -5,6 +5,29 @@ import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
 /** The keys a browser sends only a keyup for (Windows keeps PrintScreen's keydown): taps when they come (RV-1100) */
 export const KEYUP_ONLY: readonly string[] = ["PrintScreen"];
 
+/** A notch's worth of the wheel, px: a mouse's notch at least (100 in Chromium, 53 in its Linux builds, about 48 in
+ *  Firefox's); a line or a page always one */
+const WHEEL_NOTCH_PX = 40;
+
+/** The wheel's turns as taps: one a notch's worth in a direction, so a trackpad's or a free-spin wheel's stream of small
+ *  deltas taps once a notch, not each event (RV-1129); Shift's turn, which Chromium sends sideways, as the same turn
+ *  (RV-1126) */
+export class WheelNotches {
+  #sum = 0;
+
+  /** The turn's code once a notch's worth has come in its direction, else null */
+  turn(e: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">): "WheelUp" | "WheelDown" | null {
+    const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    if (delta === 0) return null;
+    const px = e.deltaMode === 0 ? delta : delta * WHEEL_NOTCH_PX;
+    if (Math.sign(px) !== Math.sign(this.#sum)) this.#sum = 0;
+    this.#sum += px;
+    if (Math.abs(this.#sum) < WHEEL_NOTCH_PX) return null;
+    this.#sum = 0;
+    return px < 0 ? "WheelUp" : "WheelDown";
+  }
+}
+
 /** The thumb buttons, Mouse 4 and 5: bindable (air roll, often), never the browser's back and forward, which on a match's
  *  page would leave the match (a loss and a ban): anywhere on the page, a menu's too, from the page's start (its seat
  *  claimed while it loads, RV-1103), in the capture phase (RV-1105). Chromium's; Firefox gives a page no thumb buttons at
@@ -96,16 +119,20 @@ export class InputDevices {
       },
       { signal },
     );
-    // (the wheel's turns as the game's MouseScrollUp and MouseScrollDown: a key tapped in a frame, bindable, RV-1096)
+    // (the wheel's turns as the game's MouseScrollUp and MouseScrollDown: a key tapped, one a notch, bindable, RV-1096,
+    // RV-1129; in play, bound, the page's own never with it: Ctrl's zoom, RV-1127)
+    const notches = new WheelNotches();
     surface.addEventListener(
       "wheel",
       (e) => {
-        if (e.deltaY === 0) return;
+        if (!this.menuOpen() && (this.bound("WheelUp") || this.bound("WheelDown"))) e.preventDefault();
+        const code = notches.turn(e);
+        if (code === null) return;
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
-        this.#tap(e.deltaY < 0 ? "WheelUp" : "WheelDown");
+        this.#tap(code);
       },
-      { signal, passive: true },
+      { signal, passive: false },
     );
     surface.addEventListener(
       "mousedown",
@@ -235,53 +262,21 @@ export function gamepads(): readonly (Gamepad | null)[] {
   }
 }
 
-/** The first connected gamepad with the standard layout, else the first the browser doesn't map (unmappedSnapshot); its
- *  kind noted for the prompts' glyphs (setPadStyle) */
+/** The first connected gamepad with the standard layout (its kind noted for the prompts' glyphs: setPadStyle); a pad
+ *  the browser doesn't map is never read (its numbers its own: a flight stick's, a wheel's pedals, RV-1124) */
 export function readGamepad(): GamepadSnapshot | null {
-  let unmapped: Gamepad | null = null;
   for (const pad of gamepads()) {
-    if (!pad?.connected) continue;
-    if (pad.mapping === "standard") {
+    if (pad?.connected && pad.mapping === "standard") {
       setPadStyle(padStyleOf(pad.id));
-      lastPadUnmapped = false;
       return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };
     }
-    unmapped ??= pad;
   }
-  lastPadUnmapped = unmapped !== null;
-  return unmapped ? unmappedSnapshot(unmapped) : null;
+  return null;
 }
 
-/** Each unmapped pad's rest (by its id): its axes' resting values, the buttons held when first seen (RV-1095) */
-const rests = new Map<string, { readonly axes: readonly number[]; readonly held: Set<number> }>();
-/** The pad last read is one the browser doesn't map (the Controls screen says so) */
-let lastPadUnmapped = false;
-
-/** Whether the pad in use is one the browser doesn't map (its buttons and sticks numbered as it reports them) */
+/** Whether a pad the browser doesn't map is connected and no standard one is (the Controls screen says it can't be
+ *  used) */
 export function padUnmapped(): boolean {
-  return lastPadUnmapped;
-}
-
-/** A pad the browser doesn't map ("standard" mapping missing: an older or uncommon pad): its buttons and sticks by
- *  their own numbers, its binds set on the Controls screen (RV-1095). An axis at an end when first seen rests there (a
- *  trigger at -1 reads 0 untouched), any other at 0 (the browser shows a pad first at a stick moved half way: never its
- *  rest); a button held when first seen (the press that showed it) counts once let go */
-export function unmappedSnapshot(pad: Pick<Gamepad, "id" | "axes" | "buttons">): GamepadSnapshot {
-  let rest = rests.get(pad.id);
-  if (!rest) {
-    rest = {
-      axes: pad.axes.map((v) => (Math.abs(v) > 0.99 ? Math.sign(v) : 0)),
-      held: new Set(pad.buttons.flatMap((b, i) => (b.value > 0.5 ? [i] : []))),
-    };
-    rests.set(pad.id, rest);
-  }
-  setPadStyle(padStyleOf(pad.id));
-  const { axes: restAxes, held } = rest;
-  const axes = pad.axes.map((v, i) => Math.max(-1, Math.min(1, v - (restAxes[i] ?? 0))));
-  const buttons = pad.buttons.map((b, i) => {
-    if (held.has(i) && b.value > 0.5) return 0;
-    held.delete(i);
-    return b.value;
-  });
-  return { axes, buttons };
+  const connected = gamepads().filter((pad) => pad?.connected === true);
+  return connected.length > 0 && connected.every((pad) => pad?.mapping !== "standard");
 }

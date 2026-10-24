@@ -1,7 +1,7 @@
 // The pads as the game reads them (src/input/devices.ts): a browser without the Gamepad API (turned off, a privacy
 // setting) has none, the game going on without them (the loading screen once stuck behind a first frame that threw)
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gamepads, padUnmapped, readGamepad, unmappedSnapshot } from "./devices";
+import { InputDevices, WheelNotches, gamepads, padUnmapped, readGamepad } from "./devices";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,36 +31,89 @@ describe("the pads", () => {
   });
 });
 
-describe("a pad the browser doesn't map (RV-1095)", () => {
+describe("a pad the browser doesn't map (RV-1124)", () => {
   const button = (value: number) => ({ value, pressed: value > 0.5, touched: value > 0 });
-  const pad = (id: string, axes: number[], pressed: number[]) => ({ id, axes, buttons: [0, 1, 2].map((i) => button(pressed.includes(i) ? 1 : 0)) });
-  const rounded = (axes: readonly number[]) => axes.map((v) => Math.round(v * 100) / 100);
 
-  it("read by its own numbers, a trigger from where it rested when first seen (-1: 0 untouched)", () => {
-    expect(rounded(unmappedSnapshot(pad("test-pad-1", [0, 0.01, -1], [])).axes)).toEqual([0, 0.01, 0]);
-    const held = unmappedSnapshot(pad("test-pad-1", [-1, 0.01, 1], [2]));
-    expect(rounded(held.axes)).toEqual([-1, 0.01, 1]);
-    expect(held.buttons).toEqual([0, 0, 1]);
-  });
-
-  it("first seen at the press that showed it: a stick half way rests at 0, the button held counts once let go", () => {
-    const first = unmappedSnapshot(pad("test-pad-3", [0.6, 0], [1]));
-    expect(first.axes).toEqual([0.6, 0]);
-    expect(first.buttons, "the showing press: not a press").toEqual([0, 0, 0]);
-    expect(unmappedSnapshot(pad("test-pad-3", [0, 0], [])).axes, "the stick let go: centred").toEqual([0, 0]);
-    expect(unmappedSnapshot(pad("test-pad-3", [0, 0], [1])).buttons, "pressed again: a press").toEqual([0, 1, 0]);
-  });
-
-  it("taken when no standard pad is there, said so; a standard one first when both are", () => {
-    const raw = { id: "test-pad-2", connected: true, mapping: "", axes: [0, 0], buttons: [button(0)] };
+  it("never read, said so; a standard one read when both are there", () => {
+    const raw = { id: "test-pad-2", connected: true, mapping: "", axes: [-0.5, 0], buttons: [button(1)] };
     const standard = { id: "standard-pad", connected: true, mapping: "standard", axes: [0, 0, 0, 0], buttons: [button(0)] };
     vi.stubGlobal("navigator", { getGamepads: () => [raw] });
-    expect(readGamepad()?.buttons).toEqual([0]);
-    raw.buttons = [button(1)];
-    expect(readGamepad()?.buttons).toEqual([1]);
+    expect(readGamepad()).toBeNull();
     expect(padUnmapped()).toBe(true);
     vi.stubGlobal("navigator", { getGamepads: () => [raw, standard] });
     expect(readGamepad()?.axes).toHaveLength(4);
     expect(padUnmapped()).toBe(false);
+    vi.stubGlobal("navigator", { getGamepads: () => [] });
+    expect(padUnmapped(), "none at all").toBe(false);
+  });
+});
+
+describe("the wheel's notches (RV-1126, RV-1129)", () => {
+  const wheel = (deltaY: number, deltaX = 0, deltaMode = 0) => ({ deltaX, deltaY, deltaMode });
+
+  it("a mouse's notch one tap each, either way; Shift's, sent sideways, the same", () => {
+    const n = new WheelNotches();
+    expect([n.turn(wheel(-100)), n.turn(wheel(100)), n.turn(wheel(53)), n.turn(wheel(0, -120)), n.turn(wheel(0))]).toEqual([
+      "WheelUp",
+      "WheelDown",
+      "WheelDown",
+      "WheelUp",
+      null,
+    ]);
+    expect(n.turn(wheel(3, 0, 1)), "Firefox's lines").toBe("WheelDown");
+  });
+
+  it("a trackpad's stream: one tap a notch's worth, not each event; a turn back starts again", () => {
+    const n = new WheelNotches();
+    const taps = Array.from({ length: 20 }, () => n.turn(wheel(-4))).filter((c) => c !== null);
+    expect(taps).toEqual(["WheelUp", "WheelUp"]);
+    expect([n.turn(wheel(-30)), n.turn(wheel(30)), n.turn(wheel(30))]).toEqual([null, null, "WheelDown"]);
+  });
+});
+
+describe("the keyboard's and the wheel's taps in play (RV-1096, RV-1100, RV-1127)", () => {
+  /** The page's window and the game's canvas for InputDevices, as plain event targets (no DOM here) */
+  const devices = (): { input: InputDevices; win: EventTarget; surface: EventTarget } => {
+    const win = new EventTarget();
+    vi.stubGlobal("window", win);
+    // (no element here: the events' target the window, never a field's or a button's)
+    class NoElement {
+      readonly element = false;
+    }
+    for (const name of ["Element", "HTMLElement", "HTMLButtonElement", "HTMLInputElement", "HTMLTextAreaElement"]) vi.stubGlobal(name, NoElement);
+    vi.stubGlobal("navigator", {});
+    vi.stubGlobal("document", { pointerLockElement: null });
+    const surface = new EventTarget();
+    return { input: new InputDevices(surface as HTMLElement), win, surface };
+  };
+  const event = (kind: string, fields: object): Event => Object.assign(new Event(kind, { cancelable: true }), fields);
+
+  it("PrintScreen's keyup alone a tap: pressed and let go that frame, never held; with its keydown, one press", () => {
+    const { input, win } = devices();
+    win.dispatchEvent(event("keyup", { code: "PrintScreen" }));
+    const tapped = input.snapshot();
+    expect([tapped.pressedKeys?.has("PrintScreen"), tapped.releasedKeys?.has("PrintScreen"), tapped.keys.has("PrintScreen")]).toEqual([true, true, false]);
+    expect(input.snapshot().pressedKeys?.has("PrintScreen"), "the next frame").toBe(false);
+    win.dispatchEvent(event("keydown", { code: "PrintScreen", repeat: false }));
+    win.dispatchEvent(event("keyup", { code: "PrintScreen" }));
+    expect(input.snapshot().events?.filter((e) => e.kind === "key" && e.down)).toHaveLength(1);
+    input.dispose();
+  });
+
+  it("a wheel's notch a tap; in play with the wheel bound, the page's own (Ctrl's zoom) cancelled, in a menu or unbound not", () => {
+    const { input, surface } = devices();
+    const turn = (): boolean => {
+      const e = event("wheel", { deltaY: -100, deltaX: 0, deltaMode: 0, ctrlKey: true });
+      surface.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(turn(), "unbound").toBe(false);
+    const tapped = input.snapshot();
+    expect([tapped.pressedKeys?.has("WheelUp"), tapped.releasedKeys?.has("WheelUp"), tapped.keys.has("WheelUp")]).toEqual([true, true, false]);
+    input.bound = (code) => code === "WheelUp";
+    expect(turn(), "bound, in play").toBe(true);
+    input.menuOpen = () => true;
+    expect(turn(), "bound, a menu up").toBe(false);
+    input.dispose();
   });
 });
