@@ -1,7 +1,7 @@
 // The pads as the game reads them (src/input/devices.ts): a browser without the Gamepad API (turned off, a privacy
 // setting) has none, the game going on without them (the loading screen once stuck behind a first frame that threw)
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InputDevices, WheelNotches, gamepads, padUnmapped, readGamepad } from "./devices";
+import { InputDevices, WheelTaps, gamepads, padUnmapped, readGamepad } from "./devices";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -48,37 +48,42 @@ describe("a pad the browser doesn't map (RV-1124)", () => {
   });
 });
 
-describe("the wheel's notches (RV-1126, RV-1129, RV-1130, RV-1131)", () => {
-  /** A wheel event at `at` ms; `shift`: Shift held */
-  const wheel = (at: number, deltaY: number, deltaX = 0, { deltaMode = 0, shift = false } = {}) => ({
-    deltaX,
-    deltaY,
-    deltaMode,
-    shiftKey: shift,
-    timeStamp: at,
+describe("the wheel's taps, as the game's messages (WHEEL1, RV-1137; Shift RV-1126, RV-1131)", () => {
+  const wheel = (deltaY: number, deltaX = 0, { deltaMode = 0, shift = false } = {}) => ({ deltaX, deltaY, deltaMode, shiftKey: shift });
+
+  it("each notch one tap in its direction, however close together (no window, nothing carried)", () => {
+    const w = new WheelTaps();
+    expect([w.turn(wheel(-100)), w.turn(wheel(-100)), w.turn(wheel(100)), w.turn(wheel(-100))]).toEqual([
+      { code: "WheelUp", count: 1 },
+      { code: "WheelUp", count: 1 },
+      { code: "WheelDown", count: 1 },
+      { code: "WheelUp", count: 1 },
+    ]);
   });
 
-  it("a mouse's notch one tap each, either way; Shift's, sent sideways, the same; sideways without Shift none", () => {
-    const n = new WheelNotches();
-    const turns = [
-      n.turn(wheel(0, -100)),
-      n.turn(wheel(200, 100)),
-      n.turn(wheel(400, 53)),
-      n.turn(wheel(600, 0, -120, { shift: true })),
-      n.turn(wheel(800, 0, 120)),
-      n.turn(wheel(1000, 0)),
-    ];
-    expect(turns).toEqual(["WheelUp", "WheelDown", "WheelDown", "WheelUp", null, null]);
-    expect(n.turn(wheel(1200, 3, 0, { deltaMode: 1 })), "Firefox's lines").toBe("WheelDown");
+  it("an event the browser merged several notches into: that many taps, counted by this device's notch", () => {
+    const chromium = new WheelTaps();
+    expect([chromium.turn(wheel(100)), chromium.turn(wheel(300))].map((t) => t?.count)).toEqual([1, 3]);
+    const linux = new WheelTaps();
+    expect([linux.turn(wheel(53)), linux.turn(wheel(106)), linux.turn(wheel(-53))].map((t) => t?.count)).toEqual([1, 2, 1]);
+    const lines = new WheelTaps();
+    expect([lines.turn(wheel(3, 0, { deltaMode: 1 })), lines.turn(wheel(6, 0, { deltaMode: 1 }))].map((t) => t?.count)).toEqual([1, 2]);
+    expect(new WheelTaps().turn(wheel(1, 0, { deltaMode: 2 }))).toEqual({ code: "WheelDown", count: 1 });
   });
 
-  it("a precision wheel's notch in pieces, a trackpad's swipe, a fast spin: one tap a burst; the next after a pause", () => {
-    const n = new WheelNotches();
-    const pieces = Array.from({ length: 8 }, (_, i) => n.turn(wheel(i * 8, -12.5))).filter((c) => c !== null);
-    expect(pieces, "a notch in eight pieces").toEqual(["WheelUp"]);
-    const swipe = Array.from({ length: 60 }, (_, i) => n.turn(wheel(500 + i * 16, -4))).filter((c) => c !== null);
-    expect(swipe, "a swipe").toEqual(["WheelUp"]);
-    expect([n.turn(wheel(2000, -30)), n.turn(wheel(2010, 30)), n.turn(wheel(2020, 30))], "a turn back starts again").toEqual([null, null, "WheelDown"]);
+  it("smaller than a notch (a precision wheel's or a trackpad's pieces): one tap each in its own direction, the user's choice over the game's every-piece-up bug", () => {
+    const w = new WheelTaps();
+    expect([w.turn(wheel(12.5)), w.turn(wheel(-12.5)), w.turn(wheel(4))]).toEqual([
+      { code: "WheelDown", count: 1 },
+      { code: "WheelUp", count: 1 },
+      { code: "WheelDown", count: 1 },
+    ]);
+    expect(w.turn(wheel(100)), "a notch after: one, the pieces never its measure").toEqual({ code: "WheelDown", count: 1 });
+  });
+
+  it("Shift's turn, which Chromium sends sideways, the same turn; sideways without Shift none; nothing, none", () => {
+    const w = new WheelTaps();
+    expect([w.turn(wheel(0, -100, { shift: true })), w.turn(wheel(0, 100)), w.turn(wheel(0))]).toEqual([{ code: "WheelUp", count: 1 }, null, null]);
   });
 });
 

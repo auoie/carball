@@ -418,7 +418,7 @@ Pages with a camera table only (in the camera statistics, not above): [2Piece](h
 
 ## Carball's own inputs: what needs a real device (RV-1129, INFO)
 
-Not testable here, so left as built: the wheel's notch size on each browser and mouse (a tap a 40 px notch or a line), a
-trackpad's or a free-spin wheel's tap rate, Shift+wheel in Firefox, whether Windows' Snipping Tool still lets PrintScreen's
+Not testable here, so left as built: the wheel's deltas on each browser and mouse (a notch at least 32 px or a line:
+notes/input.md, Mouse wheel), how a browser splits or merges notches, a trackpad's pieces, Shift+wheel in Firefox, whether Windows' Snipping Tool still lets PrintScreen's
 keyup reach the page, the right-click swallow's timing on Windows (its context menu within one task of the release), and
 whether `overscroll-behavior-x: none` stops a trackpad's swipe-back in each browser (RV-1136).

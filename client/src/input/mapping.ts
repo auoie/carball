@@ -41,8 +41,8 @@ export const BUTTON_PRESS_THRESHOLD = 30 / 255;
 
 /** Held state of the non-driving actions; the caller detects presses. */
 export interface HeldActions {
-  readonly ballCam: boolean;
-  readonly rearCamera: boolean;
+  readonly ballCam: CameraButton;
+  readonly rearCamera: CameraButton;
   readonly reset: boolean;
   readonly ballInFront: boolean;
   readonly ballOnCar: boolean;
@@ -64,6 +64,16 @@ export interface HeldActions {
   readonly chat: readonly ChatKey[];
 }
 
+/** A camera switch's inputs this frame (PressSecondaryCamera / PressRearCamera and their releases: each press a command,
+ *  so a toggle flips once a press, N taps in a frame N times, the wheel's notches too, RV-1137): the keys' and mouse
+ *  buttons' presses since the last frame, whether one is held after them, and the pad's button held now (its press is
+ *  its edge) */
+export interface CameraButton {
+  readonly keyPresses: number;
+  readonly keyDown: boolean;
+  readonly padDown: boolean;
+}
+
 export interface ChatKey {
   readonly keyPressed: boolean;
   readonly padDown: boolean;
@@ -75,9 +85,11 @@ const NO_CHAT_KEY: ChatKey = { keyPressed: false, padDown: false };
 export function chatPresses(keys: readonly ChatKey[], previous: readonly ChatKey[]): number[] {
   return keys.flatMap((k, i) => (k.keyPressed || (k.padDown && !(previous[i]?.padDown ?? false)) ? [i] : []));
 }
+const NO_CAMERA_BUTTON: CameraButton = { keyPresses: 0, keyDown: false, padDown: false };
+
 export const NO_HELD_ACTIONS: HeldActions = {
-  ballCam: false,
-  rearCamera: false,
+  ballCam: NO_CAMERA_BUTTON,
+  rearCamera: NO_CAMERA_BUTTON,
   reset: false,
   ballInFront: false,
   ballOnCar: false,
@@ -273,9 +285,19 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
 export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): HeldActions {
   // (held, or pressed since the last frame: a tap still toggles, as the game's press commands do)
   const held = (action: Action): boolean => buttonInputs(input, bindings, stickDeadzone, action).some((i) => i.down || i.pressed);
+  // (the cameras' presses counted from the frame's ordered events, without them one if pressed)
+  const camera = (action: "ballCam" | "rearCamera"): CameraButton => {
+    const [key, pad] = buttonInputs(input, bindings, stickDeadzone, action);
+    const events = orderedKeyEvents(input, bindings, [action]);
+    return {
+      keyPresses: events ? events.filter((down) => down).length : key?.pressed === true ? 1 : 0,
+      keyDown: key?.down ?? false,
+      padDown: pad?.down ?? false,
+    };
+  };
   return {
-    ballCam: held("ballCam"),
-    rearCamera: held("rearCamera"),
+    ballCam: camera("ballCam"),
+    rearCamera: camera("rearCamera"),
     reset: held("reset"),
     ballInFront: held("ballInFront"),
     ballOnCar: held("ballOnCar"),

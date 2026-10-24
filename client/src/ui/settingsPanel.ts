@@ -11,7 +11,7 @@ import { END_TEXT } from "../game/matchSequence";
 
 /** The pad's X Default asks first (MENU-14: a confirm, NO focused): our words, the game's YES / NO */
 export const DEFAULT_QUESTION = "Reset this page to its defaults?";
-import { KEYUP_ONLY, WheelNotches, padUnmapped, readGamepad } from "../input/devices";
+import { KEYUP_ONLY, WheelTaps, padUnmapped, readGamepad } from "../input/devices";
 import {
   AUDIO_LIMITS,
   type AudioSettings,
@@ -564,16 +564,16 @@ export class SettingsPanel {
           },
           { capture: true, signal: abort.signal },
         );
-        // (the wheel, a notch's turn up or down, Shift's too: the game's MouseScrollUp and MouseScrollDown, RV-1096,
-        // RV-1126)
-        const notches = new WheelNotches();
+        // (the wheel, a turn up or down, Shift's too: the game's MouseScrollUp and MouseScrollDown, bound as its message
+        // comes (the game's at its release, the same message), RV-1096, RV-1137)
+        const wheel = new WheelTaps();
         window.addEventListener(
           "wheel",
           (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const code = notches.turn(e);
-            if (code !== null) finish({ kind: "key", code });
+            const taps = wheel.turn(e);
+            if (taps !== null) finish({ kind: "key", code: taps.code });
           },
           { capture: true, passive: false, signal: abort.signal },
         );

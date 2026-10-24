@@ -65,7 +65,8 @@ export function respawnLate(pct: number): boolean {
 /** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
  *  (notes/visual-timing.md VT-21) */
 export function boostShown(boost: number): number {
-  return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
+  // (a value that isn't a number: none, RV-1140)
+  return !Number.isFinite(boost) || boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
 }
 
 /** Flip Reset Indicator's parts (MENU-9): its look (our flip ring and the reset's toast) and its sound */
@@ -180,6 +181,9 @@ function element<T extends HTMLElement>(root: ParentNode, selector: string, type
 /** The status line's speed and fps readouts: at most this often (s) */
 const READOUT_EVERY = 0.1;
 
+/** HUDs made: each one's SVG ids its own */
+let huds = 0;
+
 export class Hud {
   readonly #root: HTMLElement;
   readonly #stage: HTMLElement;
@@ -244,8 +248,9 @@ export class Hud {
     this.#replayWaiting = element(root, "#replay-waiting", HTMLElement);
     this.#ballCam = element(root, "#ballcam", HTMLElement);
     this.#ballCamToggle = element(root, "#ballcam-toggle", HTMLElement);
-    // (the ball cam's icon: a soccer ball, the user's (2026-10-24), its own SVG)
-    element(root, ".ballcam-icon", HTMLElement).innerHTML = BALL_ICON;
+    // (the ball cam's icon: a soccer ball, the user's (2026-10-24), its own SVG; its mask's and clip's ids this HUD's own,
+    // RV-1142)
+    element(root, ".ballcam-icon", HTMLElement).innerHTML = BALL_ICON.replaceAll("ballcam-icon-", `ballcam-icon${String(huds++)}-`);
     this.#fps = element(root, "#fps", HTMLElement);
     this.#net = element(root, "#net", HTMLElement);
     this.#flip = element(root, "#flip", HTMLElement);

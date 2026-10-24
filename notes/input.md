@@ -82,6 +82,34 @@ The client sends `DodgeInputThreshold`, `SteeringSensitivity`, `AirControlSensit
 - Swivel (`Camera_TA.UpdateSwivel` / `GetDesiredSwivel`) and rear view (`ApplyRearCameraView`): `notes/camera.md`.
 - Ball cam and rear camera buttons toggle or hold: `bToggleSecondaryCamera` (default True), `bToggleRearCamera` (False).
 
+## Mouse wheel (WHEEL1, static session 2026-10-24; RV-1137)
+
+- **Path:** in play, Raw Input on its own thread (`RLRawMouseInput`, FUN_140dc6f50) rings each RI_MOUSE_WHEEL event;
+  `UWindowsClient::ProcessInput` (FUN_140dc6220) replays each as a WM_MOUSEWHEEL (`wParam = usButtonData << 16`); in the
+  menus the legacy WM_MOUSEWHEEL (WndProc FUN_140dc8410). Both end in FUN_140dc3040 case 0x20a. Drained before
+  `UWorld::Tick`, in order (FUN_140dc8550).
+- **One message, one press then one release** of `MouseScrollUp` or `MouseScrollDown` (InputKey 0x140dc47ce, then
+  0x140dc4802): no accumulation, remainder, time window, rate limit or debounce. Several notches in a frame are several
+  press/release pairs.
+- **Sign:** `q = (short)HIWORD(wParam) / 120`, truncated; MouseScrollDown only if q < 0, else MouseScrollUp, so a message
+  under one notch (a high-resolution wheel's 15 or 30 pieces) is MouseScrollUp whichever way it turned (a game bug).
+- **No horizontal wheel** (RI_MOUSE_HWHEEL unread, WM_MOUSEHWHEEL to DefWindowProc), no modifiers, no wheel axis.
+- **What a bound action sees:** an axis 1.0 for that frame; the jump one tick (its latch, LT-4) however many notches;
+  boost, powerslide and air roll nothing (released by the frame's end, LT-5); a toggled ball cam or rear camera flips on
+  each press (N taps, N flips), held mode nothing; a plain command once per tap; DoubleTap on two notches within 0.25 s.
+- **Carball** (`client/src/input/devices.ts` WheelTaps): one browser `wheel` event is one message; at least a notch (32
+  px, or any lines or pages) taps in its direction, an event the browser merged several notches into that many taps
+  (against this device's smallest notch: a stand-in for separate messages, not a sum); Shift's sideways turn (Chromium's
+  Shift+wheel) the same turn, sideways without Shift none. The cameras count each press (`updateSwitches`). **Smaller
+  than a notch: one tap in its own direction**, a deliberate difference from the exe (the user's choice, 2026-10-24: the
+  game's truncated delta / 120 sign test makes every such piece MouseScrollUp, which isn't copied).
+- **Labels:** the HUD's prompts (the ball cam's hint, the respawn's, the replay's skip, quick chat) build their key
+  names each frame they're shown, so a layout switched mid-play shows at their next frame; the open Controls screen
+  redraws on the layout change itself (RV-1132, RV-1143).
+- **Not matchable in a browser:** the delta per Windows message (a wheel sending 2 × 60 a notch shows 50 px pieces, taken
+  as notches, while the game gives Up); Chromium's coalescing (counted from size); a trackpad, which the browser can't
+  tell from a precision wheel; a Shift-tilt wheel (vertical here, ignored by the game).
+
 ## Profile defaults and menu limits
 | Setting | Default | Menu range |
 |---|---|---|

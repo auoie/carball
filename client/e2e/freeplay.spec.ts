@@ -669,7 +669,7 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
     const [b, h] = [box.getBoundingClientRect(), hint.getBoundingClientRect()];
     return {
       dots: document.querySelectorAll("#ballcam .rec-dot").length,
-      icon: document.querySelectorAll(".ballcam-icon svg mask#ballcam-icon-mask").length,
+      icon: document.querySelectorAll(".ballcam-icon svg mask[id^='ballcam-icon']").length,
       label: box.textContent.trim(),
       look: [style.borderTopColor, style.borderTopWidth, style.borderTopLeftRadius, style.color],
       hint: { left: h.left - b.left, below: h.top - b.bottom },

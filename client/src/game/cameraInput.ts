@@ -2,7 +2,7 @@
 // mouse, or controller: notes/camera-respawn-goal.md CAM-17), the swivel, and the free look when that input has it on.
 import type { FreeLookControls } from "../camera/carballCamera";
 import type { InputDevices } from "../input/devices";
-import { type InputSnapshot, type LookInput, readFreeLook, readLook } from "../input/mapping";
+import { type CameraButton, type InputSnapshot, type LookInput, readFreeLook, readLook } from "../input/mapping";
 import type { InputCameraSettings, Settings } from "../settings/settings";
 
 export interface CameraInputs {
@@ -43,23 +43,32 @@ export interface CameraSwitches {
   readonly rear: boolean;
 }
 
+/** A camera's presses this frame: the keys' and mouse buttons' (each tap, the wheel's notches too), and the pad's edge */
+function presses(now: CameraButton, was: CameraButton): number {
+  return now.keyPresses + (now.padDown && !was.padDown ? 1 : 0);
+}
+
 /**
- * The switches after this frame's buttons (`held`, `before`: the buttons now and last frame): a toggle flips on its
- * press; held mode is on from the press to the release (the rear camera: a new car turns it off until the next press,
- * newCar). `blocked`: the goal replay or after the match, when the ball cam ignores its presses (PressSecondaryCamera
- * returns, RV-9) but not its release (ReleaseSecondaryCamera isn't blocked, RV-20).
+ * The switches after this frame's buttons (`held`, `before`: the buttons now and last frame), as the game's press and
+ * release commands, each run as it comes (PlayerInput_X::InputKey 0x140e3a2b0) in the frame's input pass before the
+ * camera reads them (UInput::Tick FUN_1409da2a0; WHEEL1's spec, RV-1137; notes/client-loop-timing.md LT-5): a toggle
+ * flips on each press (N presses in a frame N times); held mode is on from a press to the release, so a press and
+ * release within the frame leaves it off (the rear camera: a new car turns it off until the next press, newCar). A press
+ * held over frames counts once, as before. `blocked`: the goal replay or after the
+ * match, when the ball cam ignores its presses (PressSecondaryCamera returns, RV-9) but not its release
+ * (ReleaseSecondaryCamera isn't blocked, RV-20).
  */
 export function updateSwitches(
   state: CameraSwitches,
-  held: { readonly ballCam: boolean; readonly rearCamera: boolean },
-  before: { readonly ballCam: boolean; readonly rearCamera: boolean },
+  held: { readonly ballCam: CameraButton; readonly rearCamera: CameraButton },
+  before: { readonly ballCam: CameraButton; readonly rearCamera: CameraButton },
   o: { readonly ballCamToggle: boolean; readonly rearCameraToggle: boolean; readonly blocked: boolean },
 ): CameraSwitches {
-  const ballPressed = held.ballCam && !before.ballCam;
-  const rearPressed = held.rearCamera && !before.rearCamera;
-  const press = ballPressed && !o.blocked;
-  const ballCam = o.ballCamToggle ? (press ? !state.ballCam : state.ballCam) : held.ballCam && (state.ballCam || press);
-  const rear = o.rearCameraToggle ? (rearPressed ? !state.rear : state.rear) : held.rearCamera && (state.rear || rearPressed);
+  const ballPresses = o.blocked ? 0 : presses(held.ballCam, before.ballCam);
+  const rearPresses = presses(held.rearCamera, before.rearCamera);
+  const down = (b: CameraButton): boolean => b.keyDown || b.padDown;
+  const ballCam = o.ballCamToggle ? state.ballCam !== (ballPresses % 2 === 1) : down(held.ballCam) && (state.ballCam || ballPresses > 0);
+  const rear = o.rearCameraToggle ? state.rear !== (rearPresses % 2 === 1) : down(held.rearCamera) && (state.rear || rearPresses > 0);
   return { ballCam, rear };
 }
 

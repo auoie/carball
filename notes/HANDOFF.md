@@ -815,8 +815,8 @@ leaver's ban line, a rejoin refused across servers (RV-1008) and let in at its o
     - Menus: the pause menu (MENU-4, HT-4, `ui/pauseMenu.ts`: Resume Game, Settings, online the match's buttons and
       the player list, freeplay Exit to Main Menu with its question; Show Controls is the editor's only); the main menu (MENU-1/2, `ui/mainMenu.ts`: Play → Free Play or
       a server to join, Settings) over the arena as freeplay's page opens; Escape handled in one place (main.ts).
-      Settings: the Interface tab (scales, nameplates, Match Notifications, Team-Colored Boost Meter, Metric, Ball Cam
-      Indicator, Hide In-Game HUD) and the Gameplay tab's Game Stat Display Level and Flip Reset Indicator (Off, Audio,
+      Settings: the Interface tab (scales, nameplates, Match Notifications, Team-Colored Boost Meter (removed 2026-10-24:
+      the boost ring always ice blue, the user's design), Metric, Ball Cam Indicator, Hide In-Game HUD) and the Gameplay tab's Game Stat Display Level and Flip Reset Indicator (Off, Audio,
       Visual, On; the old checkbox migrates).
     - Review RV-273..278: the podium camera frames the spots (not the cars as last seen); a test for the 4th winner's
       titles; leavers' counters out of most/fewest tested; the libraryFiles test runs in CI; the server's hidden

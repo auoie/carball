@@ -193,6 +193,14 @@ describe("chat settings (CHAT-5, 18)", () => {
     expect(b.chatPreset4.keyboard).toEqual({ kind: "key", code: "Digit4" });
   });
 
+  it("an old save's Team-Colored Boost Meter (removed 2026-10-24): ignored whatever it held, the rest read, gone once saved", () => {
+    for (const value of [true, false, "yes", null]) {
+      const parsed = parseSettings({ interface: { teamColoredBoost: value, metric: false, hideHud: true } });
+      expect(parsed.interface).not.toHaveProperty("teamColoredBoost");
+      expect([parsed.interface.metric, parsed.interface.hideHud]).toEqual([false, true]);
+    }
+  });
+
   it("the Interface and Gameplay tabs: defaults, limits, unknown values back to the default (MENU-6/9)", () => {
     expect(DEFAULT_SETTINGS.interface).toMatchObject({
       scale: 1,

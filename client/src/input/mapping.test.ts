@@ -71,8 +71,8 @@ describe("default keyboard and mouse (the live game's Modern preset)", () => {
   });
 
   it("actions: middle mouse is ball cam, left ctrl rear camera, backspace resets", () => {
-    expect(readHeldActions(mouse(1), DEFAULT_BINDINGS, DZ).ballCam).toBe(true);
-    expect(readHeldActions(keys("ControlLeft"), DEFAULT_BINDINGS, DZ).rearCamera).toBe(true);
+    expect(readHeldActions(mouse(1), DEFAULT_BINDINGS, DZ).ballCam.keyDown).toBe(true);
+    expect(readHeldActions(keys("ControlLeft"), DEFAULT_BINDINGS, DZ).rearCamera.keyDown).toBe(true);
     expect(readHeldActions(keys("Backspace"), DEFAULT_BINDINGS, DZ).reset).toBe(true);
   });
 

@@ -11,7 +11,7 @@ import {
   setKeyboardLayout,
   takesBrowserKey,
 } from "./bindings";
-import { readHeldActions } from "./mapping";
+import { ButtonLatch, type InputSnapshot, JumpLatch, readControls, readHeldActions } from "./mapping";
 
 const bound = (code: string): boolean => keyBound(DEFAULT_BINDINGS, code);
 const press = (code: string, mods: { ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean } = {}) => ({
@@ -138,5 +138,54 @@ describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
     expect(readHeldActions(turned, bindings, 0.2).launchBall).toBe(true);
     const after = { keys: new Set<string>(), mouseButtons: new Set<number>(), gamepad: null };
     expect(readHeldActions(after, bindings, 0.2).launchBall, "the next frame: not held").toBe(false);
+  });
+});
+
+describe("a wheel's taps as the game's actions take them (WHEEL1, RV-1137): each a press and release within the frame", () => {
+  /** A frame with `n` taps of `code`, in order */
+  const taps = (code: string, n: number): InputSnapshot => ({
+    keys: new Set<string>(),
+    mouseButtons: new Set<number>(),
+    pressedKeys: new Set([code]),
+    releasedKeys: new Set([code]),
+    events: Array.from({ length: n }, () => [
+      { kind: "key" as const, code, down: true },
+      { kind: "key" as const, code, down: false },
+    ]).flat(),
+    gamepad: null,
+  });
+  const idle: InputSnapshot = { keys: new Set<string>(), mouseButtons: new Set<number>(), gamepad: null };
+  const up = { kind: "key", code: "WheelUp" } as const;
+
+  it("an axis action full for that frame alone", () => {
+    const bindings = withKey(DEFAULT_BINDINGS, "throttleForward", up);
+    expect([readControls(taps("WheelUp", 1), bindings, 0.2).throttle, readControls(idle, bindings, 0.2).throttle]).toEqual([1, 0]);
+  });
+
+  it("the jump one tick, however many notches the frame had", () => {
+    const bindings = withKey(DEFAULT_BINDINGS, "jump", up);
+    const latch = new ButtonLatch();
+    const jump = new JumpLatch();
+    const controls = readControls(taps("WheelUp", 3), bindings, 0.2, latch);
+    jump.frame(latch);
+    expect([jump.tick(controls.jump), jump.tick(false)]).toEqual([true, false]);
+  });
+
+  it("boost, powerslide and air roll: nothing from a tap (released by the frame's end)", () => {
+    const bindings = withKey(withKey(withKey(withKey(DEFAULT_BINDINGS, "boost", up), "handbrake", up), "airRoll", up), "yawRight", {
+      kind: "key",
+      code: "KeyL",
+    });
+    const frame = taps("WheelUp", 2);
+    const held = { ...frame, keys: new Set(["KeyL"]) };
+    const controls = readControls(held, bindings, 0.2, new ButtonLatch());
+    expect([controls.boost, controls.handbrake, controls.yaw, controls.roll], "yaw still yaw: no air roll").toEqual([false, false, 1, 0]);
+  });
+
+  it("the cameras: each tap counted, none held after", () => {
+    const bindings = withKey(withKey(DEFAULT_BINDINGS, "ballCam", up), "rearCamera", { kind: "key", code: "WheelDown" });
+    const frame = { ...taps("WheelUp", 3), events: [...(taps("WheelUp", 3).events ?? []), ...(taps("WheelDown", 1).events ?? [])] };
+    const held = readHeldActions(frame, bindings, 0.2);
+    expect([held.ballCam.keyPresses, held.ballCam.keyDown, held.rearCamera.keyPresses]).toEqual([3, false, 1]);
   });
 });

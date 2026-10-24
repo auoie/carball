@@ -11,5 +11,10 @@ describe("the boost ring", () => {
 
   it("its dash: the filled length then the rest, one period of the circle's 100; full the whole circle undashed", () => {
     expect([ringDash(0), ringDash(33), ringDash(99.5), ringDash(100)]).toEqual(["0.00 100.00", "33.00 67.00", "99.50 0.50", "none"]);
+    expect(ringDash(99.996), "full as drawn: undashed (RV-1139)").toBe("none");
+  });
+
+  it("a value that isn't a number: empty (RV-1140)", () => {
+    expect([ringFill(Number.NaN), ringDash(Number.NaN), ringDash(Number.POSITIVE_INFINITY)]).toEqual([0, "0.00 100.00", "0.00 100.00"]);
   });
 });

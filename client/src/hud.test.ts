@@ -9,6 +9,7 @@ describe("the boost meter's number (VT-21)", () => {
     expect(boostShown(33.333)).toBe(33);
     expect(boostShown(99.6)).toBe(99);
     expect(boostShown(100)).toBe(100);
+    expect([boostShown(Number.NaN), boostShown(Number.POSITIVE_INFINITY)], "not a number: none (RV-1140)").toEqual([0, 0]);
   });
 });
 

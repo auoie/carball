@@ -5,38 +5,37 @@ import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
 /** The keys a browser sends only a keyup for (Windows keeps PrintScreen's keydown): taps when they come (RV-1100) */
 export const KEYUP_ONLY: readonly string[] = ["PrintScreen"];
 
-/** A notch's worth of the wheel, px: a mouse's notch at least (100 in Chromium, 53 in its Linux builds, about 48 in
- *  Firefox's); a line or a page always one */
-const WHEEL_NOTCH_PX = 40;
-/** A burst's events this close (ms): a precision wheel's notch in pieces, a trackpad's swipe, a fast spin */
-const WHEEL_BURST_GAP_MS = 50;
+/** The least a wheel event is to be a notch in pixels (a 1-line Windows notch is 33.3 px, Chromium's 100 on Windows and
+ *  53 on Linux, Firefox's about 48; a precision wheel's or a trackpad's pieces 12.5-25); in lines or pages any is one */
+const WHEEL_NOTCH_PX = 32;
 
-/** The wheel's turns as taps: one a burst, once a notch's worth has come in its direction, so a precision wheel's notch
- *  in pieces (RV-1130), a trackpad's swipe or a free-spin wheel's stream (RV-1129) taps once; Shift's turn, which
- *  Chromium sends sideways, as the same turn, a sideways one without Shift (a tilt wheel, a swipe) none (RV-1126,
- *  RV-1131) */
-export class WheelNotches {
-  #sum = 0;
-  #direction = 0;
-  #last = -Infinity;
-  #tapped = false;
+/**
+ * The wheel's turns as the game takes them (WHEEL1, RV-1137, notes/input.md): each wheel message one press and release
+ * of MouseScrollUp or MouseScrollDown, in its order in the frame, nothing summed, carried or timed (no remainder, no
+ * window, no rate limit). Here one browser event is one message; a turn down (a positive delta) MouseScrollDown, up
+ * MouseScrollUp; Shift's, which Chromium sends sideways, the same turn (the game reads the vertical delta Shift doesn't
+ * change), a sideways one without Shift none (the game reads no horizontal wheel). An event of several notches gives that
+ * many taps: a stand-in for the game's separate messages where the browser merged them into one event (Chromium can under
+ * load), counted against the smallest notch this device has sent, never the game summing deltas. Smaller than a notch
+ * (a precision wheel's or a trackpad's pieces): one tap in its own direction, a deliberate difference from the game (the
+ * user's choice, 2026-10-24): the game's sign test on the truncated delta / 120 makes every such piece MouseScrollUp,
+ * whichever way it turned.
+ */
+export class WheelTaps {
+  /** The smallest notch seen in each delta mode (pixels, lines, pages): a merged event's notches counted by it */
+  readonly #notch = [Infinity, Infinity, Infinity];
 
-  /** The turn's code at its burst's notch's worth, else null */
-  turn(e: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode" | "shiftKey" | "timeStamp">): "WheelUp" | "WheelDown" | null {
+  /** The event's taps: its key and how many, or null */
+  turn(e: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode" | "shiftKey">): { readonly code: "WheelUp" | "WheelDown"; readonly count: number } | null {
     const delta = e.deltaY !== 0 ? e.deltaY : e.shiftKey ? e.deltaX : 0;
     if (delta === 0) return null;
-    const px = e.deltaMode === 0 ? delta : delta * WHEEL_NOTCH_PX;
-    const gap = e.timeStamp - this.#last;
-    this.#last = e.timeStamp;
-    if (Math.sign(px) !== this.#direction || gap > WHEEL_BURST_GAP_MS) {
-      this.#direction = Math.sign(px);
-      this.#sum = 0;
-      this.#tapped = false;
-    }
-    this.#sum += px;
-    if (this.#tapped || Math.abs(this.#sum) < WHEEL_NOTCH_PX) return null;
-    this.#tapped = true;
-    return px < 0 ? "WheelUp" : "WheelDown";
+    const code = delta < 0 ? "WheelUp" : "WheelDown";
+    const size = Math.abs(delta);
+    const mode = e.deltaMode === 1 || e.deltaMode === 2 ? e.deltaMode : 0;
+    if (mode === 0 && size < WHEEL_NOTCH_PX) return { code, count: 1 };
+    const notch = Math.min(this.#notch[mode] ?? Infinity, size);
+    this.#notch[mode] = notch;
+    return { code, count: Math.max(1, Math.round(size / notch)) };
   }
 }
 
@@ -131,18 +130,18 @@ export class InputDevices {
       },
       { signal },
     );
-    // (the wheel's turns as the game's MouseScrollUp and MouseScrollDown: a key tapped, one a notch, bindable, RV-1096,
-    // RV-1129; in play, bound, the page's own never with it: Ctrl's zoom, RV-1127)
-    const notches = new WheelNotches();
+    // (the wheel's turns as the game's MouseScrollUp and MouseScrollDown: a key tapped each message, bindable, RV-1096,
+    // RV-1137; in play, bound, the page's own never with it: Ctrl's zoom, RV-1127)
+    const wheel = new WheelTaps();
     surface.addEventListener(
       "wheel",
       (e) => {
         if (!this.menuOpen() && (this.bound("WheelUp") || this.bound("WheelDown"))) e.preventDefault();
-        const code = notches.turn(e);
-        if (code === null) return;
+        const taps = wheel.turn(e);
+        if (taps === null) return;
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
-        this.#tap(code);
+        for (let i = 0; i < taps.count; i++) this.#tap(taps.code);
       },
       { signal, passive: false },
     );
