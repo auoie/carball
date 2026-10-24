@@ -21,6 +21,8 @@ export const REJOIN_TEXT = {
   elsewhere: "You're playing that match in another tab or window.",
   /** The matchmaker refused it (ours: the account searched or played another match since, RV-882) */
   gone: "That match can't be rejoined: you've searched or played another match since.",
+  /** The matchmaker couldn't be asked at the rejoin (ours: refused, never let in unconfirmed; offered again, RV-1008) */
+  unconfirmed: "Your rejoin couldn't be confirmed right now. Try again in a moment.",
 } as const;
 
 /** A page older than the servers (ours: a claim or a rejoin refused on version, RV-865, RV-884) */

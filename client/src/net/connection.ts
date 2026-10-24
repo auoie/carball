@@ -10,6 +10,8 @@ import {
   REFUSED_CONCLUDED,
   REFUSED_IN_MATCH,
   REFUSED_QUEUE_BANNED,
+  REFUSED_REJOIN_GONE,
+  REFUSED_UNCONFIRMED,
   REFUSED_MODE,
   REFUSED_TICKET,
   REFUSED_TOKEN,
@@ -131,6 +133,10 @@ export function refusalText(reason: number): string {
       return "that match has ended";
     case REFUSED_QUEUE_BANNED:
       return "you left a ranked match: you can search again in a few minutes";
+    case REFUSED_REJOIN_GONE:
+      return "that match can't be rejoined: you've searched or played another match since";
+    case REFUSED_UNCONFIRMED:
+      return "the rejoin couldn't be confirmed: try again in a moment";
     default:
       return "the server is full";
   }

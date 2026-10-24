@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The engine's Rust bindings (server/src/engine_ffi.rs) made again from its C interface (engine/capi/rlengine.h) with
 # bindgen, after a change to the header: server/tests/engine_bindings.rs's options (bindgen's version pinned in
-# server/Cargo.toml), the file written instead of checked. Needs libclang and rustfmt. Offline (cargo --offline), unless
-# CARGO_OFFLINE=0.
+# server/Cargo.toml), the file written instead of checked. Needs libclang and rustfmt (the images' toolchain's, Rust
+# 1.91.1: another's may lay the file out otherwise). Offline (cargo --offline), unless CARGO_OFFLINE=0.
 #   scripts/gen_bindings.sh
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

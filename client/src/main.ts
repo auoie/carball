@@ -145,7 +145,19 @@ async function main(): Promise<void> {
   // inside its window (claimAddress, RX31), a ticket the server refuses once more (openClaim, RX30C))
   const claimFailed = (e: unknown): void => {
     if (!claim) return;
-    storeNotice(claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone));
+    const notice = claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone);
+    // (a rejoin the matchmaker couldn't be asked about: its seat kept again, offered once the modal's read, within its own
+    // 900 s, RV-1008)
+    if (notice.modal === "rejoinUnconfirmed" && claim.seatJoinedAt !== undefined) {
+      storeRankedSeat({
+        matchId: claim.token,
+        teamSize: claim.playlist,
+        joinedAt: claim.seatJoinedAt,
+        account: claim.account ?? null,
+        ...(claim.server === undefined ? {} : { server: claim.server }),
+      });
+    }
+    storeNotice(notice);
     location.replace(pageUrl("menu", location));
   };
   // (the menu page's notice from a match page, read here)
@@ -694,7 +706,10 @@ async function main(): Promise<void> {
       // (the seat claimed and left at once: the match is cancelled now for its other players, RV-355; this account its
       // no-show, its cooldown read back a moment later for the Play page's line)
       decline: (found) => {
-        claimAddress(params, location.hostname, undefined, undefined, regionOf(found)?.id, found.ticket)
+        // (its region's address as the menu has it, no config.json read again, as a claim's: RV-988)
+        const region = regionOf(found);
+        const url = region?.address.certHash === null ? region.address.url : undefined;
+        claimAddress(params, location.hostname, undefined, undefined, region?.id, found.ticket, url)
           .then(async (address) => {
             const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token: found.id });
             connection.close();
@@ -1036,6 +1051,7 @@ async function main(): Promise<void> {
                 playlist: seat.teamSize,
                 searchedAt: Date.now(),
                 rejoin: true,
+                seatJoinedAt: seat.joinedAt,
                 ...(seat.account === null ? {} : { account: seat.account }),
                 ...(seat.server ? { server: seat.server } : {}),
               });
@@ -1062,6 +1078,8 @@ async function main(): Promise<void> {
       modal.show(RELOAD_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
     } else if (notice?.modal === "rejoinGone") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.gone);
+    } else if (notice?.modal === "rejoinUnconfirmed") {
+      modal.show(REJOIN_TEXT.title, REJOIN_TEXT.unconfirmed, offerRejoin);
     } else if (notice?.modal === "banned" && notice.until !== undefined) {
       // (a rejoin refused for a ban from another match: the ban as a search says it, its seat gone, RX31)
       const text = queueBanText(notice.until, Date.now());

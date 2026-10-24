@@ -1,4 +1,4 @@
-# Game protocol (version 29)
+# Game protocol (version 30)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -170,7 +170,9 @@ before, which refuses them (`Refused` 3) if it does. Version 28 (2026-10-23): th
 a claim's match ticket (format 4, a seat's) and the `Hello`'s ticket up to 512 bytes; no search (intent 1) or decline
 (intent 5) on a game server, and no `0x8F MatchFound` or `0x92 SearchCooldown`; a ping's session closed right after its
 `Pong`, which then carries the server's name (RV-863). Version 29 (2026-10-23): the tickets as JWTs (above, notes/accounts.md §3), the `Hello`'s ticket
-up to 1024 bytes; the binary format (versions 3 and 4) and the search's tickets gone.
+up to 1024 bytes; the binary format (versions 3 and 4) and the search's tickets gone. Version 30 (2026-10-23): a rejoin
+confirmed with the accounts service's matchmaker before it's let in (RV-1008): `Refused` reasons 8 (the matchmaker
+refuses it: the account searched or was matched since its ticket) and 9 (the matchmaker couldn't be asked: try again).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

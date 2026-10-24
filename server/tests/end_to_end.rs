@@ -16,7 +16,37 @@ use wtransport::{ClientConfig, Endpoint};
 
 /// The tests' clients all come from one address: no per-address limits
 fn open_limits() -> NetLimits {
-    NetLimits { per_address: 1000, per_address_per_minute: 100_000, ..NetLimits::default() }
+    let plenty = net::Rate { burst: 100_000, per_minute: 100_000 };
+    NetLimits { per_address: 1000, claims: plenty, pings: plenty, ..NetLimits::default() }
+}
+
+/// `open_limits` with the accounts service at `url` asked before a rejoin (RV-1008)
+fn asking(url: String) -> NetLimits {
+    let config = carball_server::outbox::OutboxConfig {
+        api_url: Some(url),
+        token: "game-token".into(),
+        access: None,
+        dir: None,
+        server: String::new(),
+        first_wait: Duration::from_secs(1),
+        max_wait: Duration::from_secs(1),
+        https_only: false,
+    };
+    NetLimits { api: carball_server::outbox::Api::new(&config).unwrap().map(Arc::new), ..open_limits() }
+}
+
+/// A stand-in accounts service answering every rejoin's question with `rejoin`
+async fn rejoin_service(rejoin: bool) -> wiremock::MockServer {
+    let service = wiremock::MockServer::start().await;
+    answer_rejoins(&service, rejoin).await;
+    service
+}
+
+async fn answer_rejoins(service: &wiremock::MockServer, rejoin: bool) {
+    wiremock::Mock::given(wiremock::matchers::path("/api/fleet/rejoin"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({ "rejoin": rejoin })))
+        .mount(service)
+        .await;
 }
 
 fn heartbeat() -> Arc<AtomicU64> {
@@ -447,19 +477,46 @@ async fn a_ping_is_answered_and_closed_at_once_and_a_search_or_a_decline_is_refu
     }
 }
 
-/// A ping's start given back by its session (RV-870): more pings than the address's starts a minute, then a claim still
-/// admitted (refused for its ticket, not turned away); the pings' own budget past that (RV-900)
+/// The user's decision of 2026-10-23 (LAN parties): an address's region pings past their allowance go unanswered (the
+/// page's dash), its claims' own allowance untouched: a claim after them still heard (refused for its ticket). Every
+/// session spends a start as it's admitted (both kinds' allowances together: 5 here), so past those the next is refused
+/// before its hello
 #[tokio::test(flavor = "multi_thread")]
-async fn a_pings_session_gives_its_start_back_within_the_pings_budget() {
-    let limits = NetLimits { per_address_per_minute: 3, pings_per_address_per_minute: 6, ..open_limits() };
+async fn an_addresss_pings_and_claims_each_have_their_own_allowance() {
+    let limits = NetLimits {
+        claims: net::Rate { burst: 2, per_minute: 1 },
+        pings: net::Rate { burst: 3, per_minute: 1 },
+        ..open_limits()
+    };
     let (port, cert_hash, _tickets) = ticketed_server_limited(false, limits).await;
-    for i in 0..6 {
-        let (pong, connection, _recv) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
-        assert!(matches!(pong, Control::Pong { .. }), "ping {i}: {pong:?}");
-        let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+    let mut pongs = Vec::new();
+    for _ in 0..4 {
+        let reply = any_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
+        pongs.push(matches!(reply, Some(Control::Pong { .. })));
     }
-    let (claim, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
-    assert_eq!(claim, Control::Refused { reason: protocol::REFUSED_TICKET }, "a claim after the pings, heard");
+    assert_eq!(pongs, [true, true, true, false], "the pings' burst answered, the next not");
+    let claim = any_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
+    assert_eq!(claim, Some(Control::Refused { reason: protocol::REFUSED_TICKET }), "a claim after them, heard");
+    let past = any_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
+    assert_eq!(past, None, "the starts spent: refused before its hello");
+}
+
+/// A session's first control message; none if it's refused, or ends without one (an unanswered ping)
+async fn any_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> Option<Control> {
+    let config = ClientConfig::builder()
+        .with_bind_default()
+        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+        .build();
+    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.ok()?;
+    let (mut send, mut recv) = connection.open_bi().await.ok()?.await.ok()?;
+    send.write_all(&hello).await.ok()?;
+    let mut len = [0u8; 2];
+    tokio::time::timeout(Duration::from_secs(5), recv.read_exact(&mut len)).await.ok()?.ok()?;
+    let mut body = vec![0u8; usize::from(u16::from_le_bytes(len))];
+    recv.read_exact(&mut body).await.ok()?;
+    let reply = Control::decode(&body).ok();
+    let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+    reply
 }
 
 /// Match tickets (notes/matchmaking.md, the central matchmaker; RV-850): a claim needs one, for this server, used once;
@@ -526,10 +583,12 @@ async fn match_tickets_open_their_match_here_once_each_seat_its_own() {
 }
 
 /// A ranked 2v2 whose Ada loses her connection (no close: lost at the 1.5 s timeout, reported after its window), then
-/// her rejoin of the match with a rejoin ticket for it (what a saved record's RECONNECT asks): back in her seat
+/// her rejoin of the match with a rejoin ticket for it (what a saved record's RECONNECT asks), the matchmaker confirming
+/// it: back in her seat
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lost_leaver_reported_can_rejoin() {
-    let (port, cert_hash, tickets) = ticketed_server(true).await;
+    let service = rejoin_service(true).await;
+    let (port, cert_hash, tickets) = ticketed_server_limited(true, asking(service.uri())).await;
     let here = format!("localhost:{port}");
     let ticket = |account: u8, name: &str, seat: u8| seat_ticket(&tickets, account, name, 0xc3, seat, 4, &here);
     // (Ada's claim on a runtime of its own, so that its connection can vanish)
@@ -577,6 +636,56 @@ async fn a_lost_leaver_reported_can_rejoin() {
     let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, match_id, rejoin)).await;
     drop(kept);
     assert!(matches!(reply, Control::Welcome { .. }), "the seat to rejoin: {reply:?}");
+}
+
+/// RV-992: on a queue server, a hello with intent 0 (a development server's join) or one unknown (9) is refused
+/// REFUSED_MODE by its session: nothing reaches the game thread (no join, no line with the hello's own name)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queue_servers_unserved_intents_never_reach_the_game() {
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, mut messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
+    let limits = NetLimits { tickets: Some(tickets), server_name: Some(format!("localhost:{port}")), ..open_limits() };
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
+    for intent in [protocol::INTENT_JOIN, 9] {
+        let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(intent, 0, 0, String::new())).await;
+        assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_MODE }, "intent {intent}");
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok(message) = messages.try_recv() {
+        assert!(!matches!(message, net::ToGame::Join { .. }), "a join reached the game: {message:?}");
+    }
+}
+
+/// RV-1008: a rejoin the matchmaker refuses (its account searched or was matched since, maybe at another server) is
+/// refused REFUSED_REJOIN_GONE, its ticket unspent (the same ticket, confirmed, gets to the game: a match it doesn't have,
+/// concluded); with the matchmaker failing or down, REFUSED_UNCONFIRMED, never let in
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rejoin_the_matchmaker_refuses_or_cant_confirm_is_refused() {
+    let service = rejoin_service(false).await;
+    let (port, cert_hash, tickets) = ticketed_server_limited(false, asking(service.uri())).await;
+    let rejoin = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd4), unix_now()).unwrap();
+    let hello = || ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd4, rejoin.clone());
+    let (reply, ..) = first_reply(port, cert_hash, hello()).await;
+    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_REJOIN_GONE }, "the matchmaker's no");
+    service.reset().await;
+    answer_rejoins(&service, true).await;
+    let (reply, ..) = first_reply(port, cert_hash, hello()).await;
+    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_CONCLUDED }, "unspent, then confirmed: to the game");
+    let other = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd5), unix_now()).unwrap();
+    service.reset().await;
+    wiremock::Mock::given(wiremock::matchers::path("/api/fleet/rejoin"))
+        .respond_with(wiremock::ResponseTemplate::new(503))
+        .mount(&service)
+        .await;
+    let (reply, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd5, other.clone())).await;
+    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_UNCONFIRMED }, "the matchmaker failing");
+    drop(service);
+    let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd5, other)).await;
+    assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_UNCONFIRMED }, "the matchmaker down");
 }
 
 /// A server that takes pages from one origin only, and few sessions from an address: another origin, or none, is

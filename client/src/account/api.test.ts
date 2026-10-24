@@ -16,7 +16,7 @@ const ACCOUNT = {
     { playlist: 1, rating: 1523, deviation: 80, provisional: false, games: 12 },
     { playlist: 2, rating: 1500, deviation: 500, provisional: true, games: 0 },
   ],
-  queueBanUntil: "2026-10-18T12:05:00Z",
+  queueBanSeconds: 300,
   searchCooldownSeconds: 120,
 };
 
@@ -25,9 +25,11 @@ describe("the accounts service's calls", () => {
     const { call, api: a } = api(reply(200, ACCOUNT), reply(401, { error: "signed-out" }), reply(200, ACCOUNT), reply(204));
     const before = Date.now();
     const me = await a.me();
-    // (the cooldown's seconds left taken on this page's clock: RV-983)
+    // (the cooldown's and the ban's seconds left taken on this page's clock: RV-983, RV-1001)
     expect(me?.searchCooldownUntil).toBeGreaterThanOrEqual(before + 120_000);
     expect(me?.searchCooldownUntil).toBeLessThanOrEqual(Date.now() + 120_000);
+    expect(me?.queueBanUntil).toBeGreaterThanOrEqual(before + 300_000);
+    expect(me?.queueBanUntil).toBeLessThanOrEqual(Date.now() + 300_000);
     expect(me).toEqual({
       id: ACCOUNT.id,
       name: "Ziggy",
@@ -36,7 +38,7 @@ describe("the accounts service's calls", () => {
         { playlist: 1, rating: 1523, provisional: false, games: 12 },
         { playlist: 2, rating: 1500, provisional: true, games: 0 },
       ],
-      queueBanUntil: Date.parse("2026-10-18T12:05:00Z"),
+      queueBanUntil: me?.queueBanUntil,
       searchCooldownUntil: me?.searchCooldownUntil,
     });
     expect(await a.me()).toBeNull();

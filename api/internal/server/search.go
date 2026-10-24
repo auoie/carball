@@ -97,7 +97,7 @@ func (s *Server) startSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if until, on := ranked.BannedUntil(ban, banned, now); on {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "seconds": secondsUntil(until, now)})
 		return
 	}
 	ratings, err := s.Store.RatingsOf(r.Context(), ss.AccountID)
@@ -148,10 +148,8 @@ func stateJSON(id string, st matchmaker.State, now time.Time) map[string]any {
 	}
 	if st.Kind == matchmaker.Ended {
 		out["reason"] = st.Reason
-		switch st.Reason {
-		case matchmaker.ReasonQueueBanned:
-			out["until"] = st.Until.UTC().Format(time.RFC3339)
-		case matchmaker.ReasonCooldown:
+		// (a ban's or a cooldown's seconds left: the page's clock never ours, RV-1001)
+		if st.Reason == matchmaker.ReasonQueueBanned || st.Reason == matchmaker.ReasonCooldown {
 			out["seconds"] = secondsUntil(st.Until, now)
 		}
 	}

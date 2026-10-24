@@ -306,6 +306,18 @@ test("a match page that can't draw never claims: its seat the no-show, the other
     });
   });
   const b = await menuPage(browser, errors);
+  // (each page's WebTransport sessions as its match page (DevTools' own record): A's must open none, never a claim made
+  // and dropped before its first tick, which would cancel the match and tell B the same (RV-1000); B's its claim)
+  const matchSessions = async (page: Page): Promise<string[]> => {
+    const made: string[] = [];
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
+    cdp.on("Network.webTransportCreated", (e: { url: string }) => {
+      if (/[?&]match(&|$)/.test(page.url())) made.push(e.url);
+    });
+    return made;
+  };
+  const [aSessions, bSessions] = [await matchSessions(a), await matchSessions(b)];
   await findMatch(a);
   await findMatch(b);
   await a.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
@@ -314,6 +326,8 @@ test("a match page that can't draw never claims: its seat the no-show, the other
   await b.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
   await b.waitForURL((url) => !/[?&]match(&|$)/.test(url.search), { timeout: 60_000 });
   await expect(b.locator("#search-banner")).toContainText("Not every player joined the match. Searching again.", { timeout: 30_000 });
+  expect(bSessions.length, "B's claim seen").toBeGreaterThan(0);
+  expect(aSessions, "A's match page opened no session").toEqual([]);
   // (A the no-show: its next search refused with its cooldown)
   const again = await a.context().newPage();
   again.on("pageerror", (e) => errors.push(e.message));

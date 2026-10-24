@@ -85,7 +85,8 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 		return
 	}
 	if until, on := ranked.BannedUntil(ban, banned, s.Now()); on {
-		body["queueBanUntil"] = until.UTC().Format(time.RFC3339)
+		// (seconds left, not its end: the page's clock never ours, RV-1001, as the cooldown's RV-983)
+		body["queueBanSeconds"] = secondsUntil(until, s.Now())
 	}
 	// (a no-show's cooldown (a match it stalled): its seconds left, the Play page's line as the ban's, its end taken on
 	// the page's own clock (an absolute time would be off by the clocks' difference, RV-983)
@@ -234,7 +235,7 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if until, on := ranked.BannedUntil(ban, banned, now); on && ban.Match != matchText(match) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "seconds": secondsUntil(until, now)})
 		return
 	}
 	// (a rejoin of its own match alone: not while it searches or is in another, one at a time)

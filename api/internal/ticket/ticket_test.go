@@ -252,6 +252,13 @@ func TestOneSpellingNothingElse(t *testing.T) {
 	if _, err := Verify(good, ks, now, 0); err != nil {
 		t.Fatalf("the hand-made ticket itself: %v", err)
 	}
+	// (a name's U+FFFD itself, an escaped pair, an escaped backslash before a "u": taken, read as written, RV-1005)
+	for spelled, want := range map[string]string{`"N\ufffd"`: "N\ufffd", "\"N\ufffd\"": "N\ufffd", `"\ud83d\ude00"`: "\U0001F600", `"a\\u0041"`: `a\u0041`} {
+		got, err := Verify(rawSigned(s, head, strings.Replace(body, `"Name"`, spelled, 1)), ks, now, 0)
+		if err != nil || got.Name != want {
+			t.Errorf("the name %s: %q, %v", spelled, got.Name, err)
+		}
+	}
 	parts := strings.Split(good, ".")
 	// (the signature's last character, 2 bits of it the signature's and 4 always zero: one of those set, the bytes the same)
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
@@ -268,6 +275,11 @@ func TestOneSpellingNothingElse(t *testing.T) {
 		"x5c":                   rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JWT","x5c":["AAAA"]}`, body),
 		"jku":                   rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JWT","jku":"https://x.example"}`, body),
 		"no typ":                rawSigned(s, `{"alg":"EdDSA","kid":"k1"}`, body),
+		"typ JOSE":              rawSigned(s, `{"alg":"EdDSA","kid":"k1","typ":"JOSE"}`, body),
+		"a lone surrogate":      rawSigned(s, head, strings.Replace(body, `"name":"Name"`, `"name":"N\ud800ame"`, 1)),
+		"a lone low surrogate":  rawSigned(s, head, strings.Replace(body, `"name":"Name"`, `"name":"N\udc00ame"`, 1)),
+		"an invalid byte":       rawSigned(s, head, strings.Replace(body, `"name":"Name"`, "\"name\":\"N\xffame\"", 1)),
+		"a null rating":         rawSigned(s, head, strings.Replace(body, `[[1500,500],`, `[[1500,null],`, 1)),
 		"alg twice":             rawSigned(s, `{"alg":"EdDSA","alg":"EdDSA","kid":"k1","typ":"JWT"}`, body),
 		"a float time":          rawSigned(s, head, strings.Replace(body, `"iat":`+iat, `"iat":`+iat+`.5`, 1)),
 		"an array aud":          rawSigned(s, head, strings.Replace(body, `"purpose":"rejoin"`, `"purpose":"seat","aud":["a.example:1"],"playlist":1,"seat":0,"roster":2`, 1)),

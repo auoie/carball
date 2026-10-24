@@ -1,8 +1,10 @@
 //! The engine's Rust bindings (src/engine_ffi.rs, committed) are bindgen's of its C interface (engine/capi/rlengine.h)
 //! as it is now: made again here, any difference fails. `CARBALL_WRITE_BINDINGS=1` writes them instead
-//! (scripts/gen_bindings.sh, after a change to the header). Needs libclang (bindgen loads it at run time) and rustfmt:
-//! with no libclang the check is skipped, said on stderr (the builds need neither: only this check, where libclang is
-//! installed, as on the development machine)
+//! (scripts/gen_bindings.sh, after a change to the header). Needs libclang (bindgen loads it at run time) and rustfmt,
+//! the toolchain's the images build with (Dockerfile: Rust 1.91.1; another's may lay the file out otherwise, a
+//! difference with no change in the header, RV-1014): with no libclang the check is skipped, said on stderr (the builds
+//! need neither: only this check, where libclang is installed, as on the development machine), unless
+//! `CARBALL_REQUIRE_BINDINGS=1` (a check run that must have it fails instead, RV-1013)
 
 use std::io::Write;
 
@@ -41,7 +43,8 @@ fn generate() -> String {
 fn the_committed_bindings_are_bindgens_of_the_header() {
     let write = std::env::var_os("CARBALL_WRITE_BINDINGS").is_some();
     if let Err(e) = clang_sys::load() {
-        assert!(!write, "no libclang, which bindgen needs: {e}");
+        let required = std::env::var("CARBALL_REQUIRE_BINDINGS").is_ok_and(|v| v == "1");
+        assert!(!write && !required, "no libclang, which bindgen needs: {e}");
         // (straight to stderr, past the test harness's capture: a skip is seen)
         let _ =
             writeln!(std::io::stderr(), "SKIPPED: src/engine_ffi.rs not checked against the header: no libclang ({e})");

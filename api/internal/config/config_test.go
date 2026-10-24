@@ -78,6 +78,7 @@ func TestLoadRefusals(t *testing.T) {
 		"every address trusted (AP2-6)":      func(v map[string]string) { v["TRUSTED_PROXIES"] = "0.0.0.0/0" },
 		"every IPv6 address trusted":         func(v map[string]string) { v["TRUSTED_PROXIES"] = "::/0" },
 		"a public address trusted":           func(v map[string]string) { v["TRUSTED_PROXIES"] = "203.0.113.7" },
+		"a zoned address (RV-974)":           func(v map[string]string) { v["TRUSTED_PROXIES"] = "fe80::1%eth0" },
 		"a prefix running past private":      func(v map[string]string) { v["TRUSTED_PROXIES"] = "10.0.0.0/7" },
 		"no trusted proxy (the tunnel's)":    func(v map[string]string) { delete(v, "TRUSTED_PROXIES") },
 		"a blank trusted proxy list":         func(v map[string]string) { v["TRUSTED_PROXIES"] = " , " },

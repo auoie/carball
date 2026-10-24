@@ -1202,6 +1202,20 @@ func TestResults(t *testing.T) {
 	_, idc, _ := e.player("sub-rc")
 	_, idd, _ := e.player("sub-rd")
 	tc, td := e.seat(idc, m3, 0), e.seat(idd, m3, 1)
+	// (a 2v2's seat 0 twice, both on its team 0: the seats' own check alone refuses it, the teams' passing, RV-1006)
+	inTwos := func(id string, seat byte) string {
+		var who [16]byte
+		raw, _ := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
+		copy(who[:], raw)
+		encoded, _, err := e.s.Tickets.IssueSeat(who, "Seated", [3]ticket.Shown{}, ticket.Seat{Match: 0xa4, Server: "game.example:4433", Playlist: 2, Seat: seat, Roster: 4}, e.clock.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result(m4, inTwos(ida, 0), inTwos(idb, 1), inTwos(idc, 0), inTwos(idd, 3))); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("a 2v2's seat 0 twice on its team: %d", resp.StatusCode)
+	}
 	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result(m3, tc)); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("one player: %d", resp.StatusCode)
 	}
@@ -1279,16 +1293,22 @@ func TestQuitters(t *testing.T) {
 	e := setup(t, nil)
 	const q1, q2, q3 = "00000000000000a1", "00000000000000a2", "00000000000000a3"
 	b, id, seat1 := e.player("sub-q")
+	// (a ban's seconds left, as the page reads them: its end on this clock, RV-1001)
+	end := func(v map[string]any, key string) string {
+		left, ok := v[key].(float64)
+		if !ok {
+			return ""
+		}
+		return e.clock.Now().Add(time.Duration(left) * time.Second).UTC().Format(time.RFC3339)
+	}
 	banned := func(c *http.Client) string {
-		until, _ := decode(t, e.get(c, "/api/me"))["queueBanUntil"].(string)
-		return until
+		return end(decode(t, e.get(c, "/api/me")), "queueBanSeconds")
 	}
 	ticketFor := func(query string) (int, string, string) {
 		resp := e.write(b, http.MethodPost, "/api/ticket"+query, nil)
 		v := decode(t, resp)
 		tk, _ := v["ticket"].(string)
-		until, _ := v["until"].(string)
-		return resp.StatusCode, tk, until
+		return resp.StatusCode, tk, end(v, "seconds")
 	}
 	call := func(path, match, tk string) int {
 		return e.gameCall(http.MethodPost, path, gameToken, map[string]string{"match": match, "ticket": tk}).StatusCode
@@ -1486,5 +1506,26 @@ func TestChunkedBodyCapped(t *testing.T) {
 	req.Header.Set("X-Carball", "1")
 	if resp := e.do(b, req); resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("a page's 17 KiB chunked body: %d", resp.StatusCode)
+	}
+}
+
+// RV-963: a client address's request lines capped (here 3 a minute): past them counted, not written, the next written
+// line saying how many; another address's its own
+func TestRequestLinesCappedPerAddress(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.RequestLines = server.Limit{Burst: 3, Window: time.Minute}
+	e := setup(t, &limits)
+	b := e.browser()
+	lines := func() int { return strings.Count(e.logs.String(), "msg=request ") }
+	for range 5 {
+		e.get(b, "/api/me")
+	}
+	if got := lines(); got != 3 {
+		t.Errorf("%d request lines written, want 3:\n%s", got, e.logs.String())
+	}
+	e.clock.Add(time.Minute)
+	e.get(b, "/api/me")
+	if got := lines(); got != 4 || !strings.Contains(e.logs.String(), "unlogged=2") {
+		t.Errorf("a minute on: %d lines, the count said? %s", got, e.logs.String())
 	}
 }

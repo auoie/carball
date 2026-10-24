@@ -91,9 +91,10 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     running, a ban or no connection: MM-2): the held, empty seat doesn't stop it, and the new search gives it up (no
     rejoin of it after). Only a seat with a session (two tabs or devices at once) refuses a search (Refused 5).
     A reported quitter's searches are also refused by the game server for 5 minutes (Refused 7), so a ticket fetched
-    before the ban doesn't dodge it (AP3); a search already waiting when the report is made (a lost connection's leaver
-    searching inside its 5 s) is refused then too, and a refill forgets the account at once, as the API lifts its ban
-    (RX31).
+    before the ban doesn't dodge it (AP3); a search already waiting when the report is made is refused then too, and a
+    refill forgets the account at once, as the API lifts its ban (RX31). A lost connection's armed leave tells the
+    matchmaker its seat left only once its 5 s are decided, after its report, so its player can't search and be matched
+    in between (RV-964); a leave by a close is told at once.
   - **Back in:** the same team, their stats restored, spawned at once, no longer a quitter.
 - The no-show search ban (2 minutes) stays as it is, now by account.
 - Ratings are shown as numbers, lichess-style, with "?" while provisional (a deviation of 110 or more: scalachess's
@@ -192,8 +193,9 @@ and a seat is taken once.
   play: either is the ordinary no-show (the user's choice, 2026-10-23, in place of claiming beside the load: RV-978).
 - **A no-show:** the server cancels, kicks the others with `KICK_NOT_ALL_JOINED` and reports the cancel. The API gives
   the no-show the 2-minute cooldown, which `/api/me` carries (`searchCooldownSeconds`, the seconds left: the page's clock takes it, RV-983) and the Play page shows under Find
-  Match as the ban's line (a Cancel Search during "Joining in" is a no-show: its page reads it back 2 s on; the flow
-  audit's 5). The others go back into the lists with their original wait, which puts them first; a match page in a
+  Match as the ban's line (a Cancel Search during "Joining in" is a no-show: its page reads it back 2 s and 12 s on, the
+  second for a cooldown set at the match's own cancel: RV-984; the flow audit's 5). A queue ban's line likewise takes its
+  seconds left (`queueBanSeconds`, and `seconds` on a refused search or rejoin ticket: RV-1001). The others go back into the lists with their original wait, which puts them first; a match page in a
   hidden tab (no frames) acts on the kick as its session ends (the flow audit's 3).
 
 **One match per account** (MX1R-1).
@@ -210,7 +212,11 @@ and a seat is taken once.
   backstop after its start.
 - **A rejoin ticket** is given for the account's latest assigned match alone, never once a later search of its was
   accepted (even if that search ended unmatched: RV-869), and never while it searches (MX1R-5). After an API restart that memory is gone, and the ban rule alone
-  decides. LV1's refill is unchanged: a ban from that match doesn't block its rejoin ticket.
+  decides. LV1's refill is unchanged: a ban from that match doesn't block its rejoin ticket. **At the rejoin itself** the
+  game server asks the same (`POST /api/fleet/rejoin`, the rejoin's ticket; RV-1008): a ticket taken before a search or
+  a later match, maybe at another server, would put the account in two matches. Told no, `Refused` 8 (the page: "That
+  match can't be rejoined"); no answer in 2 s (the API down), `Refused` 9, never let in unconfirmed, the page offering
+  the rejoin again within its 900 s.
 
 **Server → API, events only**, through the existing outbox (kept, retried, in order). Results, quitters and refills stay
 as they are, and take the seats' match tickets (whose match must be the call's; the old search tickets are gone since

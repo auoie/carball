@@ -124,7 +124,8 @@ func client(r *http.Request, trusted []netip.Prefix) (netip.Addr, bool) {
 	if !ok {
 		return netip.Addr{}, false
 	}
-	if forwarded, err := netip.ParseAddr(r.Header.Get("CF-Connecting-IP")); err == nil && trustedAddr(addr, trusted) {
+	// (a zoned one (fe80::1%x) is no client's public address: ignored, RV-974)
+	if forwarded, err := netip.ParseAddr(r.Header.Get("CF-Connecting-IP")); err == nil && forwarded.Zone() == "" && trustedAddr(addr, trusted) {
 		addr = forwarded.Unmap()
 	}
 	return addr, true

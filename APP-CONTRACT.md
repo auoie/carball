@@ -132,7 +132,7 @@ development matchmaker's). A setting the server can't read stops it, the error n
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
 | `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a claim without a match ticket (a JWT, EdDSA: notes/accounts.md §3) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
-| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
+| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8; no answer, `Refused` 9, never let in unconfirmed; RV-1008). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters`, `/api/refills` and `/api/fleet/*` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
 | `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server outside `--dev`: without it, or with a blank one, the server won't start (RX31) |
@@ -161,7 +161,7 @@ asks (`/dev-ticket`), with no sign-in.
   winning team; each seat's first ticket, team, quitter flag and time played) goes to `POST /api/results` when it ends
   with a winner; a match with none (everyone left, cancelled before the start) is a no contest and sends nothing. The
   first player to leave while the lobby is full and there's no winner yet is reported at the leave (`POST
-  /api/quitters`, their queue ban; a lost connection after 5 s); a rejoin that fills the lobby again undoes it (`POST
+  /api/quitters`, their queue ban; a lost connection after 5 s, its seat told left to the matchmaker then, after the report, so it can't search and be matched before the ban: RV-964); a rejoin that fills the lobby again undoes it (`POST
   /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
   their connection within 5 s of each other (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
   held for a rejoin until the match ends (a rejoin's ticket, for that match; a rejoin before the old session timed out
@@ -174,8 +174,9 @@ asks (`/dev-ticket`), with no sign-in.
   keys, `API_URL`, the token). The page sends the matchmaker its ticked regions with each server's ping and name; a
   region's ping is a hello of intent 4, answered with `Pong` (the server's name) and the session closed at once
   (RV-856), no ticket; only a `Pong` counts as an answer (a server of another protocol version is unreached, RV-864).
-- **Protocol 28** (the central matchmaker): a page from before gets `Refused` 1 ("reload the page") on every intent,
-  its ping and its rejoin too. Deploy the API, then the game servers, then the page, back to back.
+- **Protocol 30** (a rejoin confirmed with the matchmaker, RV-1008): a page from before gets `Refused` 1 ("reload the
+  page") on every intent, its ping and its rejoin too. Deploy the API (its `POST /api/fleet/rejoin` there before a game
+  server asks it), then the game servers, then the page, back to back.
 - **Volumes:** `/var/lib/carball-game` (the outbox: a few KB, keep it across restarts). The certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`
   with the archive files it links to reachable). The process runs as **uid 10001**: the key must be readable by it (a
   copy owned by or readable to 10001, or `--user` set to the files' owner).
@@ -194,27 +195,59 @@ asks (`/dev-ticket`), with no sign-in.
 - **Restart policy:** `unless-stopped` (or `always`). The process exits if its game thread ends (a panic outside a
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once (`docker stop`: about 0.1 s); the matches in progress end with it.
-- **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; 512 sessions at once; per
-  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a region's ping gives its start back, RV-870, up to 120 a minute, RV-900) (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
-  hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
-  flooding either is closed); QUIC: 4 streams each way, small receive windows.
+- **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; the rest in the table
+  below.
 - **No-shows:** a match waits 10 s from its first claim for the rest (about the user's 12 s from the match found, after
   the 3 s countdown); cancelled for someone (a seat not claimed, or a player leaving before the start), its claimed
   players are told and search again, and the cancel goes to the matchmaker with the stalled seats: those accounts can't
   search for 2 minutes, the others keep their wait (first in line). A cancelled or finished match's id is remembered a
   minute, so a late claim can't open it again.
 - **Resources** (measured, RX13): one game thread runs every match (120 Hz each): ~0.7 % of a core a 1v1, ~1.8 % a 3v3
-  (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
+  (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. **2 vCPU at least:** the network's
+  runtime takes every CPU the container may use but one, the game thread that one (RV-990: on 1 vCPU they share it, and
+  handshakes or decryption can make the ticks late). Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
 - **Logs:** stderr, one line an event (start-up, joins, leaves, matches, refusals, reloads, the outbox's calls): its UTC
   time, its level (`INFO`, `WARN` for a refusal, a call kept for later or a failed reload (the old certificate or keys
   kept), `ERROR` for a match's panic) and the message. The server's own events, and the libraries' errors alone (their warnings are noise: RV-937).
-  Each join, leave, kick and refusal names who and where: the client's address (IP:port), the account's id and display
-  name once its ticket is checked (else the hello's name), and the match (the matchmaker's id): refused origins,
-  addresses past their sessions (a line a minute an address), refused tickets and claims, rate and malformed kicks,
-  oversized datagrams, the idle kick, quitters reported. Never a ticket.
+  Each join, leave, kick and refusal names who and where: the client's address (IP:port, an IPv4 one as a.b.c.d), the
+  account's id and display name once its ticket is checked (an unchecked hello's own name never: RV-968), and the match
+  (the matchmaker's id): refused origins, addresses past their limits (a line a minute an address and reason, the ones
+  between counted), refused tickets, claims and rejoins, rate and malformed kicks, oversized datagrams, the idle kick,
+  quitters reported. Never a ticket. Text a client wrote (a close's reason) is escaped onto its line, never a line of its
+  own (RV-1009). Lines are written by a thread of their own: a stalled stderr never holds the game thread; past 128k
+  lines waiting, lines are dropped (RV-993).
 - **Development info:** a development server's `GET /info` and `GET /dev-ticket` (on `--info-port`, 127.0.0.1 unless
   `--info-bind`): HTTP/1, 64 connections at once, 2 s for a request's headers; another path a 404, another method a 405.
+
+### Limits (carball-game)
+
+Every limit the game server holds, to tune from the benchmark's hostile mode (notes/benchmarks.md). An address is an
+IPv4 address or an IPv6 /64 (a LAN party's players behind one address count together: the user's decision of
+2026-10-23); a bucket is a burst at once, then a steady rate (governor's GCRA).
+
+| Limit | Counted per | Value | Set by |
+|---|---|---|---|
+| Sessions at once | the server | 512 | `--max-sessions` |
+| Sessions at once | address | 64 | `--max-per-address` |
+| New sessions (each charged as it's admitted, before its hello) | address | 256 at once, then 300 a minute (the two below together) | the two below |
+| Claims and rejoins (any hello but a ping) | address | 64 at once, then 60 a minute; past it `Refused` 0 | `--claims-per-address 64/60` |
+| Region pings | address | 192 at once, then 240 a minute; past it unanswered | `--pings-per-address 192/240` |
+| QUIC handshake | session | 4 s | fixed |
+| Hello | session | 10 s from the first packet | fixed |
+| Input datagrams | session | 240 a second (a burst of 120); over it dropped; 500 a second dropped (5000 at most) and it's closed | fixed |
+| Control messages | session | 20 a second (a burst of 40); over it dropped; 2 a second dropped (200 at most) and it's closed | fixed |
+| A hello's ticket | message | 1024 bytes | protocol |
+| Messages to the game thread | the server | 65,536 waiting, 2048 read a pass; a session's inputs one place (its newest: RV-991) | fixed |
+| Messages to a player | session | 2048 waiting; full, the player is dropped (a lost connection) | fixed |
+| QUIC streams | session | 4 each way; windows 256 KB a stream, 1 MB the connection | fixed |
+| A rejoin's confirmation | rejoin | the accounts service's answer within 2 s, else refused | fixed |
+| Ticket life | ticket | a seat's 30 s, a rejoin's 2 min (the API's), 30 s of clock difference; each used once | fixed |
+| Refusal lines | address and reason | one a minute, the rest counted | fixed |
+| Log lines waiting | the server | 128k; past it dropped | fixed |
+| Health endpoint | the server | 16 connections, 2 s and 16 KiB a request | fixed |
+| A match's wait for its players | match | 10 s from its first claim (the no-shows' cooldown: the API's) | fixed |
+| **Host packet limit** (the servers repo's, not Carball's) | address | UDP 4433 past 10,000 packets a second (a burst of 20,000) dropped, nftables | the servers repo |
 
 ## carball-api
 
@@ -302,7 +335,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **The search** (notes/matchmaking.md, the central matchmaker; in memory, one instance): `POST /api/search
   {playlists, pings, regions}` (a signed-in account's; 30 an account in 10 minutes) starts it: refused 401 signed out,
-  403 `queue-banned` (until when) or `in-match`, 429 `cooldown` (seconds) or `busy`, 503 `no-server` (no ticked region
+  403 `queue-banned` (its seconds left, as every ban the page reads: RV-1001) or `in-match`, 429 `cooldown` (seconds) or `busy`, 503 `no-server` (no ticked region
   answered the page's ping; a server name that isn't host:port, one given twice or a ping out of range is dropped, not
   the search: RV-868); else `{search, version, state}`. `GET /api/search/{id}?after=N` (the searcher's own session:
   401 without, 404 for another account's, RV-871; read with no rotation, so a poll aborted before it answers never
@@ -312,13 +345,17 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   `queue-banned`, `cooldown`); 404 for one it doesn't know (a restart: the page searches again once). A search is
   matched only after its first poll (RV-892). `DELETE /api/search/{id}` is Cancel Search (the page sends it too as it
   closes, RV-866; the searcher's own session, read with no rotation: RV-896, RV-889). The access log names
-  each request's route pattern, never its path (a search's id: RV-871). A match ticket (a JWT:
+  each request's route pattern, never its path (a search's id: RV-871); 600 lines a minute for a client address (its
+  /64), the rest counted and said (RV-963). A match ticket (a JWT:
   notes/accounts.md §3) is one seat of one match at one server (its `aud`), 30 s, taken once there (RV-850).
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
   for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
   or once a later search gave that match up, whether or not it found a match (RV-869); a queue ban from that match
   doesn't refuse it. `POST /api/ticket` with no match: 400 (the search tickets are gone, protocol 29).
-- **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the matchmaker's events
+- **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the rejoin question
+  (`POST /api/fleet/rejoin {match, server, ticket}`: the rejoin's ticket checked as ours, for that match; `{"rejoin":
+  true}` while the account's latest match is still that one at that server, false once it searched or was matched since
+  (a ticket from before would put it in two matches, across servers too: RV-1008); nothing spent); the matchmaker's events
   (`POST /api/fleet/events {event, server, match, seat, noShows, at}`: one about a match it didn't assign to that server,
   or doesn't know, answered 204 and ignored, so it never holds the outbox's later calls); results (recorded once by
   their match id; each ticket ours, the seat's match ticket for that match at the result's server in its playlist (its
@@ -347,6 +384,28 @@ docker run -d --name carball-api --restart unless-stopped --network carball --re
   -e GAME_SERVER_TOKEN_FILE=/run/secrets/game_server_token \
   -e DELETION_HMAC_KEY_FILE=/run/secrets/deletion_key -v /path/to/secrets:/run/secrets:ro carball-api:TAG
 ```
+
+### Limits (carball-api)
+
+Every limit the accounts service holds (`server.DefaultLimits`, notes/accounts.md); in memory, one instance. An address
+is an IPv4 address or an IPv6 /64; its wider network an IPv4 /24 or an IPv6 /48; each a burst, then as many again each
+window.
+
+| Limit | Counted per | Value |
+|---|---|---|
+| Sign-ins (the start and each provider's callback, so two a sign-in) | address / wider network | 30 / 150 in 10 minutes |
+| Sign-ups | address / wider network | 5 / 25 an hour |
+| Sign-ins in progress, sign-ups waiting | everyone | 20,000, 5,000 |
+| Renames | account | 5 a day |
+| Rejoin tickets | account | 60 in 10 minutes |
+| Searches started | account | 30 in 10 minutes |
+| The game servers' calls (results, quitters, refills, events, rejoin questions) | all of them together | 300 a minute |
+| Request lines in the log | address | 600 a minute, the rest counted |
+| A request's body | request | 16 KiB |
+| A search's poll | poll | 25 s; a search no page polls goes 45 s on, unmatched 3 s on |
+| No-show cooldown | account | 2 minutes |
+| Queue ban (a leave the game server reports) | account | 5 min, 15 min, 1 h, 6 h, 24 h up the ladder; a step forgiven per 24 h without a leave |
+| A game server call's ticket | ticket | issued within 24 h; each spent once |
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
 
@@ -428,5 +487,5 @@ docker run -d --name carball-game --restart unless-stopped --network host \
   -e CF_ACCESS_CLIENT_ID=… -e CF_ACCESS_CLIENT_SECRET_FILE=/run/secrets/access_secret \
   -v /path/to/game-secrets:/run/secrets:ro -v carball-game-outbox:/var/lib/carball-game \
   -v /path/to/certs:/certs:ro carball-game:TAG
-# the server's flags go after the image name, e.g. carball-game:TAG --max-per-address 16
+# the server's flags go after the image name, e.g. carball-game:TAG --claims-per-address 128/120
 ```

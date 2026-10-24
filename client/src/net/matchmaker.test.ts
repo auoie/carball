@@ -111,7 +111,7 @@ describe("the search with the matchmaker", () => {
   it("says each refusal: signed out, banned (until when), in a match, a no-show's cooldown, the limit", async () => {
     const cases: [Reply, string[], string[]][] = [
       [{ status: 401, body: { error: "signed-out" } }, ["failed sign in to play online"], ["signedOut"]],
-      [{ status: 403, body: { error: "queue-banned", until: new Date(Date.now() + 90_000).toISOString() } }, ["refused 7"], ["banned"]],
+      [{ status: 403, body: { error: "queue-banned", seconds: 90 } }, ["refused 7"], ["banned"]],
       [{ status: 403, body: { error: "in-match" } }, [`refused ${String(REFUSED_IN_MATCH)}`, `failed ${MATCHMAKER_TEXT.inMatch}`], []],
       [{ status: 429, body: { error: "cooldown", seconds: 77 } }, ["cooldown 77"], []],
       [{ status: 429, body: { error: "busy" } }, [`failed ${MATCHMAKER_TEXT.busy}`], []],
@@ -184,6 +184,28 @@ describe("the search with the matchmaker", () => {
     MatchmakerSearchSession.start({ base: "" }, request, lost.handlers, {}, down.http, noWait);
     await lost.done;
     expect(lost.got).toEqual(["searching", `failed ${MATCHMAKER_TEXT.lost}`]);
+  });
+
+  it("a cancel settles once its DELETE is answered, never before (a sign-out waits on it: RV-982's C06)", async () => {
+    let answer = (): void => undefined;
+    const slow = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const { http } = service({ "POST /api/search": [started], "GET /api/search/": [], "DELETE /api/search/": [{ status: 204, after: slow }] });
+    const { handlers, got } = answers();
+    const search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    await vi.waitFor(() => {
+      expect(got).toEqual(["searching"]);
+    });
+    let settled = false;
+    const cancelled = search.cancel().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled, "settled before its DELETE was answered").toBe(false);
+    answer();
+    await cancelled;
+    expect(settled).toBe(true);
   });
 
   it("Cancel Search: the search deleted at the service, nothing said after; the page going: deleted, then a match found before still said", async () => {

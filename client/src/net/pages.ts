@@ -2,7 +2,16 @@
 // claim (the seat's match ticket, the matchmaker's); the match page hands the menu page back a notice when it ends (a
 // modal to show, a search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION, isTicketText } from "./protocol";
+import {
+  REFUSED_CONCLUDED,
+  REFUSED_IN_MATCH,
+  REFUSED_REJOIN_GONE,
+  REFUSED_TICKET,
+  REFUSED_TOKEN,
+  REFUSED_UNCONFIRMED,
+  REFUSED_VERSION,
+  isTicketText,
+} from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
@@ -40,6 +49,9 @@ export interface Claim {
   /** That server's WebTransport URL (a deployment's region, as the menu had it): the claim opens with it at once, no
    *  config.json read again inside the roster's 10 s (the flow audit's 1) */
   readonly url?: string;
+  /** A rejoin's saved seat's join (ms, `RankedSeat.joinedAt`): the seat kept again when the matchmaker can't be asked, its
+   *  offer within its own 900 s (RV-1008) */
+  readonly seatJoinedAt?: number;
 }
 
 /** A search back from a match cancelled for someone else: when its first search began (ms, wall clock; the matchmaker
@@ -59,7 +71,7 @@ const keptServer = (value: unknown): { server: string } | Record<string, never> 
 export interface MenuNotice {
   /** The error modal: kicked for being idle, the connection lost, a rejoin too late (the match over), the sign-in gone, a
    *  rejoin's ticket refused for a ban from another match (until `until`) */
-  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned" | "reload" | "rejoinGone";
+  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned" | "reload" | "rejoinGone" | "rejoinUnconfirmed";
   /** The ban's end ("banned": ms, wall clock) */
   readonly until?: number;
   /** A search of these playlists to start */
@@ -85,6 +97,7 @@ export function storeClaim(claim: Claim, storage = session()): void {
         account: claim.account,
         server: claim.server,
         url: claim.url,
+        seatJoinedAt: claim.seatJoinedAt,
       }),
     );
   } catch {
@@ -109,6 +122,7 @@ export function takeClaim(storage = session()): Claim | null {
       account?: unknown;
       server?: unknown;
       url?: unknown;
+      seatJoinedAt?: unknown;
     };
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
@@ -126,6 +140,7 @@ export function takeClaim(storage = session()): Claim | null {
       ...(typeof value.account === "string" ? { account: value.account } : {}),
       ...keptServer(value.server),
       ...(typeof value.url === "string" && SERVER_URL.test(value.url) ? { url: value.url } : {}),
+      ...(typeof value.seatJoinedAt === "number" && Number.isFinite(value.seatJoinedAt) ? { seatJoinedAt: value.seatJoinedAt } : {}),
     };
   } catch {
     return null;
@@ -169,7 +184,8 @@ export function takeNotice(storage = session()): MenuNotice | null {
       value.modal === "signedOut" ||
       value.modal === "elsewhere" ||
       value.modal === "reload" ||
-      value.modal === "rejoinGone"
+      value.modal === "rejoinGone" ||
+      value.modal === "rejoinUnconfirmed"
         ? { modal: value.modal }
         : {}),
       ...(value.modal === "banned" && typeof value.until === "number" && Number.isFinite(value.until) ? { modal: "banned" as const, until: value.until } : {}),
@@ -404,6 +420,10 @@ export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNo
   if (refused === REFUSED_VERSION) return { modal: "reload" };
   // (the matchmaker refused the rejoin's ticket: said as such, RV-882)
   if (e instanceof RejoinGoneError) return { modal: "rejoinGone" };
+  // (the game server's word for the matchmaker, at the rejoin itself: the account searched or played since; or the
+  // matchmaker couldn't be asked, the seat offered again: RV-1008)
+  if (refused === REFUSED_REJOIN_GONE && claim.rejoin) return { modal: "rejoinGone" };
+  if (refused === REFUSED_UNCONFIRMED && claim.rejoin) return { modal: "rejoinUnconfirmed" };
   if (refused === REFUSED_CONCLUDED) return { modal: "concluded" };
   if (e instanceof QueueBannedError && claim.rejoin) return { modal: "banned", until: e.until };
   if (e instanceof SignedOutError) return { modal: "signedOut" };

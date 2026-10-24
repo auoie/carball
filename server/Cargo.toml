@@ -33,12 +33,16 @@ serde = { version = "1", features = ["derive"], optional = true }
 clap = { version = "4", features = ["derive", "env"], optional = true }
 # (the match tickets: JWTs signed with Ed25519, the accounts service's; 9.x, on ring like the rest)
 jsonwebtoken = { version = "9.3.1", default-features = false, optional = true }
+governor = { version = "0.10.4", default-features = false, features = ["std"], optional = true }
+tracing-appender = { version = "0.2", optional = true }
 
 [features]
 default = ["net"]
 # The network server: WebTransport, the queue, the game loop's thread (the release image's build)
 net = [
     "dep:tokio",
+    "dep:governor",
+    "dep:tracing-appender",
     "dep:wtransport",
     "dep:ring",
     "dep:base64",

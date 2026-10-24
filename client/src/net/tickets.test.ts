@@ -22,8 +22,9 @@ describe("rejoin tickets", () => {
     await expect(accountTicket(1n, answer({ error: "nope" }, 403))).rejects.toThrow(/\(HTTP 403\)$/);
     // (a rejoin the matchmaker refuses: its own answer, RV-882)
     await expect(accountTicket(5n, answer({ error: "in-match" }, 409))).rejects.toBeInstanceOf(RejoinGoneError);
-    // (a leaver's queue ban: its end, the minutes left said (LV1: at least 1))
-    const banned = accountTicket(1n, answer({ error: "queue-banned", until: new Date(Date.now() + 14.5 * 60_000).toISOString() }, 403));
+    // (a leaver's queue ban: its seconds left (its end on this page's clock, RV-1001), the minutes left said (LV1: at
+    // least 1))
+    const banned = accountTicket(1n, answer({ error: "queue-banned", seconds: 14.5 * 60 }, 403));
     await expect(banned).rejects.toBeInstanceOf(QueueBannedError);
     await expect(banned).rejects.toThrow(/search again in 15 minutes/);
     expect(queueBanText(1000, 990)).toMatch(/in 1 minute$/);

@@ -233,9 +233,16 @@ impl Hosted {
         !self.reservations.is_empty() && self.reservations.iter().all(|r| r.here_since.is_some())
     }
 
-    /// A team has won, or the match is over
+    /// A team has won, or the match is over (the game's `HasWinner`: a forfeit pending, or the clock out with the scores
+    /// apart, count; a leave then is no quit)
     fn decided(&self) -> bool {
         self.game.as_ref().is_some_and(|g| g.has_winner() || g.is_over())
+    }
+
+    /// Its winner final (its result told then, the matchmaker freeing its accounts), or the match over: never `decided`'s
+    /// passing states, which a goal at 0:00 can still undo (RV-987)
+    fn concluded(&self) -> bool {
+        self.game.as_ref().is_some_and(|g| g.winner().is_some() || g.is_over())
     }
 
     /// Its id as the accounts service has it
@@ -474,7 +481,10 @@ impl MatchHost {
         if lost {
             slot.lost_at = Some(now);
         }
-        if started {
+        // (an armed leave by a lost connection waits out OUTAGE_WINDOW before it's decided: its seat told left then, with
+        // its report, so that its player can't search and be matched before the ban comes, RV-964)
+        let pending = started && !decided && armed && !outage && lost && slot.ticket.is_some() && !slot.reported;
+        if started && !pending {
             self.reports.push(Report::Left { match_id: ranked_id.clone(), seat: seat as u8 });
         }
         if !started || decided {
@@ -516,16 +526,23 @@ impl MatchHost {
             .filter(|r| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW))
             .count();
         let ranked_id = hosted.ranked_text();
+        // (its seat told left now, unless its player is back: after its report, so that a search of theirs meets the ban,
+        // RV-964)
+        let left = Report::Left { match_id: ranked_id.clone(), seat: seat as u8 };
+        let back = hosted.reservations[seat].here_since.is_some();
         if 2 * lost_together > hosted.reservations.len() {
             tracing::info!(
                 "{}: {lost_together} of {} connections lost at once: an outage, no ban",
                 hosted.label(match_id),
                 hosted.reservations.len()
             );
+            if !back {
+                self.reports.push(left);
+            }
             return;
         }
         let slot = &mut hosted.reservations[seat];
-        if slot.here_since.is_none()
+        if !back
             && !slot.reported
             && let Some(t) = &slot.ticket
         {
@@ -536,12 +553,15 @@ impl MatchHost {
             );
             self.reports.push(Report::Quitter { match_id: ranked_id, ticket: t.encoded.clone() });
         }
+        if !back {
+            self.reports.push(left);
+        }
     }
 
     /// Whether an account (its key) has a player in a match here (claimed, its session here): one match at a time (the
     /// matchmaker's rule, held here too for a claim; a seat it left, held empty for a rejoin, doesn't count; nor a match
-    /// decided: its result told at its winner, the matchmaker frees its accounts then, so one on its end screen may claim
-    /// the next match it finds)
+    /// concluded: its result told at its winner, the matchmaker frees its accounts then, so one on its end screen may
+    /// claim the next match it finds)
     pub fn account_busy(&self, key: u64) -> bool {
         self.account_busy_except(key, None)
     }
@@ -552,7 +572,7 @@ impl MatchHost {
             && self.matches.values().any(|m| {
                 !m.open
                     && Some(m.ranked) != except
-                    && !m.decided()
+                    && !m.concluded()
                     && m.reservations.iter().any(|r| r.key == key && r.claimed.is_some() && r.here_since.is_some())
             })
     }
@@ -1235,14 +1255,16 @@ mod tests {
                 .collect()
         };
         // (a player whose queue fills a tick or so after the hold's release, within one step of five catch-up ticks: the
-        // capacity that does so found by trying)
+        // capacity that does so found by trying. Its seat without a ticket: a ticketed one's armed leave by a lost
+        // connection is told after its window, RV-964, long after the start)
         let (tx, _rx) = channel(OUT_QUEUE);
         let mut seen = false;
         for capacity in 1..400 {
             let mut host = MatchHost::new(1, None);
             let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
             let (stuck, _never_read) = channel(capacity);
-            assert!(host.claim(tokens[0], 1, seat(1), tx.clone()) && host.claim(tokens[1], 2, seat(2), stuck));
+            let unticketed = JoinRequest { ticket: None, ..seat(2) };
+            assert!(host.claim(tokens[0], 1, seat(1), tx.clone()) && host.claim(tokens[1], 2, unticketed, stuck));
             host.tick(5.0 / 120.0);
             let reports = non_ranked(&mut host);
             let at = |kind: fn(&Report) -> bool| reports.iter().position(kind);
@@ -1549,6 +1571,68 @@ mod tests {
         assert!(host.rejoin(match_id, 10, rejoining(1), tx).is_ok());
         run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW + 1.0);
         assert!(ranked(host.take_reports()).is_empty(), "back in time");
+    }
+
+    /// RV-964: an armed leave by a lost connection tells its seat left only once its window is decided, after its report
+    /// (a search of its player's then meets the ban, never a match found before it); an outage's after the window too;
+    /// a player back within it told nothing
+    #[test]
+    fn a_lost_leaves_seat_is_told_left_after_its_window_and_report() {
+        init_engine();
+        let start = |host: &mut MatchHost| {
+            let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+            let (tx, _rx) = channel(OUT_QUEUE);
+            for (i, &token) in tokens.iter().enumerate() {
+                let n = i as u8 + 1;
+                assert!(host.claim(token, 100 * u64::from(n), seat(n), tx.clone()));
+            }
+            run_to(host, 0.0, 3.0);
+            host.take_reports();
+            host.matches.values().last().unwrap().ranked
+        };
+        let events = |reports: Vec<Report>| -> Vec<&'static str> {
+            reports
+                .iter()
+                .filter_map(|r| match r {
+                    Report::Left { .. } => Some("left"),
+                    Report::Quitter { .. } => Some("quitter"),
+                    Report::Back { .. } => Some("back"),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut host = MatchHost::new(1, None);
+        start(&mut host);
+        host.observe(3.0);
+        host.leave(100, true);
+        run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW - 0.5);
+        assert_eq!(events(host.take_reports()), Vec::<&str>::new(), "within the window: not told left yet");
+        run_to(&mut host, 3.0 + OUTAGE_WINDOW - 0.5, 3.0 + OUTAGE_WINDOW + 0.5);
+        assert_eq!(events(host.take_reports()), ["quitter", "left"], "its report first, then its seat left");
+        // (an outage: three of four lost together, each told left after the window, no ban)
+        let mut host = MatchHost::new(1, None);
+        start(&mut host);
+        host.observe(3.0);
+        for player in [100, 200, 300] {
+            host.leave(player, true);
+        }
+        run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW + 1.0);
+        let told = events(host.take_reports());
+        assert!(!told.contains(&"quitter") && told.contains(&"left"), "{told:?}");
+        // (back within the window: told back, never left)
+        let mut host = MatchHost::new(1, None);
+        let match_id = start(&mut host);
+        host.observe(3.0);
+        host.leave(100, true);
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert!(host.rejoin(match_id, 10, rejoining(1), tx).is_ok());
+        run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW + 1.0);
+        assert_eq!(events(host.take_reports()), ["back"], "back in time");
+        // (a leave not armed, or by a close, told at once)
+        let mut host = MatchHost::new(1, None);
+        start(&mut host);
+        host.leave(100, false);
+        assert_eq!(events(host.take_reports()), ["left", "quitter"], "a close: told at once");
     }
 
     /// AP3: a leave waiting out its window when the match is let go is decided then, with what's known

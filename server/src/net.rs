@@ -4,7 +4,7 @@
 //! anything is spent on it (RV-366), sessions at once and per address, the handshakes' deadlines, the page's origin, each
 //! session's message rates.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -30,6 +30,52 @@ pub enum Intent {
     Rejoin { match_id: u64 },
 }
 
+/// An input datagram as the game thread takes it
+#[derive(Debug, PartialEq)]
+pub struct Inputs {
+    pub timestamp: u32,
+    pub sequence: u16,
+    pub first_frame: u32,
+    pub frames: Vec<InputFrame>,
+    /// When it arrived
+    pub at: std::time::Instant,
+}
+
+/// A session's newest input datagram, waiting for the game thread: one at a time, a newer one taking its place (each
+/// carries the newest frames, an older one's among them: the rest as if lost). The game's queue holds one note of it
+/// at most for each session, so neither a session's flood nor a stalled game thread drops another's inputs (RV-991)
+#[derive(Debug, Default)]
+pub struct InputSlot(Mutex<Option<Inputs>>);
+
+impl InputSlot {
+    /// Puts `inputs` in, in place of any there: whether the slot was empty (a note of it then due)
+    fn put(&self, inputs: Inputs) -> bool {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).replace(inputs).is_none()
+    }
+
+    /// The datagram waiting, taken out
+    pub fn take(&self) -> Option<Inputs> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    }
+}
+
+/// A session's input datagram to the game: into its slot, noted in the game's queue if the slot was empty; the queue full
+/// (a stalled game thread), the slot emptied, its datagram as lost, so that the next one is noted; Err once the game's
+/// gone
+fn deliver_inputs(to_game: &Sender<ToGame>, id: PlayerId, slot: &Arc<InputSlot>, inputs: Inputs) -> Result<(), ()> {
+    if !slot.put(inputs) {
+        return Ok(());
+    }
+    match to_game.try_send(ToGame::Inputs { id, slot: slot.clone() }) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            slot.take();
+            Ok(())
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(()),
+    }
+}
+
 /// Messages from the network tasks to the game loop
 #[derive(Debug)]
 pub enum ToGame {
@@ -44,13 +90,10 @@ pub enum ToGame {
         id: PlayerId,
         lost: bool,
     },
+    /// The session's newest input datagram is waiting in its slot (`InputSlot`)
     Inputs {
         id: PlayerId,
-        timestamp: u32,
-        sequence: u16,
-        first_frame: u32,
-        frames: Vec<InputFrame>,
-        at: std::time::Instant,
+        slot: Arc<InputSlot>,
     },
     ResetInputBuffer {
         id: PlayerId,
@@ -151,17 +194,20 @@ fn check_pair(identity: &Identity) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// What the front end lets in: sessions at once, per address at once and new a minute (SEC-2; an address as
-/// `address_key` counts it), the page origins allowed (SEC-5; None: any, a development server). The defaults are a
-/// public server's; the browser tests' servers, every page on one address, raise the per-address limits
+/// What the front end lets in: sessions at once, per address at once and as they start (SEC-2; an address as
+/// `address_key` counts it: a LAN party's players behind one IPv4 address, or one IPv6 /64, all of them: the user's
+/// decision of 2026-10-23), the page origins allowed (SEC-5; None: any, a development server). The defaults are a public
+/// server's, to tune from the benchmark's hostile mode; the browser tests' servers, every page on one address, raise the
+/// per-address limits
 #[derive(Clone, Debug)]
 pub struct NetLimits {
     pub max_sessions: usize,
     pub per_address: usize,
-    pub per_address_per_minute: usize,
-    /// The starts a minute an address's region pings may give back (RV-870); past them a ping counts as any start, so
-    /// one address can't open handshakes without end (RV-900)
-    pub pings_per_address_per_minute: usize,
+    /// An address's claims and rejoins (any hello but a ping) as they come: a whole LAN party's at once, then steady
+    pub claims: Rate,
+    /// Its region pings (each search pings every region, the Play page twice: RV-870), apart from the claims, so that
+    /// pings can't use up the claims' (no player's claim a no-show for the pings of others behind its address)
+    pub pings: Rate,
     pub allowed_origins: Option<Vec<String>>,
     /// The handshake, from the first packet through the hello, must be done this soon
     pub handshake: Duration,
@@ -170,23 +216,27 @@ pub struct NetLimits {
     /// The match and rejoin tickets checked (notes/accounts.md §3): a queue server's always (`main` requires its keys, or
     /// --dev's); None, no claim or rejoin taken (a direct development server, the tests')
     pub tickets: Option<Arc<crate::ticket::Tickets>>,
-    /// This server's name as a match ticket names it (its address, host:port: `PUBLIC_HOST` and its port); None, any (the
-    /// tests')
+    /// This server's name as a match ticket names it (its address, host:port: `PUBLIC_HOST` and its port); None, no match
+    /// ticket taken (RV-956: the tests' servers that take none)
     pub server_name: Option<String>,
+    /// The accounts service, asked before a rejoin is let in (RV-1008); None, no one to ask (a development server without
+    /// one: its rejoins unconfirmed)
+    pub api: Option<Arc<crate::outbox::Api>>,
 }
 
 impl Default for NetLimits {
     fn default() -> Self {
         Self {
             max_sessions: 512,
-            per_address: 8,
-            per_address_per_minute: 30,
-            pings_per_address_per_minute: 120,
+            per_address: 64,
+            claims: Rate { burst: 64, per_minute: 60 },
+            pings: Rate { burst: 192, per_minute: 240 },
             allowed_origins: None,
             handshake: Duration::from_secs(10),
             quic_handshake: Duration::from_secs(4),
             tickets: None,
             server_name: None,
+            api: None,
         }
     }
 }
@@ -243,6 +293,40 @@ pub fn address_key(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// A rate per client address: `burst` at once, then `per_minute` (governor's GCRA: the allowance refills steadily, one
+/// every minute / `per_minute`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rate {
+    pub burst: u32,
+    pub per_minute: u32,
+}
+
+impl Rate {
+    fn quota(self) -> governor::Quota {
+        let at_least_one = |n: u32| std::num::NonZeroU32::new(n.max(1)).unwrap_or(std::num::NonZeroU32::MIN);
+        governor::Quota::per_minute(at_least_one(self.per_minute)).allow_burst(at_least_one(self.burst))
+    }
+
+    /// Two rates' sum (the starts', both kinds')
+    fn and(self, other: Self) -> Self {
+        Self {
+            burst: self.burst.saturating_add(other.burst),
+            per_minute: self.per_minute.saturating_add(other.per_minute),
+        }
+    }
+}
+
+impl std::str::FromStr for Rate {
+    type Err = String;
+
+    /// "BURST/PER_MINUTE", e.g. "64/60"
+    fn from_str(text: &str) -> Result<Self, String> {
+        let (burst, per_minute) = text.split_once('/').ok_or("BURST/PER_MINUTE, e.g. 64/60")?;
+        let number = |n: &str| n.trim().parse::<u32>().ok().filter(|&n| n > 0).ok_or("whole numbers above 0");
+        Ok(Self { burst: number(burst)?, per_minute: number(per_minute)? })
+    }
+}
+
 /// What becomes of a connection attempt: an address not yet proven is sent a Retry before anything is spent on it (a
 /// spoofed Initial holds no slot, RV-366); a proven one is refused past the limits, else admitted (its permit kept for
 /// the session)
@@ -254,98 +338,148 @@ pub enum Admit {
     Admit(tokio::sync::OwnedSemaphorePermit),
 }
 
-pub fn admit(
+pub fn admit<C: governor::clock::Clock + Clone>(
     validated: bool,
     address: IpAddr,
     sessions: &Arc<tokio::sync::Semaphore>,
-    admission: &Mutex<Admission>,
+    admission: &Mutex<Admission<C>>,
     limits: &NetLimits,
-    now: Instant,
 ) -> Admit {
     if !validated {
         return Admit::Retry;
     }
     let Ok(permit) = sessions.clone().try_acquire_owned() else { return Admit::Refuse("the server's most sessions") };
-    if !admission.lock().unwrap().admit(address, now, limits) {
-        return Admit::Refuse("its address's sessions at once or this minute");
+    if let Err(why) = admission.lock().unwrap().admit(address, limits) {
+        return Admit::Refuse(why);
     }
     Admit::Admit(permit)
 }
 
-/// The sessions of each address (`address_key`): at once, and the starts of the last minute (SEC-2)
-#[derive(Debug, Default)]
-pub struct Admission {
-    active: HashMap<IpAddr, usize>,
-    starts: HashMap<IpAddr, VecDeque<Instant>>,
-    /// The starts given back for pings, the last minute's
-    pings: HashMap<IpAddr, VecDeque<Instant>>,
-    /// When the addresses last ended were let go: once a minute at most (RV-909)
-    swept: Option<Instant>,
-    /// When each address's refusal was last logged: a line a minute at most (a flood's refusals don't fill the log)
-    refusals_logged: HashMap<IpAddr, Instant>,
+/// What a session's hello asks for, as an address's allowances count it
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A region's ping
+    Ping,
+    /// A claim, a rejoin, or any other hello (refused later or not)
+    Claim,
 }
 
-/// Drops the times a minute or more before `now`
-fn last_minute(times: &mut VecDeque<Instant>, now: Instant) {
-    while times.front().is_some_and(|&t| now.saturating_duration_since(t) >= Duration::from_secs(60)) {
-        times.pop_front();
-    }
+type Bucket<C> = governor::RateLimiter<
+    IpAddr,
+    governor::state::keyed::HashMapStateStore<IpAddr>,
+    C,
+    governor::middleware::NoOpMiddleware<<C as governor::clock::Clock>::Instant>,
+>;
+
+/// The sessions of each address (`address_key`): at once, and as they start (SEC-2; governor's keyed buckets, the 60 s
+/// windows and the pings' refund before them, RV-870/900/909/919). A session is charged as it's admitted, its hello's
+/// kind not yet known (both kinds' rates together: a connect-and-close loop bounded too), then its hello's kind's own
+#[derive(Debug)]
+pub struct Admission<C: governor::clock::Clock + Clone = governor::clock::DefaultClock> {
+    clock: C,
+    active: HashMap<IpAddr, usize>,
+    starts: Bucket<C>,
+    claims: Bucket<C>,
+    pings: Bucket<C>,
+    /// When the buckets' idle addresses and the refusals' lines were last let go: once a minute at most (RV-909)
+    swept: Option<C::Instant>,
+    /// Each address's refusals, by why: when the last was logged, and how many since unlogged (a flood's refusals write
+    /// a line a minute, counted: RV-970)
+    refusals: HashMap<(IpAddr, &'static str), (C::Instant, u64)>,
 }
+
+const MINUTE: Duration = Duration::from_secs(60);
 
 impl Admission {
-    /// A new session from `address`, if its limits allow it (counted then: `release` when it ends)
-    pub fn admit(&mut self, address: IpAddr, now: Instant, limits: &NetLimits) -> bool {
-        if self.swept.is_none_or(|t| now.saturating_duration_since(t) >= Duration::from_secs(60)) {
-            self.sweep(now);
+    pub fn new(limits: &NetLimits) -> Self {
+        Self::with_clock(limits, governor::clock::DefaultClock::default())
+    }
+}
+
+impl<C: governor::clock::Clock + Clone> Admission<C> {
+    pub fn with_clock(limits: &NetLimits, clock: C) -> Self {
+        let bucket = |rate: Rate| Bucket::hashmap_with_clock(rate.quota(), clock.clone());
+        Self {
+            starts: bucket(limits.claims.and(limits.pings)),
+            claims: bucket(limits.claims),
+            pings: bucket(limits.pings),
+            clock,
+            active: HashMap::new(),
+            swept: None,
+            refusals: HashMap::new(),
         }
-        let starts = self.starts.entry(address).or_default();
-        last_minute(starts, now);
-        let active = self.active.get(&address).copied().unwrap_or(0);
-        if active >= limits.per_address || starts.len() >= limits.per_address_per_minute {
-            return false;
+    }
+
+    fn since(&self, then: C::Instant) -> Duration {
+        Duration::from(governor::clock::Reference::duration_since(&self.clock.now(), then))
+    }
+
+    /// A new session from `address`, if its limits allow it (counted then: `release` when it ends); else why not
+    pub fn admit(&mut self, address: IpAddr, limits: &NetLimits) -> Result<(), &'static str> {
+        self.sweep_due();
+        if self.active.get(&address).copied().unwrap_or(0) >= limits.per_address {
+            return Err("its address's sessions at once");
         }
-        starts.push_back(now);
+        if self.starts.check_key(&address).is_err() {
+            return Err("its address's new sessions");
+        }
         *self.active.entry(address).or_default() += 1;
-        true
+        Ok(())
     }
 
-    /// Lets go of the addresses with no start or ping in the last minute: they'd otherwise stay, one for every address ever
-    /// seen (RV-909; an address's next start makes its entry again)
-    fn sweep(&mut self, now: Instant) {
-        self.swept = Some(now);
-        for times in [&mut self.starts, &mut self.pings] {
-            times.retain(|_, t| {
-                last_minute(t, now);
-                !t.is_empty()
-            });
+    /// A session's hello of `kind` from `address`, if that kind's allowance has room
+    pub fn charge(&self, address: IpAddr, kind: Kind) -> bool {
+        match kind {
+            Kind::Ping => self.pings.check_key(&address).is_ok(),
+            Kind::Claim => self.claims.check_key(&address).is_ok(),
         }
-        self.refusals_logged.retain(|_, &mut at| now.saturating_duration_since(at) < Duration::from_secs(60));
     }
 
-    /// Whether a refusal of `address` is logged: its first in a minute (a flood of refusals writes a line a minute, not
-    /// one each)
-    pub fn log_refusal(&mut self, address: IpAddr, now: Instant) -> bool {
-        match self.refusals_logged.get(&address) {
-            Some(&at) if now.saturating_duration_since(at) < Duration::from_secs(60) => false,
-            _ => {
-                self.refusals_logged.insert(address, now);
-                true
+    /// Whether a refusal of `address` for `why` is logged: its first in a minute, with how many went unlogged since the
+    /// last line (a flood of refusals writes a line a minute, not one each)
+    pub fn log_refusal(&mut self, address: IpAddr, why: &'static str) -> Option<u64> {
+        let now = self.clock.now();
+        let logged = match self.refusals.get(&(address, why)).copied() {
+            Some((logged, unlogged)) if self.since(logged) < MINUTE => {
+                self.refusals.insert((address, why), (logged, unlogged + 1));
+                None
             }
-        }
+            Some((_, unlogged)) => {
+                self.refusals.insert((address, why), (now, 0));
+                Some(unlogged)
+            }
+            None => {
+                self.refusals.insert((address, why), (now, 0));
+                Some(0)
+            }
+        };
+        // (its own first: the sweep then says the others' counts; refusals at the global cap, which never reach `admit`,
+        // sweep too, RV-970)
+        self.sweep_due();
+        logged
     }
 
-    /// A session from `address` that turned out a region's ping: its start not counted (each search pings every region,
-    /// so players behind one NAT would otherwise run its starts out and a claim be refused, a no-show: RV-870), up to
-    /// the pings' own budget a minute (RV-900: past it, counted as any start)
-    pub fn refund(&mut self, address: IpAddr, now: Instant, limits: &NetLimits) {
-        let pings = self.pings.entry(address).or_default();
-        last_minute(pings, now);
-        if pings.len() >= limits.pings_per_address_per_minute {
+    /// Once a minute: the buckets' addresses whose allowance is whole again let go (they'd otherwise stay, one for every
+    /// address ever seen, RV-909; their next session makes theirs anew), and the refusals' lines over a minute old,
+    /// those it held unlogged said then
+    fn sweep_due(&mut self) {
+        if self.swept.is_some_and(|t| self.since(t) < MINUTE) {
             return;
         }
-        pings.push_back(now);
-        if let Some(starts) = self.starts.get_mut(&address) {
-            starts.pop_back();
+        self.swept = Some(self.clock.now());
+        for bucket in [&self.starts, &self.claims, &self.pings] {
+            bucket.retain_recent();
+            bucket.shrink_to_fit();
+        }
+        let old: Vec<_> =
+            self.refusals.iter().filter(|(_, (at, _))| self.since(*at) >= MINUTE).map(|(k, v)| (*k, *v)).collect();
+        for ((address, why), (_, unlogged)) in old {
+            self.refusals.remove(&(address, why));
+            if unlogged > 0 {
+                tracing::warn!(
+                    "sessions from {address}: {unlogged} more refused ({why}) in the minute after its last line"
+                );
+            }
         }
     }
 
@@ -354,13 +488,27 @@ impl Admission {
             *n -= 1;
             if *n == 0 {
                 self.active.remove(&address);
-                if self.starts.get(&address).is_some_and(VecDeque::is_empty) {
-                    self.starts.remove(&address);
-                }
-                if self.pings.get(&address).is_some_and(VecDeque::is_empty) {
-                    self.pings.remove(&address);
-                }
             }
+        }
+    }
+}
+
+/// A session's address and its admission: its hello's kind charged, its refusals logged a line a minute
+pub struct Admitted {
+    admission: Arc<Mutex<Admission>>,
+    address: IpAddr,
+}
+
+impl Admitted {
+    fn charge(&self, kind: Kind) -> bool {
+        self.admission.lock().unwrap().charge(self.address, kind)
+    }
+
+    /// A refusal of this session's for `why`, its line if it's the address's first in a minute
+    fn refused(&self, peer: std::net::SocketAddr, why: &'static str) {
+        if let Some(unlogged) = self.admission.lock().unwrap().log_refusal(self.address, why) {
+            let since = if unlogged > 0 { format!(", {unlogged} more since the last line") } else { String::new() };
+            tracing::warn!("session from {peer} refused: {why} (its address's next this minute unlogged{since})");
         }
     }
 }
@@ -368,7 +516,7 @@ impl Admission {
 pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, limits: NetLimits) {
     let mut next_id: PlayerId = 1;
     let sessions = Arc::new(tokio::sync::Semaphore::new(limits.max_sessions));
-    let admission = Arc::new(Mutex::new(Admission::default()));
+    let admission = Arc::new(Mutex::new(Admission::new(&limits)));
     let limits = Arc::new(limits);
     loop {
         let incoming = server.accept().await;
@@ -376,33 +524,29 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         let peer = incoming.remote_address();
         let peer = std::net::SocketAddr::new(peer.ip().to_canonical(), peer.port());
         let address = address_key(peer.ip());
-        let permit =
-            match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits, Instant::now()) {
-                Admit::Retry => {
-                    incoming.retry();
-                    continue;
-                }
-                Admit::Refuse(why) => {
-                    if admission.lock().unwrap().log_refusal(address, Instant::now()) {
-                        tracing::warn!("session from {peer} refused: {why} (its address's next this minute unlogged)");
-                    }
-                    incoming.refuse();
-                    continue;
-                }
-                Admit::Admit(permit) => permit,
-            };
+        let admitted = Admitted { admission: admission.clone(), address };
+        let permit = match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits) {
+            Admit::Retry => {
+                incoming.retry();
+                continue;
+            }
+            Admit::Refuse(why) => {
+                admitted.refused(peer, why);
+                incoming.refuse();
+                continue;
+            }
+            Admit::Admit(permit) => permit,
+        };
         let id = next_id;
         next_id += 1;
         let to_game = to_game.clone();
-        let admission = admission.clone();
         let limits = limits.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let refund = || admission.lock().unwrap().refund(address, Instant::now(), &limits);
-            let lost = match session(incoming, peer, id, &to_game, &limits, &refund).await {
+            let lost = match session(incoming, peer, id, &to_game, &limits, &admitted).await {
                 Ok(lost) => lost,
                 Err(e) => {
-                    tracing::info!("player {id} ({peer}): {e:#}");
+                    tracing::info!("{}", session_end_line(id, peer, &e));
                     matches!(
                         e.downcast_ref::<wtransport::error::ConnectionError>(),
                         Some(wtransport::error::ConnectionError::TimedOut)
@@ -410,9 +554,32 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
                 }
             };
             let _ = to_game.send(ToGame::Leave { id, lost }).await;
-            admission.lock().unwrap().release(address);
+            admitted.admission.lock().unwrap().release(address);
         });
     }
+}
+
+/// Text a client may have written (a QUIC close's reason, in a session's error), made one line for the log: control
+/// characters (CR, LF and the rest, Unicode's line and paragraph separators too) escaped, so it can't make a line of its
+/// own that reads as the server's (RV-1009; names are logged quoted, `{name:?}`, escaped the same)
+pub fn one_line(text: &str) -> std::borrow::Cow<'_, str> {
+    let escaped = |c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}');
+    if !text.contains(escaped) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    text.chars().map(|c| if escaped(c) { c.escape_default().to_string() } else { c.to_string() }).collect()
+}
+
+/// The line a session's error ends it with: its player and address, then the error, one line
+fn session_end_line(id: PlayerId, peer: std::net::SocketAddr, e: &anyhow::Error) -> String {
+    format!("player {id} ({peer}): {}", one_line(&format!("{e:#}")))
+}
+
+/// Refuses a session's hello with `reason`, then gives the client a moment to close
+async fn refuse(send: &mut wtransport::SendStream, connection: &wtransport::Connection, reason: u8) {
+    let _ = send.write_all(&Control::Refused { reason }.encode()).await;
+    let _ = send.finish().await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
 }
 
 async fn read_control(recv: &mut wtransport::RecvStream) -> anyhow::Result<Control> {
@@ -454,7 +621,10 @@ async fn handshake(
     if let Some(allowed) = &limits.allowed_origins
         && !request.origin().is_some_and(|origin| allowed.iter().any(|a| a.eq_ignore_ascii_case(origin)))
     {
-        tracing::warn!("session from {} refused: its page's origin {:?}", request.remote_address(), request.origin());
+        // (an IPv4 client as a.b.c.d, RV-967, RV-1010)
+        let from = request.remote_address();
+        let from = std::net::SocketAddr::new(from.ip().to_canonical(), from.port());
+        tracing::warn!("session from {from} refused: its page's origin {:?}", request.origin());
         request.forbidden().await;
         return Ok(None);
     }
@@ -471,7 +641,7 @@ async fn session(
     id: PlayerId,
     to_game: &Sender<ToGame>,
     limits: &NetLimits,
-    ping: &(dyn Fn() + Sync),
+    admitted: &Admitted,
 ) -> anyhow::Result<bool> {
     // (the whole handshake within its deadline: a session that never opens its control stream is gone, SEC-2)
     let Some((connection, mut send, mut recv, hello)) =
@@ -482,17 +652,24 @@ async fn session(
     let hello = match hello {
         Ok(hello) => hello,
         Err(version) => {
-            // (refused with its reason, then the client closes; a client from before version 12 just sees the close)
-            let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_VERSION }.encode()).await;
-            let _ = send.finish().await;
-            let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+            // (a client from before version 12 just sees the close)
+            refuse(&mut send, &connection, protocol::REFUSED_VERSION).await;
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
+    // (its kind charged to its address, before anything's spent on it: a ping past the pings' allowance unanswered (the
+    // page's dash), a claim past the claims' refused)
+    let ping = matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING);
+    if !admitted.charge(if ping { Kind::Ping } else { Kind::Claim }) {
+        if !ping {
+            refuse(&mut send, &connection, protocol::REFUSED_FULL).await;
+        }
+        admitted.refused(peer, if ping { "its address's pings" } else { "its address's claims and rejoins" });
+        return Ok(false);
+    }
     // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip; its
     // session closed after a moment's flush, its slot free at once, not after the page's close: RV-856)
-    if matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING) {
-        ping(); // (its start given back: RV-870)
+    if ping {
         let server = limits.server_name.clone().unwrap_or_default();
         let _ = send.write_all(&Control::Pong { server }.encode()).await;
         let _ = send.finish().await;
@@ -504,13 +681,13 @@ async fn session(
         bail!("expected hello");
     };
     request.peer = Some(peer);
-    // (no search or decline here: the accounts service's matchmaker has the one queue; a claim or a rejoin needs its
-    // ticket, so a server without tickets takes neither)
+    // (a queue server, with tickets, serves a claim or a rejoin alone; a development server without, a join of its open
+    // match alone: no search or decline anywhere (the accounts service's matchmaker has the one queue), and no other
+    // intent, 0's or one unknown, taken to the game thread: refused here, RV-992)
     let ticketed = matches!(intent, protocol::INTENT_CLAIM | protocol::INTENT_REJOIN);
-    if matches!(intent, protocol::INTENT_SEARCH | protocol::INTENT_DECLINE) || (ticketed && limits.tickets.is_none()) {
-        let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_MODE }.encode()).await;
-        let _ = send.finish().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+    let served = if limits.tickets.is_some() { ticketed } else { intent == protocol::INTENT_JOIN };
+    if !served {
+        refuse(&mut send, &connection, protocol::REFUSED_MODE).await;
         bail!("a hello with intent {intent}: not served here");
     }
     // (a claim and a rejoin are an account's: its ticket checked here alone, never in the match code the browser's local
@@ -528,7 +705,18 @@ async fn session(
             }
             crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && *m == token,
         };
-        match tickets.check(&ticket, crate::ticket::unix_now()).and_then(|checked| {
+        // (verified, then its use decided, then spent: a ticket shown for something else, or a rejoin the matchmaker
+        // refuses, stays good, RV-973)
+        let refused = |why: crate::ticket::Refusal| {
+            // (no name: the hello's is the page's own setting, not a checked account's, RV-968)
+            let rejoin = if intent == protocol::INTENT_REJOIN {
+                format!(" (a rejoin of match {token:016x})")
+            } else {
+                String::new()
+            };
+            anyhow::anyhow!("ticket refused: {why:?}{rejoin}")
+        };
+        let checked = match tickets.verify(&ticket, crate::ticket::unix_now()).and_then(|checked| {
             if let crate::ticket::Purpose::Seat(s) = &checked.purpose
                 && let Some(own) = limits.server_name.as_ref().filter(|own| **own != s.server)
             {
@@ -540,36 +728,52 @@ async fn session(
             }
             if purpose_fits(&checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
         }) {
-            Ok(checked) => {
-                if let crate::ticket::Purpose::Seat(s) = &checked.purpose {
-                    seat = Some(crate::match_host::SeatClaim {
-                        match_id: s.match_id,
-                        playlist: s.playlist,
-                        seat: s.seat,
-                        roster: s.roster,
-                    });
-                }
-                request.key = crate::ticket::account_key(&checked.account);
-                request.name = checked.name;
-                request.verified = true;
-                request.ticket = Some(crate::game::SeatTicket {
-                    encoded: ticket,
-                    account: checked.account,
-                    ratings: checked.ratings.map(|r| r.rating),
-                });
-            }
+            Ok(checked) => checked,
             Err(why) => {
-                let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_TICKET }.encode()).await;
-                let _ = send.finish().await;
-                let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
-                // (no name: the hello's is the page's own setting, not a checked account's, RV-968)
-                let rejoin = if intent == protocol::INTENT_REJOIN {
-                    format!(" (a rejoin of match {token:016x})")
-                } else {
-                    String::new()
-                };
-                bail!("ticket refused: {why:?}{rejoin}");
+                refuse(&mut send, &connection, protocol::REFUSED_TICKET).await;
+                return Err(refused(why));
             }
+        };
+        if let crate::ticket::Purpose::Seat(s) = &checked.purpose {
+            seat = Some(crate::match_host::SeatClaim {
+                match_id: s.match_id,
+                playlist: s.playlist,
+                seat: s.seat,
+                roster: s.roster,
+            });
+        }
+        request.key = crate::ticket::account_key(&checked.account);
+        request.name = checked.name.clone();
+        request.verified = true;
+        request.ticket = Some(crate::game::SeatTicket {
+            encoded: ticket.clone(),
+            account: checked.account,
+            ratings: checked.ratings.map(|r| r.rating),
+        });
+        // (a rejoin the matchmaker confirms first: the account's latest match still this one, at this server; else it
+        // searched or was matched since, maybe at another server, and its ticket would put it in two matches. Not asked:
+        // refused, never let in unconfirmed, RV-1008)
+        if let (crate::ticket::Purpose::Rejoin(m), Some(api)) = (&checked.purpose, &limits.api) {
+            let server = limits.server_name.as_deref().unwrap_or_default();
+            match api.rejoin(server, *m, &ticket).await {
+                crate::outbox::RejoinAnswer::Allowed => {}
+                crate::outbox::RejoinAnswer::Gone => {
+                    refuse(&mut send, &connection, protocol::REFUSED_REJOIN_GONE).await;
+                    bail!(
+                        "{}: the rejoin of match {m:016x} refused: the matchmaker says the account searched or was matched \
+                         since",
+                        request.who()
+                    );
+                }
+                crate::outbox::RejoinAnswer::Unconfirmed(why) => {
+                    refuse(&mut send, &connection, protocol::REFUSED_UNCONFIRMED).await;
+                    bail!("{}: the rejoin of match {m:016x} refused unconfirmed: the matchmaker: {why}", request.who());
+                }
+            }
+        }
+        if let Err(why) = tickets.spend(&checked, crate::ticket::unix_now()) {
+            refuse(&mut send, &connection, protocol::REFUSED_TICKET).await;
+            return Err(refused(why));
         }
     }
     let intent = match (intent, seat) {
@@ -662,6 +866,7 @@ async fn session(
     let mut ping_every = tokio::time::interval(Duration::from_secs(1));
     let mut inputs = TokenBucket::new(INPUT_RATE, Instant::now());
     let mut input_overruns = TokenBucket::new(INPUT_OVERRUN, Instant::now());
+    let slot = Arc::new(InputSlot::default());
     let result: anyhow::Result<()> = loop {
         tokio::select! {
             _ = ping_every.tick() => {
@@ -677,10 +882,10 @@ async fn session(
                         continue;
                     }
                     if let Ok(Datagram::Inputs { timestamp, sequence, first_frame, frames }) = Datagram::decode(&d) {
-                        // (a game too far behind drops input packets, as lost ones: the queue stays bounded, RV-248)
-                        if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
-                            to_game.try_send(ToGame::Inputs { id, timestamp, sequence, first_frame, frames, at: std::time::Instant::now() })
-                        {
+                        // (one waiting at a time, the newest: the queue stays bounded whatever the game's pace, RV-248,
+                        // RV-991)
+                        let at = std::time::Instant::now();
+                        if deliver_inputs(to_game, id, &slot, Inputs { timestamp, sequence, first_frame, frames, at }).is_err() {
                             bail!("the game has stopped");
                         }
                     }
@@ -872,6 +1077,50 @@ pub async fn health_check(port: u16) -> bool {
 mod tests {
     use super::*;
 
+    /// RV-1009: a client's text (a QUIC close's reason, with CR, LF or a line separator) stays on its session's line: it
+    /// can't forge a line of its own (a "left: reported as a quitter" of another account)
+    /// RV-991: a session's inputs hold one place in the game's queue at most (its newest waiting): with the game thread
+    /// stalled and one session flooding, another's newest still arrive; the queue full, a datagram is lost, not stuck
+    /// (the next one noted); the game gone, said
+    #[test]
+    fn a_floods_inputs_hold_one_place_and_another_sessions_newest_arrive() {
+        let datagram =
+            |sequence: u16| Inputs { timestamp: 0, sequence, first_frame: 0, frames: vec![], at: Instant::now() };
+        let (to_game, mut game) = channel(4);
+        let (flood, honest) = (Arc::new(InputSlot::default()), Arc::new(InputSlot::default()));
+        for sequence in 0..10_000 {
+            deliver_inputs(&to_game, 1, &flood, datagram(sequence)).unwrap();
+        }
+        deliver_inputs(&to_game, 2, &honest, datagram(7)).unwrap();
+        deliver_inputs(&to_game, 2, &honest, datagram(8)).unwrap();
+        let mut got = Vec::new();
+        while let Ok(ToGame::Inputs { id, slot }) = game.try_recv() {
+            got.push((id, slot.take().map(|i| i.sequence)));
+        }
+        assert_eq!(got, [(1, Some(9999)), (2, Some(8))], "one note each, the newest of each");
+        let (to_game, mut game) = channel(1);
+        to_game.try_send(ToGame::Ping { id: 3, ms: 0 }).unwrap();
+        deliver_inputs(&to_game, 2, &honest, datagram(9)).unwrap();
+        assert!(honest.take().is_none(), "the queue full: lost, the slot left empty");
+        game.try_recv().unwrap();
+        deliver_inputs(&to_game, 2, &honest, datagram(10)).unwrap();
+        assert!(matches!(game.try_recv(), Ok(ToGame::Inputs { id: 2, .. })), "the next one noted");
+        honest.take();
+        drop(game);
+        assert!(deliver_inputs(&to_game, 2, &honest, datagram(11)).is_err(), "the game gone");
+    }
+
+    #[test]
+    fn a_clients_text_stays_on_its_line() {
+        let reason =
+            "bye\r\n2026-10-24T00:00:00Z  INFO match 1: player 9 (\"Forged\") left: reported as a quitter\u{2028}x";
+        let e = anyhow::anyhow!("closed by the peer: {reason}");
+        let line = session_end_line(7, "192.0.2.1:5000".parse().unwrap(), &e);
+        assert!(!line.contains(['\r', '\n', '\u{2028}']), "{line}");
+        assert!(line.starts_with("player 7 (192.0.2.1:5000): closed by the peer: bye\\r\\n2026"), "{line}");
+        assert_eq!(one_line("a plain \"name\" stays as it is"), "a plain \"name\" stays as it is");
+    }
+
     #[test]
     fn a_development_ticket_is_for_the_asked_account_and_name() {
         let tickets = crate::ticket::Tickets::from_list("").unwrap().with_dev_key().unwrap();
@@ -1046,117 +1295,116 @@ mod tests {
         assert_eq!((0..100).filter(|_| b.take(t2)).count(), 40, "never more than the burst");
     }
 
+    /// A test's admission on a clock it moves
+    fn admission_at(
+        limits: &NetLimits,
+    ) -> (Admission<governor::clock::FakeRelativeClock>, governor::clock::FakeRelativeClock) {
+        let clock = governor::clock::FakeRelativeClock::default();
+        (Admission::with_clock(limits, clock.clone()), clock)
+    }
+
+    /// An address's sessions at once, and its starts (both kinds' allowances together: a burst, then their rates); another
+    /// address apart. The defaults: a LAN party's 64 at once (the user's decision of 2026-10-23)
     #[test]
-    fn an_address_gets_its_sessions_at_once_and_a_minutes_starts_only() {
-        let limits = NetLimits { per_address: 2, per_address_per_minute: 3, ..NetLimits::default() };
+    fn an_address_gets_its_sessions_at_once_and_its_starts_as_they_refill() {
+        let limits = NetLimits {
+            per_address: 2,
+            claims: Rate { burst: 2, per_minute: 60 },
+            pings: Rate { burst: 1, per_minute: 60 },
+            ..NetLimits::default()
+        };
         let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
-        let t0 = Instant::now();
-        let mut admission = Admission::default();
-        assert!(admission.admit(a, t0, &limits) && admission.admit(a, t0, &limits));
-        assert!(!admission.admit(a, t0, &limits), "two at once");
-        assert!(admission.admit(b, t0, &limits), "another address");
+        let (mut admission, clock) = admission_at(&limits);
+        assert!(admission.admit(a, &limits).is_ok() && admission.admit(a, &limits).is_ok());
+        assert_eq!(admission.admit(a, &limits), Err("its address's sessions at once"));
+        assert!(admission.admit(b, &limits).is_ok(), "another address");
         admission.release(a);
-        assert!(admission.admit(a, t0, &limits), "a released one makes room");
+        assert!(admission.admit(a, &limits).is_ok(), "a released one makes room: the third start of a burst of 3");
         admission.release(a);
-        assert!(!admission.admit(a, t0, &limits), "but three starts a minute");
-        assert!(admission.admit(a, t0 + Duration::from_secs(61), &limits), "a minute on");
+        assert_eq!(admission.admit(a, &limits), Err("its address's new sessions"), "the burst's starts used");
+        clock.advance(Duration::from_millis(500));
+        assert!(admission.admit(a, &limits).is_ok(), "the rates' two a second: one again half a second on");
         admission.release(a);
         admission.release(a);
         admission.release(b);
         assert!(admission.active.is_empty());
+        assert_eq!(NetLimits::default().per_address, 64);
     }
 
-    /// RV-870: a ping's start given back: an address's pings never run out its starts, a claim after 30 still admitted;
-    /// RV-900: up to the pings' budget a minute, then counted as any start (refused once those run out), a minute on
-    /// given back again
+    /// The user's decision of 2026-10-23 (LAN parties): claims and rejoins, and region pings, each their own allowance, a
+    /// burst then steady; pings past theirs leave the claims' whole (no claim a no-show for the pings of others behind its
+    /// address)
     #[test]
-    fn a_pings_start_is_given_back_within_its_budget() {
-        let limits = NetLimits { per_address_per_minute: 3, pings_per_address_per_minute: 5, ..NetLimits::default() };
-        let a: IpAddr = [10, 0, 0, 1].into();
-        let t0 = Instant::now();
-        let mut admission = Admission::default();
-        let ping = |admission: &mut Admission, at: Instant| -> bool {
-            let admitted = admission.admit(a, at, &limits);
-            if admitted {
-                admission.refund(a, at, &limits);
-                admission.release(a);
-            }
-            admitted
+    fn claims_and_pings_each_have_their_own_allowance() {
+        let limits = NetLimits {
+            claims: Rate { burst: 3, per_minute: 60 },
+            pings: Rate { burst: 5, per_minute: 120 },
+            ..NetLimits::default()
         };
-        assert_eq!((0..5).filter(|_| ping(&mut admission, t0)).count(), 5, "the budget's pings, given back");
-        assert!(admission.admit(a, t0, &limits), "a claim after them");
-        admission.release(a);
-        assert_eq!((0..10).filter(|_| ping(&mut admission, t0)).count(), 2, "past the budget: as any start");
-        let t1 = t0 + Duration::from_secs(61);
-        assert_eq!((0..5).filter(|_| ping(&mut admission, t1)).count(), 5, "a minute on");
-        assert!(admission.admit(a, t1, &limits), "and a claim");
-    }
-
-    /// RV-909: an address gone for a minute is let go, its starts and pings with it; one with a session open is kept
-    #[test]
-    fn addresses_gone_a_minute_are_let_go() {
-        let limits = NetLimits::default();
-        let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
-        let t0 = Instant::now();
-        let mut admission = Admission::default();
-        assert!(admission.admit(a, t0, &limits));
-        admission.refund(a, t0, &limits);
-        admission.release(a);
-        assert!(admission.admit(a, t0, &limits));
-        admission.release(a);
-        assert!(admission.admit(b, t0, &limits)); // (b's session stays open)
-        assert_eq!((admission.starts.len(), admission.pings.len()), (2, 1));
-        let later = t0 + Duration::from_secs(61);
-        assert!(admission.admit(b, later, &limits));
-        assert!(!admission.starts.contains_key(&a) && !admission.pings.contains_key(&a), "a gone a minute let go");
-        assert!(admission.starts.contains_key(&b), "b kept: a start in its minute");
-    }
-
-    /// RV-919's P1: the sweep keeps an address whose minute is still open: two starts at 50 s and 55 s, a sweep at 61 s,
-    /// then a third within their minute refused (a limit of 2)
-    #[test]
-    fn the_sweep_keeps_an_open_minute() {
-        let limits = NetLimits { per_address_per_minute: 2, ..NetLimits::default() };
-        let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
-        let t0 = Instant::now();
-        let mut admission = Admission::default();
-        assert!(admission.admit(b, t0, &limits)); // (the first sweep, at 0 s)
-        for at in [50, 55] {
-            assert!(admission.admit(a, t0 + Duration::from_secs(at), &limits));
-            admission.release(a);
+        let a: IpAddr = [10, 0, 0, 1].into();
+        let (admission, clock) = admission_at(&limits);
+        let take = |kind: Kind| (0..20).filter(|_| admission.charge(a, kind)).count();
+        assert_eq!(take(Kind::Ping), 5, "the pings' burst");
+        assert_eq!(take(Kind::Claim), 3, "the claims' own, whole");
+        clock.advance(Duration::from_secs(1));
+        assert_eq!((take(Kind::Ping), take(Kind::Claim)), (2, 1), "a second's of each");
+        clock.advance(Duration::from_secs(600));
+        assert_eq!(take(Kind::Claim), 3, "never more than the burst");
+        assert_eq!(NetLimits::default().claims, Rate { burst: 64, per_minute: 60 }, "1 a second");
+        assert_eq!(NetLimits::default().pings, Rate { burst: 192, per_minute: 240 }, "4 a second");
+        assert_eq!("64/60".parse::<Rate>(), Ok(Rate { burst: 64, per_minute: 60 }));
+        for bad in ["64", "0/1", "64/0", "a/1", "64/1/2"] {
+            assert!(bad.parse::<Rate>().is_err(), "{bad}");
         }
-        assert!(
-            !admission.admit(a, t0 + Duration::from_secs(61), &limits),
-            "a third start in the minute, after a sweep"
+    }
+
+    /// RV-909: the buckets let go of an address once its allowance is whole again (swept a minute at most apart); one
+    /// still refilling is kept, its use remembered
+    #[test]
+    fn addresses_whose_allowance_is_whole_are_let_go() {
+        let limits = NetLimits {
+            claims: Rate { burst: 2, per_minute: 60 },
+            pings: Rate { burst: 2, per_minute: 60 },
+            ..NetLimits::default()
+        };
+        let (a, b, c): (IpAddr, IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into(), [10, 0, 0, 3].into());
+        let (mut admission, clock) = admission_at(&limits);
+        let start = |admission: &mut Admission<_>, at: IpAddr| {
+            let ok = admission.admit(at, &limits).is_ok();
+            admission.release(at);
+            ok
+        };
+        assert!(start(&mut admission, a)); // (the first sweep, at 0 s)
+        clock.advance(Duration::from_secs(59));
+        assert_eq!((0..9).filter(|_| start(&mut admission, b)).count(), 4, "b's burst at 59 s");
+        clock.advance(Duration::from_secs(1));
+        assert!(start(&mut admission, c)); // (a sweep, at 60 s)
+        assert_eq!(admission.starts.len(), 2, "a's whole again, let go; b's refilling kept, c's new");
+        assert_eq!(
+            (0..9).filter(|_| start(&mut admission, b)).count(),
+            2,
+            "b's use remembered: a second's refill alone"
         );
     }
 
-    /// RV-919's R22: a ping's refund prunes its own minute: the pings' budget used at 30 s, a sweep at 61 s (which keeps
-    /// them: 31 s old), a ping at 95 s refunded all the same
+    /// RV-970: a refusal's line once a minute for each address and reason, the ones between counted (said with the next
+    /// line, or by the sweep after its minute)
     #[test]
-    fn a_refund_prunes_its_own_minute() {
-        let limits = NetLimits { per_address_per_minute: 3, pings_per_address_per_minute: 2, ..NetLimits::default() };
+    fn refusals_are_logged_a_line_a_minute_counted() {
+        let limits = NetLimits::default();
         let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
-        let t0 = Instant::now();
-        let mut admission = Admission::default();
-        let ping = |admission: &mut Admission, at: u64| {
-            let at = t0 + Duration::from_secs(at);
-            assert!(admission.admit(a, at, &limits));
-            admission.refund(a, at, &limits);
-            admission.release(a);
-        };
-        assert!(admission.admit(b, t0, &limits)); // (the first sweep, at 0 s)
-        ping(&mut admission, 30);
-        ping(&mut admission, 30);
-        assert!(admission.admit(b, t0 + Duration::from_secs(61), &limits)); // (a sweep)
-        ping(&mut admission, 95);
-        // (refunded: the address's three starts all still free in 95 s's minute)
-        let at = t0 + Duration::from_secs(95);
-        assert!((0..3).all(|_| {
-            let ok = admission.admit(a, at, &limits);
-            admission.release(a);
-            ok
-        }));
+        let (mut admission, clock) = admission_at(&limits);
+        assert_eq!(admission.log_refusal(a, "x"), Some(0));
+        assert_eq!((admission.log_refusal(a, "x"), admission.log_refusal(a, "x")), (None, None));
+        assert_eq!(admission.log_refusal(a, "y"), Some(0), "another reason's");
+        assert_eq!(admission.log_refusal(b, "x"), Some(0), "another address's");
+        clock.advance(Duration::from_secs(30));
+        assert_eq!(admission.log_refusal(a, "x"), None);
+        clock.advance(Duration::from_secs(31));
+        assert_eq!(admission.log_refusal(a, "x"), Some(3), "a minute on: the three between counted");
+        clock.advance(Duration::from_secs(61));
+        assert_eq!(admission.log_refusal(b, "z"), Some(0));
+        assert_eq!(admission.refusals.len(), 1, "the lines over a minute old let go");
     }
 
     #[test]
@@ -1168,11 +1416,13 @@ mod tests {
         assert_ne!(key("::ffff:10.0.0.1"), key("::ffff:10.0.0.2"), "IPv4 clients aren't one /64");
         // Two hosts of one /64 share its limits
         let limits = NetLimits { per_address: 2, ..NetLimits::default() };
-        let mut admission = Admission::default();
-        let t0 = Instant::now();
-        assert!(admission.admit(key("2001:db8::1"), t0, &limits) && admission.admit(key("2001:db8::2"), t0, &limits));
-        assert!(!admission.admit(key("2001:db8::3"), t0, &limits));
-        assert!(admission.admit(key("2001:db8:0:1::1"), t0, &limits));
+        let (mut admission, _clock) = admission_at(&limits);
+        assert!(
+            admission.admit(key("2001:db8::1"), &limits).is_ok()
+                && admission.admit(key("2001:db8::2"), &limits).is_ok()
+        );
+        assert!(admission.admit(key("2001:db8::3"), &limits).is_err());
+        assert!(admission.admit(key("2001:db8:0:1::1"), &limits).is_ok());
     }
 
     #[test]
@@ -1185,28 +1435,22 @@ mod tests {
     fn an_unproven_address_is_sent_a_retry_and_takes_no_slot() {
         let limits = NetLimits { max_sessions: 1, per_address: 1, ..NetLimits::default() };
         let sessions = Arc::new(tokio::sync::Semaphore::new(1));
-        let admission = Mutex::new(Admission::default());
+        let admission = Mutex::new(Admission::new(&limits));
         let a: IpAddr = [10, 0, 0, 1].into();
-        let t0 = Instant::now();
         for _ in 0..10 {
-            assert!(matches!(admit(false, a, &sessions, &admission, &limits, t0), Admit::Retry));
+            assert!(matches!(admit(false, a, &sessions, &admission, &limits), Admit::Retry));
         }
         assert_eq!(sessions.available_permits(), 1);
         assert!(admission.lock().unwrap().active.is_empty());
-        let Admit::Admit(permit) = admit(true, a, &sessions, &admission, &limits, t0) else {
+        assert_eq!(admission.lock().unwrap().starts.len(), 0, "a Retry charged nothing");
+        let Admit::Admit(permit) = admit(true, a, &sessions, &admission, &limits) else {
             panic!("a proven address admitted")
         };
         assert!(
-            matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits, t0), Admit::Refuse(_)),
+            matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits), Admit::Refuse(_)),
             "the global cap"
         );
         drop(permit);
-        // (a refusal logged once a minute an address: a flood of them a line a minute)
-        let mut admission = admission.lock().unwrap();
-        assert!(admission.log_refusal(a, t0));
-        assert!(!admission.log_refusal(a, t0 + Duration::from_secs(30)), "again within the minute");
-        assert!(admission.log_refusal([10, 0, 0, 2].into(), t0), "another address's");
-        assert!(admission.log_refusal(a, t0 + Duration::from_secs(61)), "a minute on");
     }
 
     #[test]

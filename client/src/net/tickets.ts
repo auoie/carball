@@ -50,9 +50,10 @@ export async function accountTicket(rejoin: bigint, post: typeof fetch = fetch):
   });
   if (response.status === 401) throw new SignedOutError();
   if (response.status === 403) {
-    const body = (await response.json().catch(() => null)) as { error?: unknown; until?: unknown } | null;
-    const until = typeof body?.until === "string" ? Date.parse(body.until) : NaN;
-    if (body?.error === "queue-banned" && Number.isFinite(until)) throw new QueueBannedError(until);
+    // (the ban's seconds left, its end on this page's clock, RV-1001)
+    const body = (await response.json().catch(() => null)) as { error?: unknown; seconds?: unknown } | null;
+    const seconds = typeof body?.seconds === "number" ? body.seconds : NaN;
+    if (body?.error === "queue-banned" && Number.isFinite(seconds)) throw new QueueBannedError(Date.now() + seconds * 1000);
   }
   // (a rejoin the matchmaker refuses: the account searching, in another match, or a later search having given that
   // match up: its own answer, not tried again, RV-882)

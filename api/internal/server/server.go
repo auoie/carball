@@ -123,6 +123,10 @@ type Server struct {
 	renames, tickets     *ratelimit.Limiter
 	searchStarts         *ratelimit.Limiter
 	gameServerCalls      *ratelimit.Limiter
+	// (the log's request lines per client address, and the ones not written since its last: RV-963)
+	requestLines *ratelimit.Limiter
+	linesMu      sync.Mutex
+	unlogged     map[string]int
 
 	// (the development matchmaker's quitters' bans: devmatchmaker.go)
 	devMu   sync.Mutex
@@ -146,6 +150,10 @@ type Limits struct {
 	Searches Limit
 	// GameServer is the game server's calls' (results, quitters, refills: AC-26), all of them together
 	GameServer Limit
+	// RequestLines is each client address's request lines in the log (an IPv6 /64's): past them its lines are counted,
+	// not written, so that a flood can't push the abuse trail out of the log's rotation or fill the disk (RV-963); none
+	// (0): every line
+	RequestLines Limit
 	// Keys is each limit's most keys at once (past it the longest idle is forgotten)
 	Keys int
 	// OpenFlows and OpenSignups are the ceilings on sign-ins in progress and sign-ups waiting, everyone's (AP-2)
@@ -163,9 +171,11 @@ func DefaultLimits() Limits {
 		Tickets:     Limit{60, 10 * time.Minute},
 		Searches:    Limit{30, 10 * time.Minute},
 		GameServer:  Limit{300, time.Minute},
-		Keys:        200_000,
-		OpenFlows:   20_000,
-		OpenSignups: 5_000,
+		// (a LAN party's 64 players' polls, about one each 25 s, and their pages, well inside)
+		RequestLines: Limit{600, time.Minute},
+		Keys:         200_000,
+		OpenFlows:    20_000,
+		OpenSignups:  5_000,
 	}
 }
 
@@ -178,6 +188,10 @@ func (s *Server) SetLimits(l Limits) {
 	s.renames, s.tickets = limiter(l.Renames), limiter(l.Tickets)
 	s.searchStarts = limiter(l.Searches)
 	s.gameServerCalls = limiter(l.GameServer)
+	s.requestLines = nil
+	if l.RequestLines.Burst > 0 {
+		s.requestLines = limiter(l.RequestLines)
+	}
 }
 
 // Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
@@ -185,6 +199,37 @@ func (s *Server) Sweep(now time.Time) {
 	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls} {
 		l.Sweep(now)
 	}
+	if s.requestLines != nil {
+		s.requestLines.Sweep(now)
+	}
+	// (the request lines not written in the last minute, each address's count said, then forgotten)
+	s.linesMu.Lock()
+	unlogged := s.unlogged
+	s.unlogged = nil
+	s.linesMu.Unlock()
+	for key, n := range unlogged {
+		s.Log.Warn("request lines not written", "ip", key, "lines", n)
+	}
+}
+
+// lineAllowed: whether a request from `key` (its address, ClientKey's) is written to the log, and how many of its
+// address's weren't since its last
+func (s *Server) lineAllowed(key string, now time.Time) (int, bool) {
+	if s.requestLines == nil {
+		return 0, true
+	}
+	s.linesMu.Lock()
+	defer s.linesMu.Unlock()
+	if !s.requestLines.Allow(key, now) {
+		if s.unlogged == nil {
+			s.unlogged = map[string]int{}
+		}
+		s.unlogged[key]++
+		return 0, false
+	}
+	n := s.unlogged[key]
+	delete(s.unlogged, key)
+	return n, true
 }
 
 // allowAddress takes one request of the client's address and of its wider network
@@ -219,6 +264,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search/{id}", s.pollSearch)
 	mux.HandleFunc("DELETE /api/search/{id}", s.write(s.cancelSearch))
 	mux.HandleFunc("POST /api/fleet/events", s.gameServer(s.fleetEvent))
+	mux.HandleFunc("POST /api/fleet/rejoin", s.gameServer(s.rejoinCheck))
 	return s.logged(headers(mux))
 }
 
@@ -298,6 +344,14 @@ func (s *Server) logged(next http.Handler) http.Handler {
 			attrs = append(attrs, "error", sw.refusal)
 		}
 		attrs = append(attrs, "ms", time.Since(start).Milliseconds())
+		// (a line an address can write so often: past that, counted, RV-963)
+		unlogged, ok := s.lineAllowed(ratelimit.ClientKey(r, s.TrustedProxies), s.Now())
+		if !ok {
+			return
+		}
+		if unlogged > 0 {
+			attrs = append(attrs, "unlogged", unlogged)
+		}
 		s.Log.Info("request", append(attrs, client.attrs()...)...)
 	})
 }

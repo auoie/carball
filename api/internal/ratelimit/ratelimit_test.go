@@ -79,6 +79,8 @@ func TestClientKey(t *testing.T) {
 		// (no header, or garbage in it: the connection's)
 		{"", "198.51.100.9:5000", "198.51.100.9"},
 		{"not an address", "172.18.0.5:5000", "172.18.0.5"},
+		// (a zoned address: no client's, ignored, RV-974)
+		{"fe80::1%eth0", "172.18.0.5:5000", "172.18.0.5"},
 		// (the header from a connection not trusted: ignored, its own address taken, AP-1)
 		{"203.0.113.7", "198.51.100.9:5000", "198.51.100.9"},
 		{"203.0.113.7", "[2001:db8::1]:5000", "2001:db8::/64"},

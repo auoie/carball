@@ -158,7 +158,8 @@ API. It:
   `carball`, and each claim in its form (a rejoin's with no seat, a seat's in its playlist's roster); a header of
   exactly `alg`, `kid` and `typ`, and no claim a ticket doesn't have, none null (RV-947, RV-954); each purpose's own
   life (a rejoin's 120 s, a seat's 30 s: RV-950). The API reads the tickets it gets back as strictly, and takes one
-  spelling of each: three canonical base64url parts, no line break (RV-946);
+  spelling of each: three canonical base64url parts, no line break, its strings well-formed (valid UTF-8, no unpaired
+  surrogate escape) and no null in its ratings (RV-946, RV-1005);
 - allows ±30 s of clock skew (both boxes on NTP);
 - caps the ticket's size in `Hello`;
 - keeps used one-time ids until `exp` and the 30 s skew, so a ticket is used once; refuses a ticket issued before the process started (its
@@ -167,7 +168,12 @@ API. It:
 - takes its keys from `TICKET_PUBLIC_KEYS` or `TICKET_PUBLIC_KEYS_FILE`, the file read again on SIGHUP (a rotation
   without a restart), refusing a list with no key, a key id twice, a key of small order or the id `dev` (AP2-5);
 - takes a match ticket for a claim of its seat at this server alone (its `aud` this server's name, RV-863), a rejoin's
-  for that match's rejoin alone (`Refused` 4 otherwise).
+  for that match's rejoin alone (`Refused` 4 otherwise), its purpose checked before its one-time id is taken (a ticket
+  shown for something else stays good, RV-973);
+- asks the API before a rejoin is let in (`POST /api/fleet/rejoin`, the rejoin's ticket): the account's latest match
+  still that one, at this server, or it's refused (`Refused` 8), and refused too when the API doesn't answer in 2 s
+  (`Refused` 9): a rejoin ticket from before a search or a later match would otherwise put it in two matches, across
+  servers too (RV-1008). A used ticket is refused before the API is asked.
 
 A seat belongs to the account: a reconnect needs a fresh ticket for that account, not the browser key.
 
@@ -211,7 +217,8 @@ player by the account (RX29C).
   carries the leave's time, and the ban runs from it (held within the acceptance window: a report that gets through late
   bans for what's left). The API raises the account's `queue_bans` row by the ladder (ours, the user's choice of LV1's: 5 min → 15 min → 1 h → 6 h →
   24 h cap, one step forgiven for every 24 h without a leave); the matchmaker refuses a search while it runs, and the
-  page shows until when (`/api/me`'s `queueBanUntil`; a no-show's cooldown likewise, `searchCooldownSeconds`). A rejoin needs no search, so the ban never blocks it: its ticket
+  page shows until when (`/api/me`'s `queueBanSeconds`, its seconds left taken on the page's clock, RV-1001; a no-show's cooldown likewise,
+  `searchCooldownSeconds`). A rejoin needs no search, so the ban never blocks it: its ticket
   is a **rejoin's** (`POST /api/ticket?rejoin=MATCH`, purpose `rejoin` and that match's id), which the ban doesn't stop
   when it came from that same match, and which the game server takes for that match's rejoin alone (a match ticket only
   for a claim of its seat). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the

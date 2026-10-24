@@ -178,12 +178,15 @@ struct Cli {
     /// Sessions at once
     #[arg(long, default_value_t = 512, value_parser = number_of::<usize>("--max-sessions"))]
     max_sessions: usize,
-    /// Sessions at once per client address (an IPv6 one by its /64)
-    #[arg(long, default_value_t = 8, value_parser = number_of::<usize>("--max-per-address"))]
+    /// Sessions at once per client address (an IPv6 one by its /64: a LAN party's players behind one address)
+    #[arg(long, default_value_t = 64, value_parser = number_of::<usize>("--max-per-address"))]
     max_per_address: usize,
-    /// New sessions a minute per client address
-    #[arg(long, default_value_t = 30, value_parser = number_of::<usize>("--max-per-address-per-minute"))]
-    max_per_address_per_minute: usize,
+    /// Claims and rejoins per client address: BURST at once, then PER_MINUTE
+    #[arg(long, value_name = "BURST/PER_MINUTE", default_value = "64/60")]
+    claims_per_address: net::Rate,
+    /// Region pings per client address: BURST at once, then PER_MINUTE
+    #[arg(long, value_name = "BURST/PER_MINUTE", default_value = "192/240")]
+    pings_per_address: net::Rate,
     /// The match tickets' public keys ("KID BASE64", comma- or line-separated)
     #[arg(long, env = "TICKET_PUBLIC_KEYS")]
     ticket_public_keys: Option<String>,
@@ -273,7 +276,8 @@ impl Cli {
         let mut limits = NetLimits {
             max_sessions: self.max_sessions,
             per_address: self.max_per_address,
-            per_address_per_minute: self.max_per_address_per_minute,
+            claims: self.claims_per_address,
+            pings: self.pings_per_address,
             ..NetLimits::default()
         };
         if let Some(list) = &self.allowed_origin {
@@ -497,7 +501,25 @@ async fn exit_on_stop(mut term: tokio::signal::unix::Signal) {
         _ = term.recv() => {}
         _ = tokio::signal::ctrl_c() => {}
     }
-    std::process::exit(0);
+    exit(0);
+}
+
+/// The log's writer's guard: its buffered lines written out when it's dropped (`exit`)
+static LOG: std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> = std::sync::Mutex::new(None);
+
+/// The log's writer over `out`: on a thread of its own, bounded, lossy: a stalled stderr (Docker's log pipe) never holds
+/// whoever logs, the game thread among them (its joins, leaves, kicks); past its buffer (128k lines) lines are dropped,
+/// not waited on (RV-993)
+fn log_writer<W: std::io::Write + Send + 'static>(
+    out: W,
+) -> (tracing_appender::non_blocking::NonBlocking, tracing_appender::non_blocking::WorkerGuard) {
+    tracing_appender::non_blocking::NonBlockingBuilder::default().lossy(true).thread_name("log").finish(out)
+}
+
+/// Ends the process with `code`, the log's buffered lines written first (a second at most, a stalled stderr's)
+fn exit(code: i32) -> ! {
+    drop(LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take());
+    std::process::exit(code)
 }
 
 fn modified(path: &PathBuf) -> Option<SystemTime> {
@@ -531,7 +553,7 @@ async fn reload_certificates(
                         seen = now;
                         tracing::info!("certificate reloaded ({})", if asked { "SIGHUP" } else { "its files changed" });
                     }
-                    Err(e) => tracing::error!("certificate reload failed, the old one stays: {e:#}"),
+                    Err(e) => tracing::warn!("certificate reload failed, the old one stays: {e:#}"),
                 }
             }
             // (a renewal written in two steps can be read between them, a key that isn't the certificate's yet: tried
@@ -541,8 +563,19 @@ async fn reload_certificates(
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// The network's runtime: a worker for each CPU the process may use (a container's quota counted) but one, left to the
+/// game thread, so that every match's ticks don't share their CPU with the handshakes, decryption and the outbox's disk
+/// writes (RV-990; APP-CONTRACT: 2 vCPU at least); one worker on one CPU
+fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    tokio::runtime::Builder::new_multi_thread().worker_threads(cpus.saturating_sub(1).max(1)).enable_all().build()
+}
+
+fn main() -> anyhow::Result<()> {
+    runtime()?.block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.iter().any(|a| a == "--healthcheck") {
         use clap::Parser;
@@ -556,14 +589,17 @@ async fn main() -> anyhow::Result<()> {
         };
         std::process::exit(if net::health_check(check.health_port).await { 0 } else { 1 });
     }
-    // (the log: one line per event, its time and level, on stderr; ours info and up, the other crates' errors alone)
+    // (the log: one line per event, its time and level, on stderr through `log_writer`; ours info and up, the other
+    // crates' errors alone)
     {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
+        let (writer, guard) = log_writer(std::io::stderr());
+        *LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(guard);
         tracing_subscriber::fmt()
             .with_target(false)
             .with_max_level(tracing::Level::INFO)
-            .with_writer(std::io::stderr)
+            .with_writer(writer)
             .finish()
             .with(carball_server::log_filter(tracing::Level::INFO))
             .init();
@@ -579,6 +615,9 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let server = Arc::new(net::endpoint(identity, args.port)?);
+    // (the health endpoint's port taken at once, beside the game's: a server that can't have it stops before it has an
+    // outbox to write or a game thread to start, RV-986, RV-1011)
+    let health = net::bind_health(args.health_port).await?;
     // (a queue server's searches and claims are accounts': their tickets checked with these keys; a development server's
     // own key too, its info server signing tickets for the pages that ask)
     let key_list = match &args.ticket_keys_file {
@@ -624,6 +663,11 @@ async fn main() -> anyhow::Result<()> {
     let reports = if args.queue {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let config = outbox_config(&args)?;
+        // (its rejoins confirmed with the same service first, RV-1008)
+        args.limits.api = carball_server::outbox::Api::new(&config)?.map(Arc::new);
+        if args.limits.api.is_none() {
+            tracing::warn!("rejoins let in unconfirmed: no accounts service to ask (development)");
+        }
         match &config.api_url {
             Some(url) => tracing::info!(
                 "ranked calls to {url} (waiting in {})",
@@ -649,11 +693,11 @@ async fn main() -> anyhow::Result<()> {
             every.tick().await;
             if game.is_finished() {
                 tracing::error!("the game thread ended: exiting");
-                std::process::exit(1);
+                exit(1);
             }
         }
     });
-    tokio::spawn(net::serve_health(net::bind_health(args.health_port).await?, heartbeat, start));
+    tokio::spawn(net::serve_health(health, heartbeat, start));
     if let Some((cert, key)) = args.cert.clone() {
         tokio::spawn(reload_certificates(server.clone(), cert, key, args.port, hangups()?));
     }
@@ -699,6 +743,32 @@ mod tests {
     use super::*;
 
     /// A secret's file read as the accounts service reads it: its trailing line ends dropped, nothing else (AP3)
+    /// RV-993: the log's writer never holds whoever logs (the game thread among them): with the output behind it stalled
+    /// (Docker's log pipe), lines past its buffer are dropped, not waited on
+    #[test]
+    fn a_stalled_log_never_holds_its_writer() {
+        use std::io::Write;
+        struct Stalled(std::sync::mpsc::Receiver<()>);
+        impl std::io::Write for Stalled {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let _ = self.0.recv();
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (release, stalled) = std::sync::mpsc::channel();
+        let (mut writer, guard) = log_writer(Stalled(stalled));
+        let start = Instant::now();
+        for _ in 0..300_000 {
+            writer.write_all(b"a line\n").unwrap();
+        }
+        assert!(start.elapsed() < Duration::from_secs(2), "held for {:?}", start.elapsed());
+        drop(release);
+        drop(guard);
+    }
+
     #[test]
     fn a_secret_loses_its_line_ends_only() {
         let path = std::env::temp_dir().join(format!("carball-secret-{:016x}", carball_server::game::random_u64()));

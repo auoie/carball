@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RefusedError } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_QUEUE_BANNED, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
+import {
+  REFUSED_CONCLUDED,
+  REFUSED_IN_MATCH,
+  REFUSED_MODE,
+  REFUSED_QUEUE_BANNED,
+  REFUSED_REJOIN_GONE,
+  REFUSED_TICKET,
+  REFUSED_TOKEN,
+  REFUSED_UNCONFIRMED,
+  REFUSED_VERSION,
+} from "./protocol";
 import { QueueBannedError, RejoinGoneError, SignedOutError } from "./tickets";
 import {
   type GameServerConfig,
@@ -133,6 +143,12 @@ describe("the pages' handoffs", () => {
     expect(claimNotice(refused(REFUSED_IN_MATCH), rejoin, "gone")).toEqual({ modal: "elsewhere" });
     // (a rejoin's ticket the matchmaker refused: said as such, RV-882)
     expect(claimNotice(new RejoinGoneError(), rejoin, "gone")).toEqual({ modal: "rejoinGone" });
+    // (the game server's word for the matchmaker at the rejoin: the account searched or played since; or the matchmaker
+    // not asked, offered again; a claim's are no such thing, RV-1008)
+    expect(claimNotice(refused(REFUSED_REJOIN_GONE), rejoin, "gone")).toEqual({ modal: "rejoinGone" });
+    expect(claimNotice(refused(REFUSED_UNCONFIRMED), rejoin, "gone")).toEqual({ modal: "rejoinUnconfirmed" });
+    expect(claimNotice(refused(REFUSED_REJOIN_GONE), claim, "gone")).toEqual({ modal: "lost" });
+    expect(claimNotice(refused(REFUSED_UNCONFIRMED), claim, "gone")).toEqual({ modal: "lost" });
     // (refused on version, a claim or a rejoin: reload, as a search is told, RV-865)
     expect(claimNotice(refused(REFUSED_VERSION), claim, "gone")).toEqual({ modal: "reload" });
     expect(claimNotice(refused(REFUSED_VERSION), rejoin, "gone")).toEqual({ modal: "reload" });
@@ -191,7 +207,7 @@ describe("the pages' handoffs", () => {
     expect(post).toHaveBeenCalledTimes(2);
     // (a ban is an answer: asked once)
     post.mockReset();
-    post.mockResolvedValue(new Response(JSON.stringify({ error: "queue-banned", until: new Date(Date.now() + 60_000).toISOString() }), { status: 403 }));
+    post.mockResolvedValue(new Response(JSON.stringify({ error: "queue-banned", seconds: 60 }), { status: 403 }));
     await expect(address.ticket?.(5n)).rejects.toBeInstanceOf(QueueBannedError);
     expect(post).toHaveBeenCalledTimes(1);
   });
@@ -335,6 +351,11 @@ describe("the pages' handoffs", () => {
     expect(takeClaim(storage)?.url).toBe("https://game-eu.example:4433/play");
     storeClaim({ token: 5n, playlist: 2, searchedAt: 1, url: "javascript:alert(1)" }, storage);
     expect(takeClaim(storage)?.url).toBeUndefined();
+    // (a rejoin's saved seat's join kept with it, a number alone: the seat kept again if the matchmaker can't be asked)
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, rejoin: true, seatJoinedAt: 1234 }, storage);
+    expect(takeClaim(storage)?.seatJoinedAt).toBe(1234);
+    storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, seatJoinedAt: "soon" }));
+    expect(takeClaim(storage)?.seatJoinedAt).toBeUndefined();
     storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, ticket: "not a ticket!", playlists: [9] }));
     expect(takeClaim(storage)).toEqual({ token: 5n, playlist: 2, searchedAt: 1 });
     // (a claim refused as gone: its playlists searched again, its clock kept; the matchmaker keeps its place)
@@ -469,7 +490,7 @@ describe("the pages' handoffs", () => {
     expect(playlistsOf([1, 3])).toEqual([1, 3]);
     for (const bad of [[], [1, 1], [4], [1, 2, 3, 1], "1", null]) expect(playlistsOf(bad)).toBeNull();
     const storage = memory();
-    for (const modal of ["reload", "rejoinGone"] as const) {
+    for (const modal of ["reload", "rejoinGone", "rejoinUnconfirmed"] as const) {
       storeNotice({ modal }, storage);
       expect(takeNotice(storage)).toEqual({ modal });
     }

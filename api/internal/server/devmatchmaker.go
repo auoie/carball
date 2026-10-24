@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -29,6 +30,7 @@ func (s *Server) DevHandler() http.Handler {
 	mux.HandleFunc("GET /api/search/{id}", s.devPollSearch)
 	mux.HandleFunc("DELETE /api/search/{id}", s.devCancelSearch)
 	mux.HandleFunc("POST /api/fleet/events", s.fleetEvent)
+	mux.HandleFunc("POST /api/fleet/rejoin", s.devRejoinCheck)
 	// (a development server's outbox sends its results too: a match's end, its accounts free, no ratings; a quitter
 	// banned DevBan (the ladder's first step), a refill lifting it)
 	mux.HandleFunc("POST /api/results", s.devResult)
@@ -95,7 +97,7 @@ func (s *Server) devStartSearch(w http.ResponseWriter, r *http.Request) {
 	whoOf(r).signedIn(account, body.Name)
 	now := s.Now()
 	if until, banned := s.devBanOf(account, now); banned {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "seconds": secondsUntil(until, now)})
 		return
 	}
 	fresh := ticket.Shown{Rating: 1500, Deviation: 500}
@@ -126,6 +128,17 @@ func (s *Server) devTicketAccount(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return accountID(t.Account), true
+}
+
+// devRejoinCheck: a development server's rejoin question (the service's, RV-1008), its ticket the development key's
+func (s *Server) devRejoinCheck(w http.ResponseWriter, r *http.Request) {
+	s.answerRejoin(w, r, func(encoded, match string, _ time.Time) (ticket.Ticket, error) {
+		t, err := ticket.VerifySigned(encoded, map[string]ed25519.PublicKey{ticket.DevKeyID: s.Tickets.PublicKey()})
+		if err == nil && (t.Purpose != ticket.PurposeRejoin || matchText(t.Match) != match) {
+			err = errors.New("ticket: not for this")
+		}
+		return t, err
+	})
 }
 
 // devQuitter: a development quitter banned DevBan, its search ended with it

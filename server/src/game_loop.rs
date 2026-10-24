@@ -110,10 +110,16 @@ pub fn run_with_reports(
                     }
                 }
                 Ok(ToGame::Leave { id, lost }) => host.leave(id, lost),
-                Ok(ToGame::Inputs { id, timestamp, sequence, first_frame, frames, at }) => {
-                    if let Some(game) = host.game_of(id) {
-                        game.note_input_sequence(id, sequence);
-                        game.receive_inputs(id, timestamp, first_frame, &frames, seconds(at));
+                Ok(ToGame::Inputs { id, slot }) => {
+                    if let (Some(inputs), Some(game)) = (slot.take(), host.game_of(id)) {
+                        game.note_input_sequence(id, inputs.sequence);
+                        game.receive_inputs(
+                            id,
+                            inputs.timestamp,
+                            inputs.first_frame,
+                            &inputs.frames,
+                            seconds(inputs.at),
+                        );
                     }
                 }
                 Ok(ToGame::ResetInputBuffer { id }) => {

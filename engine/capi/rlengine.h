@@ -22,9 +22,9 @@ typedef struct RLControls {
 
 enum { RL_EVENT_GOAL = 0, RL_EVENT_BUMP = 1, RL_EVENT_DEMO = 2 };
 
-/* Loads the arena collision meshes (a directory with arena/*.cmf: the arena's 16 pieces, its 4 goal halves placed by
- * a body offset). Call once. Returns 0 on failure (another folder, an older mesh format, a truncated file), the reason
- * in rl_init_error(). */
+/* Loads the arena collision meshes (a directory with arena/ and its .cmf files: the arena's 16 pieces, its 4 goal
+ * halves placed by a body offset). Call once. Returns 0 on failure (another folder, an older mesh format, a truncated
+ * file), the reason in rl_init_error(). */
 int rl_init(const char* collision_mesh_dir);
 /* Why the last rl_init failed (empty after a success) */
 const char* rl_init_error(void);

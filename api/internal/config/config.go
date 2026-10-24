@@ -207,6 +207,10 @@ func parsePrefixes(list string) ([]netip.Prefix, error) {
 			if err != nil {
 				return nil, err
 			}
+			// (a zoned address (fe80::1%eth0) never matches a connection's, which carries none: refused, said, RV-974)
+			if addr.Zone() != "" {
+				return nil, fmt.Errorf("%s: an address with a zone (the connector's address alone, no %%zone)", item)
+			}
 			addr = addr.Unmap()
 			p = netip.PrefixFrom(addr, addr.BitLen())
 		} else {

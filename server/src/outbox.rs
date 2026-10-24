@@ -24,7 +24,7 @@ use crate::match_host::Report;
 const GIVE_UP_SECONDS: i64 = 24 * 60 * 60;
 
 /// Where the calls go and with what
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OutboxConfig {
     /// The service's origin (`https://carball.zolt.top`); none: calls logged only
     pub api_url: Option<String>,
@@ -41,6 +41,116 @@ pub struct OutboxConfig {
     pub max_wait: Duration,
     /// https alone (the service's; false: the tests' stand-in over plain http)
     pub https_only: bool,
+}
+
+impl std::fmt::Debug for OutboxConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // (never the token or the Access secret: the Access id alone, RV-976)
+        f.debug_struct("OutboxConfig")
+            .field("api_url", &self.api_url)
+            .field("access_id", &self.access.as_ref().map(|(id, _)| id))
+            .field("dir", &self.dir)
+            .field("server", &self.server)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The client for the accounts service: to its origin alone, no redirect followed, no proxy, https alone (the tests'
+/// stand-in over plain http when not `https_only`); named, not a bare client: AP3
+fn client(https_only: bool, timeout: Duration) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .https_only(https_only)
+        .user_agent(concat!("carball-server/", env!("CARGO_PKG_VERSION")))
+        .build()
+}
+
+/// A request with the game server's credentials: its bearer token, and the tunnel's Access service token if there's one
+fn authorized(
+    request: reqwest::RequestBuilder,
+    token: &str,
+    access: Option<&(String, String)>,
+) -> reqwest::RequestBuilder {
+    let request = request.header("Authorization", format!("Bearer {token}"));
+    match access {
+        Some((id, secret)) => request.header("CF-Access-Client-Id", id).header("CF-Access-Client-Secret", secret),
+        None => request,
+    }
+}
+
+/// How long the accounts service has to answer a rejoin's question: past it, the rejoin is refused (RV-1008)
+pub const REJOIN_ASK_WAIT: Duration = Duration::from_secs(2);
+
+/// What the accounts service says of a rejoin (RV-1008)
+#[derive(Debug, PartialEq, Eq)]
+pub enum RejoinAnswer {
+    /// The account's latest match is still this one, at this server
+    Allowed,
+    /// It searched or was matched since (or the match is another server's): its rejoin would put it in two matches
+    Gone,
+    /// No answer to go by (the service down, slow past `REJOIN_ASK_WAIT`, or an answer not its own): why
+    Unconfirmed(String),
+}
+
+/// The accounts service asked at once, beside the outbox (its origin, credentials and client rules): a rejoin's question
+/// before the player is let back in (RV-1008)
+pub struct Api {
+    client: reqwest::Client,
+    url: String,
+    token: String,
+    access: Option<(String, String)>,
+}
+
+impl std::fmt::Debug for Api {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Api").field("url", &self.url).finish_non_exhaustive()
+    }
+}
+
+impl Api {
+    /// The outbox's service; none without `API_URL` (a development server's: no one to ask)
+    pub fn new(config: &OutboxConfig) -> anyhow::Result<Option<Self>> {
+        let Some(url) = &config.api_url else { return Ok(None) };
+        Ok(Some(Self {
+            client: client(config.https_only, REJOIN_ASK_WAIT)?,
+            url: url.clone(),
+            token: config.token.clone(),
+            access: config.access.clone(),
+        }))
+    }
+
+    /// Whether the rejoin of match `match_id` with `ticket` (its rejoin ticket, which the service checks as ours) at
+    /// `server` (this server's name) may go ahead: `POST /api/fleet/rejoin`, answered `{"rejoin": bool}`
+    pub async fn rejoin(&self, server: &str, match_id: u64, ticket: &str) -> RejoinAnswer {
+        let body = json!({ "match": format!("{match_id:016x}"), "server": server, "ticket": ticket });
+        let request =
+            authorized(self.client.post(format!("{}/api/fleet/rejoin", self.url)), &self.token, self.access.as_ref())
+                .header("Content-Type", "application/json")
+                .body(body.to_string());
+        let answer = async {
+            let response = request.send().await?;
+            let status = response.status().as_u16();
+            Ok::<_, reqwest::Error>((status, response.text().await?))
+        };
+        let late = || RejoinAnswer::Unconfirmed(format!("no answer in {} s", REJOIN_ASK_WAIT.as_secs()));
+        match tokio::time::timeout(REJOIN_ASK_WAIT, answer).await {
+            // (the client's own timeout, the same wait, or this one: whichever ends first)
+            Err(_) => late(),
+            Ok(Err(e)) if e.is_timeout() => late(),
+            // (reqwest's error alone: never the request's headers)
+            Ok(Err(e)) => RejoinAnswer::Unconfirmed(e.without_url().to_string()),
+            Ok(Ok((200, text))) => {
+                match serde_json::from_str::<Value>(&text).ok().and_then(|v| v["rejoin"].as_bool()) {
+                    Some(true) => RejoinAnswer::Allowed,
+                    Some(false) => RejoinAnswer::Gone,
+                    None => RejoinAnswer::Unconfirmed("200, not the service's answer".into()),
+                }
+            }
+            Ok(Ok((status, _))) => RejoinAnswer::Unconfirmed(format!("{status} from the accounts service")),
+        }
+    }
 }
 
 /// A call: its method, path, body (JSON) and when it was made (Unix s)
@@ -266,12 +376,8 @@ fn parse(text: &str) -> Option<Call> {
 /// One call sent
 async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: &Call) -> Sent {
     let method = if call.method == "DELETE" { reqwest::Method::DELETE } else { reqwest::Method::POST };
-    let mut request = client
-        .request(method, format!("{api}{}", call.path))
-        .header("Authorization", format!("Bearer {}", config.token));
-    if let Some((id, secret)) = &config.access {
-        request = request.header("CF-Access-Client-Id", id).header("CF-Access-Client-Secret", secret);
-    }
+    let mut request =
+        authorized(client.request(method, format!("{api}{}", call.path)), &config.token, config.access.as_ref());
     if let Some(body) = &call.body {
         request = request.header("Content-Type", "application/json").body(body.to_string());
     }
@@ -283,11 +389,16 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
             let result = sent(status, error.as_deref());
             match (status, &result) {
                 (_, Sent::Refused(_)) if error.is_some() => tracing::warn!(
-                    "outbox: {} {}: {status} {:?} from the accounts service: refused for good, dropped (its ticket isn't \
-                     accepted for this match)",
+                    "outbox: {} {}: {status} {:?} from the accounts service: refused for good, dropped{}",
                     call.method,
                     call.path,
-                    error.as_deref().unwrap_or("")
+                    error.as_deref().unwrap_or(""),
+                    // (the calls with a player's ticket: a result's, a quitter's, a refill's; never an event's, RV-975)
+                    if call.path.starts_with("/api/fleet/") {
+                        ""
+                    } else {
+                        " (its ticket isn't accepted for this match)"
+                    }
                 ),
                 (429 | 500..=599, _) => tracing::warn!("outbox: {} {}: {status}, later", call.method, call.path),
                 (300..=399 | 401 | 403 | 404 | 405, _) => tracing::warn!(
@@ -310,14 +421,7 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
 /// The outbox: the reports from the game thread, each made a call and kept, sent in order (retried as said above) until
 /// the channel closes
 pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
-    // (to API_URL alone: no redirect followed, no proxy, https alone; named, not a bare client: AP3)
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .https_only(config.https_only)
-        .user_agent(concat!("carball-server/", env!("CARGO_PKG_VERSION")))
-        .build();
+    let client = client(config.https_only, Duration::from_secs(10));
     let mut queue = Queue::load(config.dir.clone());
     let client = match client {
         Ok(c) => c,
@@ -390,6 +494,8 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
             Sent::Refused(status) => {
                 tracing::warn!("outbox: {} {} refused ({status}): dropped", call.method, call.path);
                 queue.pop();
+                // (the next call's failures waited for afresh, RV-975)
+                wait = config.first_wait;
                 retry_at = None;
             }
             Sent::Later => {
@@ -826,5 +932,77 @@ mod tests {
         drop(tx);
         ended(task).await;
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// RV-1006's RN9: the development log's line itself (no API_URL) leaves a call's tickets out, not the helper alone
+    #[tokio::test]
+    async fn the_logged_only_lines_leave_their_tickets_out() {
+        #[derive(Clone, Default)]
+        struct Lines(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        let _logging = tracing::subscriber::set_default(subscriber);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(config(None, None), rx));
+        tx.send(Report::Quitter { match_id: "00000000000000a1".into(), ticket: "secret.ticket.text".into() }).unwrap();
+        drop(tx);
+        ended(task).await;
+        let text = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("/api/quitters") && text.contains("(ticket)"), "{text}");
+        assert!(!text.contains("secret.ticket.text"), "{text}");
+    }
+
+    /// RV-1008: a rejoin's question, POST /api/fleet/rejoin with the credentials, the match, this server and the ticket;
+    /// told true, let in; false, gone; an error, an answer not the service's, or none in 2 s, unconfirmed. The config's
+    /// Debug shows neither secret (RV-976)
+    #[tokio::test]
+    async fn a_rejoins_question_and_its_answers() {
+        use wiremock::matchers::{body_json, header, method, path};
+        let service = wiremock::MockServer::start().await;
+        let answer = |status: u16, body: &str, delay: u64| {
+            wiremock::ResponseTemplate::new(status).set_body_string(body).set_delay(Duration::from_millis(delay))
+        };
+        let api = Api::new(&config(Some(service.uri()), None)).unwrap().expect("API_URL given");
+        for (reply, want) in [
+            (answer(200, r#"{"rejoin":true}"#, 0), RejoinAnswer::Allowed),
+            (answer(200, r#"{"rejoin":false}"#, 0), RejoinAnswer::Gone),
+            (
+                answer(200, "<html>a challenge</html>", 0),
+                RejoinAnswer::Unconfirmed("200, not the service's answer".into()),
+            ),
+            (answer(503, "", 0), RejoinAnswer::Unconfirmed("503 from the accounts service".into())),
+            (answer(200, r#"{"rejoin":true}"#, 2500), RejoinAnswer::Unconfirmed("no answer in 2 s".into())),
+        ] {
+            service.reset().await;
+            wiremock::Mock::given(method("POST"))
+                .and(path("/api/fleet/rejoin"))
+                .and(header("authorization", "Bearer secret-token"))
+                .and(header("cf-access-client-id", "access-id"))
+                .and(header("cf-access-client-secret", "access-secret"))
+                .and(body_json(json!({"match": "00000000000000a1", "server": "game.example:4433", "ticket": "t.i.k"})))
+                .respond_with(reply)
+                .mount(&service)
+                .await;
+            assert_eq!(api.rejoin("game.example:4433", 0xa1, "t.i.k").await, want);
+        }
+        service.reset().await;
+        drop(service);
+        assert!(
+            matches!(api.rejoin("game.example:4433", 0xa1, "t.i.k").await, RejoinAnswer::Unconfirmed(_)),
+            "service down"
+        );
+        assert!(Api::new(&config(None, None)).unwrap().is_none(), "no API_URL, no one to ask");
+        let shown = format!("{:?} {api:?}", config(Some("https://x".into()), None));
+        assert!(!shown.contains("secret-token") && !shown.contains("access-secret"), "{shown}");
     }
 }

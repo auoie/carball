@@ -635,6 +635,23 @@ func (m *Matchmaker) Quitter(account string, until, now time.Time) {
 func (m *Matchmaker) RejoinAllowed(account string, id uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.rejoinable(account, id)
+}
+
+// RejoinCheck is a game server's question at the rejoin itself, its ticket checked (RV-1008): RejoinAllowed still (a
+// ticket from before a search or a later match of the account's would put it in two matches, across servers too), and
+// a match this matchmaker knows only at its own server
+func (m *Matchmaker) RejoinCheck(account string, id uint64, server string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mt := m.matches[id]; mt != nil && mt.server != server {
+		return false
+	}
+	return m.rejoinable(account, id)
+}
+
+// rejoinable: RejoinAllowed's rule, under the lock
+func (m *Matchmaker) rejoinable(account string, id uint64) bool {
 	latest, ok := m.latest[account]
 	return m.open[account] == nil && (!ok || (latest != 0 && latest == id))
 }

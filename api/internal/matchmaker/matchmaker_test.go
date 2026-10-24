@@ -892,3 +892,59 @@ func TestUnpolledSearchNotMatched(t *testing.T) {
 		t.Error("the polled searches not matched together")
 	}
 }
+
+// RV-1008: a game server's question at the rejoin itself: the account's latest match still the one, at its own server.
+// A search since, or a match since at another server (RX52's S5: a leaver of a 2v2 at one server matched and playing at
+// another, then rejoining the first), refuses it; an account the matchmaker doesn't know (a restart since) is let back
+func TestRejoinCheckAtTheRejoin(t *testing.T) {
+	h := newHarness()
+	h.search(t, player("j", 1500), []byte{1}, near)
+	h.search(t, player("k", 1500), []byte{1}, near)
+	h.at(time.Second)
+	first := h.found(t, "j")
+	h.m.Started("eu:4433", first.ID, h.now)
+	seat := slices.IndexFunc(h.m.matches[first.ID].accounts, func(a string) bool { return a == "j" })
+	h.m.Left("eu:4433", first.ID, seat)
+	if !h.m.RejoinCheck("j", first.ID, "eu:4433") {
+		t.Fatal("an ordinary rejoin refused")
+	}
+	if h.m.RejoinCheck("j", first.ID, "us:4433") {
+		t.Error("a rejoin asked by another server than the match's")
+	}
+	far := map[string]int{"us:4433": 30}
+	h.search(t, player("j", 1500), []byte{1}, far)
+	if h.m.RejoinCheck("j", first.ID, "eu:4433") {
+		t.Error("a rejoin while its account searches")
+	}
+	h.search(t, player("l", 1500), []byte{1}, far)
+	h.at(2 * time.Second)
+	second := h.found(t, "j")
+	if second == nil || second.Server != "us:4433" {
+		t.Fatalf("j not matched at the other server: %+v", second)
+	}
+	if h.m.RejoinCheck("j", first.ID, "eu:4433") {
+		t.Error("a rejoin of the first match while the account is matched at another server")
+	}
+	if !h.m.RejoinCheck("stranger", 7, "eu:4433") {
+		t.Error("an account the matchmaker doesn't know refused")
+	}
+}
+
+// RV-1009: a name with a line break (or Unicode's line separator) stays on its own line in the log: slog's text values
+// quoted, so it can't forge a line of its own
+func TestANamesLineBreaksStayOnItsLine(t *testing.T) {
+	h := newHarness()
+	var logs bytes.Buffer
+	h.m.log = slog.New(slog.NewTextHandler(&logs, nil))
+	forged := player("b1", 1500)
+	forged.Name = "x\r\ntime=2026-10-24 level=INFO msg=\"a quitter reported\"\u2028y"
+	h.search(t, forged, []byte{1}, near)
+	h.search(t, player("b2", 1500), []byte{1}, near)
+	h.at(time.Second)
+	if !strings.Contains(logs.String(), `msg="a match found"`) {
+		t.Fatalf("no match's line:\n%s", logs.String())
+	}
+	if lines := strings.Count(strings.TrimRight(logs.String(), "\n"), "\n") + 1; lines != 1 || strings.ContainsRune(logs.String(), '\u2028') {
+		t.Errorf("the match's line broken in %d:\n%s", lines, logs.String())
+	}
+}

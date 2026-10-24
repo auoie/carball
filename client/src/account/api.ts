@@ -145,7 +145,14 @@ export class AccountsApi {
 }
 
 function account(body: unknown): Account {
-  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown; ratings?: unknown; queueBanUntil?: unknown; searchCooldownSeconds?: unknown };
+  const b = (body ?? {}) as {
+    id?: unknown;
+    name?: unknown;
+    providers?: unknown;
+    ratings?: unknown;
+    queueBanSeconds?: unknown;
+    searchCooldownSeconds?: unknown;
+  };
   if (typeof b.id !== "string" || typeof b.name !== "string" || !Array.isArray(b.providers)) throw new AccountError("server");
   const ratings: ShownRating[] = [];
   for (const r of Array.isArray(b.ratings) ? (b.ratings as unknown[]) : []) {
@@ -154,20 +161,17 @@ function account(body: unknown): Account {
       ratings.push({ playlist: x.playlist, rating: x.rating, provisional: x.provisional === true, games: typeof x.games === "number" ? x.games : 0 });
     }
   }
-  const time = (value: unknown): number | null => {
-    const at = typeof value === "string" ? Date.parse(value) : NaN;
-    return Number.isFinite(at) ? at : null;
-  };
+  // (a ban's or a cooldown's seconds left, its end on this page's clock: the service's clock never compared with it,
+  // RV-983, RV-1001)
+  const end = (seconds: unknown): number | null =>
+    typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? Date.now() + seconds * 1000 : null;
   return {
     id: b.id,
     name: b.name,
     providers: PROVIDERS.filter((p) => (b.providers as unknown[]).includes(p)),
     ratings,
-    queueBanUntil: time(b.queueBanUntil),
-    searchCooldownUntil:
-      typeof b.searchCooldownSeconds === "number" && Number.isFinite(b.searchCooldownSeconds) && b.searchCooldownSeconds > 0
-        ? Date.now() + b.searchCooldownSeconds * 1000
-        : null,
+    queueBanUntil: end(b.queueBanSeconds),
+    searchCooldownUntil: end(b.searchCooldownSeconds),
   };
 }
 

@@ -278,9 +278,17 @@ impl Tickets {
         Ok(self)
     }
 
-    /// A ticket checked at `now` (Unix s): its signature by a key of ours (EdDSA alone), its claims, its time, its
-    /// one-time id not seen before (taken now, kept until it expires)
+    /// A ticket checked at `now` (Unix s): `verify`, then `spend`
     pub fn check(&self, encoded: &str, now: i64) -> Result<Ticket, Refusal> {
+        let ticket = self.verify(encoded, now)?;
+        self.spend(&ticket, now)?;
+        Ok(ticket)
+    }
+
+    /// A ticket verified at `now` (Unix s): its signature by a key of ours (EdDSA alone), its claims, its time, its
+    /// one-time id not seen before; not taken (`spend`, once its use is decided: a ticket shown for something else, or a
+    /// rejoin the matchmaker refuses, stays good, RV-973; a used one refused before anyone's asked, RV-1008)
+    pub fn verify(&self, encoded: &str, now: i64) -> Result<Ticket, Refusal> {
         if encoded.len() > MAX_BYTES {
             return Err(Refusal::Malformed);
         }
@@ -312,8 +320,18 @@ impl Tickets {
         if nonces.contains_key(&nonce) {
             return Err(Refusal::Reused);
         }
-        nonces.insert(nonce, ticket.expires);
         Ok(ticket)
+    }
+
+    /// Takes a verified ticket's one-time id at `now` (kept until it expires): Reused if it was taken since its `verify`
+    pub fn spend(&self, ticket: &Ticket, now: i64) -> Result<(), Refusal> {
+        let mut nonces = self.nonces.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        nonces.retain(|_, &mut until| until.saturating_add(SKEW) > now);
+        if nonces.contains_key(&ticket.nonce) {
+            return Err(Refusal::Reused);
+        }
+        nonces.insert(ticket.nonce, ticket.expires);
+        Ok(())
     }
 
     /// A development ticket for `account` named `name` with `ratings`, for `purpose`, at `now`, signed with the
@@ -628,6 +646,9 @@ mod tests {
             ("x5c", r#"{"alg":"EdDSA","kid":"test","typ":"JWT","x5c":["AAAA"]}"#, body.clone()),
             ("jku", r#"{"alg":"EdDSA","kid":"test","typ":"JWT","jku":"https://x.example"}"#, body.clone()),
             ("no typ", r#"{"alg":"EdDSA","kid":"test"}"#, body.clone()),
+            // (its value read too, not its presence alone: RV-1006's RN6)
+            ("typ JOSE", r#"{"alg":"EdDSA","kid":"test","typ":"JOSE"}"#, body.clone()),
+            ("typ jwt", r#"{"alg":"EdDSA","kid":"test","typ":"jwt"}"#, body.clone()),
             ("kid twice", r#"{"alg":"EdDSA","kid":"test","kid":"test","typ":"JWT"}"#, body.clone()),
             ("an unknown claim", head, swap(r#""iss""#, r#""admin":true,"iss""#)),
             ("a claim twice", head, swap(r#""iss":"carball""#, r#""iss":"carball","iss":"carball""#)),

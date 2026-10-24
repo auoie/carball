@@ -354,7 +354,7 @@ func TestQuitterEndsSearch(t *testing.T) {
 		t.Fatalf("the report: %d", resp.StatusCode)
 	}
 	_, st := e.poll(b, id, 1)
-	if st["state"] != "ended" || st["reason"] != "queue-banned" || st["until"] == nil {
+	if st["state"] != "ended" || st["reason"] != "queue-banned" || st["seconds"] != float64(300) {
 		t.Errorf("the quitter's search: %v", st)
 	}
 	if resp := e.searchAs(b, []int{3}, map[string]int{euServer: 30}); resp.StatusCode != http.StatusForbidden || decode(t, resp)["error"] != "queue-banned" {
@@ -540,5 +540,63 @@ func TestCancelDoesNotRotateTheSession(t *testing.T) {
 	}
 	if e.meStatus(b) != http.StatusOK || sessionToken(b, u) == first {
 		t.Error("the next ordinary call didn't rotate it")
+	}
+}
+
+// RV-1008: a game server's rejoin question (POST /api/fleet/rejoin, its token): the rejoin's ticket checked as ours, then
+// true while the account's latest match is still that one at that server; false asked by another server, or once the
+// account searched since (its ticket from before would put it in two matches); a seat's ticket, or no token, refused
+func TestFleetRejoinQuestion(t *testing.T) {
+	e := setup(t, nil)
+	b1, _, _ := e.player("sub-r1")
+	b2, _, _ := e.player("sub-r2")
+	pings := map[string]int{euServer: 30}
+	s1 := decode(t, e.searchAs(b1, []int{1}, pings))["search"].(string)
+	s2 := decode(t, e.searchAs(b2, []int{1}, pings))["search"].(string)
+	e.s.Matchmaker.Tick(e.clock.Now())
+	_, f1 := e.poll(b1, s1, 1)
+	e.poll(b2, s2, 1)
+	m1, _ := f1["match"].(map[string]any)
+	if m1 == nil {
+		t.Fatalf("not matched: %v", f1)
+	}
+	match := m1["id"].(string)
+	event := func(body map[string]any) {
+		body["server"] = euServer
+		if code := e.gameCall(http.MethodPost, "/api/fleet/events", gameToken, body).StatusCode; code != http.StatusNoContent {
+			t.Fatalf("%v: %d", body, code)
+		}
+	}
+	event(map[string]any{"event": "started", "match": match})
+	event(map[string]any{"event": "left", "match": match, "seat": int(seatOf(t, e, m1))})
+	resp := e.write(b1, http.MethodPost, "/api/ticket?rejoin="+match, nil)
+	rejoin, _ := decode(t, resp)["ticket"].(string)
+	if resp.StatusCode != http.StatusOK || rejoin == "" {
+		t.Fatalf("the leaver's rejoin ticket: %d", resp.StatusCode)
+	}
+	ask := func(server, tk, token string) (int, any) {
+		resp := e.gameCall(http.MethodPost, "/api/fleet/rejoin", token, map[string]string{"match": match, "server": server, "ticket": tk})
+		if resp.StatusCode != http.StatusOK {
+			return resp.StatusCode, nil
+		}
+		return resp.StatusCode, decode(t, resp)["rejoin"]
+	}
+	if code, ok := ask(euServer, rejoin, gameToken); code != http.StatusOK || ok != true {
+		t.Errorf("an ordinary rejoin: %d %v", code, ok)
+	}
+	if code, ok := ask("game-us.example:4433", rejoin, gameToken); code != http.StatusOK || ok != false {
+		t.Errorf("asked by another server: %d %v", code, ok)
+	}
+	if code, _ := ask(euServer, rejoin, ""); code != http.StatusUnauthorized {
+		t.Errorf("no token: %d", code)
+	}
+	if code, _ := ask(euServer, m1["ticket"].(string), gameToken); code != http.StatusForbidden {
+		t.Errorf("a seat's ticket: %d", code)
+	}
+	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the leaver's search: %d", resp.StatusCode)
+	}
+	if code, ok := ask(euServer, rejoin, gameToken); code != http.StatusOK || ok != false {
+		t.Errorf("a rejoin after the account's search: %d %v", code, ok)
 	}
 }

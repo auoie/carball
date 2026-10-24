@@ -116,7 +116,6 @@ func helpWord(arg string) bool {
 	return arg == "help" || arg == "-h" || arg == "-help" || arg == "--help"
 }
 
-// run runs the command the arguments name (serve when the first is a flag or none); its exit status
 // loadTicketKeys: the signer of the key `keyID` (its seed, base64) and the keys tickets are checked with: its own and
 // the previous ones (TICKET_PREVIOUS_KEYS, by the game server's rules: ticket.ParsePublic), none of them its id (a
 // previous key silently taking the signer's place would refuse its every ticket: RV-948)
@@ -136,6 +135,7 @@ func loadTicketKeys(keyID, seed, previous string) (*ticket.Signer, map[string]ed
 	return signer, keys, nil
 }
 
+// run runs the command the arguments name (serve when the first is a flag or none); its exit status
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && helpWord(args[0]) {
 		usage(stdout)

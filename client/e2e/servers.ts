@@ -15,8 +15,10 @@ const GAME = [
   ...(GAME_BIN === undefined ? ["run", "--quiet", "--manifest-path", "../server/Cargo.toml", "--"] : ["--meshes", MESHES]),
   "--max-per-address",
   "1000",
-  "--max-per-address-per-minute",
-  "100000",
+  "--claims-per-address",
+  "100000/100000",
+  "--pings-per-address",
+  "100000/100000",
 ];
 /** A development matchmaker (`carball-api matchmaker --dev`: notes/matchmaking.md, the central matchmaker) on `port`,
  *  built from the API's module offline */

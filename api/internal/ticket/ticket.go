@@ -345,6 +345,47 @@ func object(raw []byte) (map[string]json.RawMessage, error) {
 	return out, nil
 }
 
+// wellFormed: a JSON string's bytes as RFC 8259 and the game server (Rust's serde_json) take them: valid UTF-8, and no
+// unpaired surrogate escape; Go's decoder would read either as U+FFFD, a ticket one side takes and the other refuses
+// (RV-1005). U+FFFD itself, a name may have it, is taken
+func wellFormed(raw []byte) bool {
+	if !utf8.Valid(raw) {
+		return false
+	}
+	s := string(raw)
+	quad := func(at int) (uint64, bool) {
+		if at+4 > len(s) {
+			return 0, false
+		}
+		n, err := strconv.ParseUint(s[at:at+4], 16, 16)
+		return n, err == nil
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(s) || s[i] != 'u' {
+			continue
+		}
+		r, ok := quad(i + 1)
+		i += 4
+		switch {
+		case !ok:
+			return false
+		case r >= 0xD800 && r < 0xDC00: // (a high surrogate: its low one next)
+			lo, ok := quad(i + 3)
+			if !ok || i+2 >= len(s) || s[i+1] != '\\' || s[i+2] != 'u' || lo < 0xDC00 || lo >= 0xE000 {
+				return false
+			}
+			i += 6
+		case r >= 0xDC00 && r < 0xE000:
+			return false
+		}
+	}
+	return true
+}
+
 // read is a verified ticket's claims (its payload) as a Ticket, each in its form, strictly (RV-954): only the claims a
 // ticket has, each once; iat and exp whole seconds; sub 32 hex digits; jti 16 bytes of canonical base64url; aud a
 // string; the ratings three pairs; a rejoin's with its match and no seat, a seat's with its server, playlist, seat and
@@ -367,7 +408,7 @@ func read(keyID string, payload []byte) (Ticket, error) {
 	str := func(name string) (string, bool) {
 		var v string
 		raw, ok := members[name]
-		return v, ok && json.Unmarshal(raw, &v) == nil
+		return v, ok && wellFormed(raw) && json.Unmarshal(raw, &v) == nil
 	}
 	seconds := func(name string) (time.Time, bool) {
 		n, err := strconv.ParseInt(string(members[name]), 10, 64)
@@ -393,10 +434,11 @@ func read(keyID string, payload []byte) (Ticket, error) {
 	playlist, okPlaylist := small("playlist")
 	seat, okSeat := small("seat")
 	roster, okRoster := small("roster")
-	var ratings [][]uint16
+	// (a null in a pair refused, not read as 0: RV-1005)
+	var ratings [][]*uint16
 	okRatings := json.Unmarshal(members["ratings"], &ratings) == nil && len(ratings) == 3
 	for _, r := range ratings {
-		okRatings = okRatings && len(r) == 2
+		okRatings = okRatings && len(r) == 2 && r[0] != nil && r[1] != nil
 	}
 	for _, ok := range []bool{okIss, okSub, okJti, okName, okPurpose, okMatch, okIssued, okExpires, okPlaylist, okSeat, okRoster, okRatings} {
 		if !ok {
@@ -415,7 +457,7 @@ func read(keyID string, payload []byte) (Ticket, error) {
 	copy(t.Account[:], account)
 	copy(t.Nonce[:], nonce)
 	for i, r := range ratings {
-		t.Ratings[i] = Shown{Rating: r[0], Deviation: r[1]}
+		t.Ratings[i] = Shown{Rating: *r[0], Deviation: *r[1]}
 	}
 	if t.Match, err = strconv.ParseUint(match, 16, 64); err != nil {
 		return Ticket{}, bad

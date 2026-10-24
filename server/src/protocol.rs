@@ -16,8 +16,9 @@ use crate::engine::Controls;
 // rejoining a ranked match (Hello's INTENT_REJOIN, Welcome's match id, Refused's REFUSED_IN_MATCH and REFUSED_CONCLUDED);
 // 28: the accounts service's central matchmaker (notes/matchmaking.md): a claim's match ticket (Hello's ticket up to 512
 // bytes), no search, decline, MatchFound or SearchCooldown here (pages from before told to reload: REFUSED_VERSION);
-// 29: the tickets as JWTs (notes/accounts.md §3: Hello's ticket up to 1024 bytes)
-pub const VERSION: u16 = 29;
+// 29: the tickets as JWTs (notes/accounts.md §3: Hello's ticket up to 1024 bytes); 30: a rejoin confirmed with the
+// matchmaker (Refused's REFUSED_REJOIN_GONE and REFUSED_UNCONFIRMED, RV-1008)
+pub const VERSION: u16 = 30;
 /// The maps a match can be on (the client's THEMES: protocol/README.md): one, Night (the user's decision of 2026-10-17); a
 /// map on the wire is its index
 pub const MAP_COUNT: u8 = 1;
@@ -56,6 +57,12 @@ pub const REFUSED_IN_MATCH: u8 = 5;
 pub const REFUSED_CONCLUDED: u8 = 6;
 /// A search from an account the server reported as a quitter in the last few minutes (its queue ban, AP3)
 pub const REFUSED_QUEUE_BANNED: u8 = 7;
+/// `Refused`'s reason: a rejoin the matchmaker refuses: the account searched or was matched since its ticket (its latest
+/// match another), so its rejoin would put it in two matches (RV-1008)
+pub const REFUSED_REJOIN_GONE: u8 = 8;
+/// `Refused`'s reason: a rejoin the matchmaker couldn't be asked about (down, or slow past 2 s): refused, not let in
+/// unconfirmed; the page may try again (RV-1008)
+pub const REFUSED_UNCONFIRMED: u8 = 9;
 
 /// A refusal's reason in words (the log's)
 pub fn refused_text(reason: u8) -> &'static str {
@@ -67,6 +74,9 @@ pub fn refused_text(reason: u8) -> &'static str {
         REFUSED_TICKET => "its ticket",
         REFUSED_IN_MATCH => "the account plays in another match here, or its seat's session is live",
         REFUSED_CONCLUDED => "the match has concluded, or has no seat of the account's",
+        REFUSED_QUEUE_BANNED => "a queue ban",
+        REFUSED_REJOIN_GONE => "the matchmaker refuses the rejoin: the account searched or was matched since",
+        REFUSED_UNCONFIRMED => "the matchmaker couldn't confirm the rejoin",
         _ => "another reason",
     }
 }
@@ -1138,6 +1148,10 @@ impl Datagram {
                         bits: r.u8()?,
                     });
                 }
+                // (nothing after its frames, as a hello: RV-997)
+                if !r.0.is_empty() {
+                    return Err(DecodeError::Trailing);
+                }
                 Self::Inputs { timestamp, sequence, first_frame, frames }
             }
             0x81 => Self::Update(Update {
@@ -1196,6 +1210,13 @@ mod tests {
         let mut longer = bytes[2..].to_vec();
         longer.push(0);
         assert!(matches!(Control::decode(&longer), Err(DecodeError::Trailing)), "AP2-12");
+        // (an Inputs datagram's bytes after its frames refused too, RV-997)
+        let inputs =
+            Datagram::Inputs { timestamp: 1, sequence: 2, first_frame: 3, frames: vec![InputFrame::default()] };
+        let mut longer = inputs.encode();
+        assert_eq!(Datagram::decode(&longer).unwrap(), inputs);
+        longer.push(0);
+        assert!(matches!(Datagram::decode(&longer), Err(DecodeError::Trailing)), "RV-997");
         // (a Pong from a server from before its name, added within version 28: read as none; a name too long refused)
         assert_eq!(Control::decode(&[0x93]).unwrap(), Control::Pong { server: String::new() });
         assert!(Control::decode(&[0x93, 65]).is_err());

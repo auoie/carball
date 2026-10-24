@@ -9,6 +9,11 @@ import { REFUSED_IN_MATCH, REFUSED_QUEUE_BANNED, isTicketText } from "./protocol
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { queueBanText } from "./tickets";
 
+/** A ban's end from its seconds left, on this page's clock (the service's never compared with it, RV-1001); now if none */
+function endIn(seconds: unknown): number {
+  return Date.now() + (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0);
+}
+
 /** Where the matchmaker is: this page's origin (the deployment's), or a development matchmaker with the player it names */
 export interface MatchmakerEndpoint {
   readonly base: string;
@@ -199,8 +204,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
         this.handlers.failed("sign in to play online");
       });
     } else if (error === "queue-banned") {
-      const until = typeof answer.body?.["until"] === "string" ? Date.parse(answer.body["until"]) : NaN;
-      this.#banned(Number.isFinite(until) ? until : Date.now());
+      this.#banned(endIn(answer.body?.["seconds"]));
     } else if (error === "in-match") {
       this.#end(() => {
         this.handlers.refused?.(REFUSED_IN_MATCH);
@@ -303,8 +307,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
         this.handlers.replaced();
       });
     else if (reason === "queue-banned") {
-      const until = typeof body["until"] === "string" ? Date.parse(body["until"]) : NaN;
-      this.#banned(Number.isFinite(until) ? until : Date.now());
+      this.#banned(endIn(body["seconds"]));
     } else if (reason === "cooldown") {
       const seconds = typeof body["seconds"] === "number" ? body["seconds"] : 120;
       this.#end(() => {

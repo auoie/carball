@@ -152,7 +152,7 @@ WORKDIR /src/client
 RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts
 
 # The checks (scripts/build_images.sh builds this first): the engine native = WebAssembly (above); the Rust notices as
-# committed (above); the names guard (no game's,
+# committed, as they ship (the build's copies, RV-1019); the names guard (no game's,
 # maker's or mode names, RV-384/423) over each image's files and its stage of this file (what ships of it: its
 # instructions, in the image's history; the build stages never ship), and no build paths in either binary (the home,
 # registry, target and prebuilt libraries' directories here, unremapped: RV-380, RV-414; the remapped /src and /cargo
@@ -165,7 +165,7 @@ COPY out/arena/collision_meshes/ /game/collision_meshes/
 COPY --from=api-build /out/carball-api /api/carball-api
 COPY Dockerfile /tmp/Dockerfile
 RUN for f in THIRD_PARTY_NOTICES-rust.txt THIRD_PARTY_NOTICES-rust-std.html; do \
-         cmp -s "/tmp/rust-notices/$f" "public/$f" || { echo "client/public/$f isn't this build's: scripts/gen_notices.sh"; exit 1; }; \
+         cmp -s "/tmp/rust-notices/$f" "dist/$f" || { echo "client/public/$f isn't this build's: scripts/gen_notices.sh"; exit 1; }; \
        done \
     && awk '/^FROM .* AS game$/ { p = 1 } /^FROM .* AS api$/ { p = 0 } p' /tmp/Dockerfile > /game/Dockerfile \
     && awk '/^FROM .* AS api$/ { p = 1 } p' /tmp/Dockerfile > /api/Dockerfile \

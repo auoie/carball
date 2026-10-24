@@ -17,8 +17,8 @@
 // "rejoin" intent, Welcome's match id, Refused's reasons 5 and 6); 28: the accounts service's central matchmaker
 // (notes/matchmaking.md): a claim's match ticket (Hello's ticket up to 512 bytes), no search, decline, MatchFound or
 // SearchCooldown on the game servers (a page from before told to reload); 29: the tickets as JWTs (notes/accounts.md §3:
-// Hello's ticket up to 1024 bytes)
-export const PROTOCOL_VERSION = 29;
+// Hello's ticket up to 1024 bytes); 30: a rejoin confirmed with the matchmaker (Refused's reasons 8 and 9, RV-1008)
+export const PROTOCOL_VERSION = 30;
 /** A Hello's ticket's bytes at most (the accounts service's JWT) */
 export const MAX_TICKET_BYTES = 1024;
 
@@ -258,6 +258,10 @@ export const REFUSED_IN_MATCH = 5;
 export const REFUSED_CONCLUDED = 6;
 /** Refused's reason: a search from an account the server reported as a quitter in the last few minutes (its queue ban) */
 export const REFUSED_QUEUE_BANNED = 7;
+/** Refused's reason: a rejoin the matchmaker refuses: the account searched or was matched since its ticket (RV-1008) */
+export const REFUSED_REJOIN_GONE = 8;
+/** Refused's reason: a rejoin the matchmaker couldn't be asked about (down, or slow): refused, may be tried again */
+export const REFUSED_UNCONFIRMED = 9;
 /** Kicked's reasons: idle past 30 s of play (MM-37); the match was cancelled before it started (MM-18) */
 export const KICK_IDLE = 0;
 export const KICK_NOT_ALL_JOINED = 1;
