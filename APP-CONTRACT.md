@@ -404,10 +404,10 @@ window.
 | Renames | account | 5 a day |
 | Rejoin tickets | account | 60 in 10 minutes |
 | Searches started | account | 30 in 10 minutes |
-| The game servers' calls (results, quitters, refills, events) | each server, by the name it sends (`X-Carball-Server`; one without: all such together) / every server | 300 a minute / 2,400 a minute (a name is the server's word, not an identity: RV-1024) |
+| The game servers' calls (results, quitters, refills, events) | each server, by the name it sends (`X-Carball-Server`; one without: all such together) / every server | 300 a minute / 2,400 a minute (a name is the server's word, not an identity: RV-1024); a call the fleet's ceiling refuses isn't charged to its server (RV-1077). The ceiling is about 8 servers at their full 300, about 20 at a server's usual ~110: raise `GameServerFleet` (`api/internal/server`) as the fleet grows |
 | Rejoin questions (`POST /api/fleet/rejoin`) | account / everyone | 20 in 10 minutes / 600 a minute (never the calls' above) |
 | Request lines in the log | address / everyone | 600 / 6,000 a minute, the rest counted (the minute's line names 100 addresses at most, the rest summed: RV-1027) |
-| A rejoin let through (`/api/fleet/rejoin` yes) | account | its searches held 10 s, or till its server says it's back (RV-1026) |
+| A rejoin let through (`/api/fleet/rejoin` yes) | account | its searches held 10 s, or till its server says it's back, or its match ends (RV-1026); none held for a match the matchmaker no longer has (ended: its server refuses that rejoin, RV-1075) |
 | A request's body | request | 16 KiB |
 | A search's poll | poll | 25 s; a search no page polls goes 45 s on, unmatched 3 s on |
 | No-show cooldown | account | 2 minutes |

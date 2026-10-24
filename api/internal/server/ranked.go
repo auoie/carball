@@ -62,9 +62,19 @@ func (s *Server) gameServerCall(next http.HandlerFunc, budgeted bool) http.Handl
 		if !serverName.MatchString(key) {
 			key = "game-server"
 		}
-		if budgeted && (!s.gameServerCalls.Allow(key, s.Now()) || !s.gameServerFleet.Allow("fleet", s.Now())) {
-			writeError(w, http.StatusTooManyRequests, "busy")
-			return
+		// (its own budget first, so a server over it never spends the fleet's; refused by the fleet's ceiling, its own
+		// token given back, so it isn't refused longer than the fleet once the ceiling refills: RV-1077)
+		if budgeted {
+			now := s.Now()
+			own, giveBack := s.gameServerCalls.Reserve(key, now)
+			if own && !s.gameServerFleet.Allow("fleet", now) {
+				giveBack()
+				own = false
+			}
+			if !own {
+				writeError(w, http.StatusTooManyRequests, "busy")
+				return
+			}
 		}
 		if r.ContentLength > maxBody {
 			writeError(w, http.StatusRequestEntityTooLarge, "too-large")

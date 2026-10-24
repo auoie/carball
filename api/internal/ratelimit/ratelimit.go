@@ -52,13 +52,29 @@ func NewSized(burst int, window time.Duration, size int) *Limiter {
 // Allow takes one request for key at now. A new key past the limit's size makes room by forgetting the longest idle (its
 // bucket the fullest anyway): a flood of new keys costs the flooder, never everyone else (AP-2)
 func (l *Limiter) Allow(key string, now time.Time) bool {
+	return l.of(key, now).AllowN(now, 1)
+}
+
+// Reserve is Allow that can be undone: whether the request is allowed (taken if so), and what gives its token back (a
+// request a later check refused, so it isn't charged here: RV-1077)
+func (l *Limiter) Reserve(key string, now time.Time) (bool, func()) {
+	r := l.of(key, now).ReserveN(now, 1)
+	if !r.OK() || r.DelayFrom(now) > 0 {
+		r.CancelAt(now)
+		return false, func() {}
+	}
+	return true, func() { r.CancelAt(now) }
+}
+
+// of is key's bucket, seen at now (Allow's rule for a new key past the size)
+func (l *Limiter) of(key string, now time.Time) *rate.Limiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if el := l.keys[key]; el != nil {
 		e, _ := el.Value.(*entry)
 		e.seen = now
 		l.recent.MoveToFront(el)
-		return e.limiter.AllowN(now, 1)
+		return e.limiter
 	}
 	if l.recent.Len() >= l.max {
 		if oldest := l.recent.Back(); oldest != nil {
@@ -68,7 +84,7 @@ func (l *Limiter) Allow(key string, now time.Time) bool {
 	}
 	e := &entry{key: key, limiter: rate.NewLimiter(l.limit, l.burst), seen: now}
 	l.keys[key] = l.recent.PushFront(e)
-	return e.limiter.AllowN(now, 1)
+	return e.limiter
 }
 
 // Sweep forgets the keys idle for a whole window by now (their buckets full again: forgetting them changes nothing)

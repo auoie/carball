@@ -33,6 +33,31 @@ func TestAllow(t *testing.T) {
 	}
 }
 
+// RV-1077: a reserved request given back is as if never made; a refused one takes nothing
+func TestReserveAndGiveBack(t *testing.T) {
+	l := New(2, time.Minute)
+	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	ok, giveBack := l.Reserve("a", at)
+	if !ok {
+		t.Fatal("the first request refused")
+	}
+	giveBack()
+	for i := range 2 {
+		if ok, _ := l.Reserve("a", at); !ok {
+			t.Fatalf("request %d refused: the given-back token not restored", i+1)
+		}
+	}
+	ok, giveBack = l.Reserve("a", at)
+	if ok {
+		t.Fatal("a 3rd request at once allowed")
+	}
+	giveBack() // (a refused one's: nothing to give back)
+	// (half the window: one token back, and the refused reservation took nothing from it)
+	if !l.Allow("a", at.Add(30*time.Second)) || l.Allow("a", at.Add(30*time.Second)) {
+		t.Fatal("the refill after a refused reservation isn't one per 30 s")
+	}
+}
+
 func TestEvictionAndSweep(t *testing.T) {
 	// (two keys at most: a third forgets the longest idle, never refused for room: AP-2)
 	l := NewSized(1, time.Minute, 2)

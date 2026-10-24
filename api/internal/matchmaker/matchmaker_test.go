@@ -961,6 +961,42 @@ func TestARejoinLetThroughHoldsSearchesTillItsBack(t *testing.T) {
 	h.search(t, player("j", 1500), []byte{1}, elsewhere)
 }
 
+// RV-1075: a yes for a match the matchmaker no longer has (it ended: its server refuses that rejoin as concluded) holds
+// no search; a hold for a match that ends before its Back goes with the match
+func TestARejoinHoldIsForAKnownMatchAndEndsWithIt(t *testing.T) {
+	left := func() (*harness, *Match) {
+		h := newHarness()
+		h.search(t, player("j", 1500), []byte{1}, near)
+		h.search(t, player("k", 1500), []byte{1}, near)
+		h.at(time.Second)
+		m := h.found(t, "j")
+		h.m.Started("eu:4433", m.ID, h.now)
+		h.m.Left("eu:4433", m.ID, slices.IndexFunc(h.m.matches[m.ID].accounts, func(a string) bool { return a == "j" }))
+		return h, m
+	}
+	elsewhere := map[string]int{"us:4433": 30}
+	h, ended := left()
+	h.m.Ended("eu:4433", ended.ID)
+	// (still its latest: let through, the ban's rule; its server says concluded)
+	if !h.m.RejoinCheck("j", ended.ID, "eu:4433") {
+		t.Fatal("a rejoin of its latest match refused")
+	}
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); err != nil {
+		t.Errorf("a search right after a yes for an ended match: %v, want none held", err)
+	}
+	h, m := left()
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433") {
+		t.Fatal("an ordinary rejoin refused")
+	}
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); !errors.Is(err, ErrInMatch) {
+		t.Fatalf("a search before its Back: %v, want ErrInMatch", err)
+	}
+	h.m.Ended("eu:4433", m.ID)
+	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); err != nil {
+		t.Errorf("a search once its match ended, no Back: %v, want the hold gone with it", err)
+	}
+}
+
 // RV-1009: a name with a line break (or Unicode's line separator) stays on its own line in the log: slog's text values
 // quoted, so it can't forge a line of its own
 func TestANamesLineBreaksStayOnItsLine(t *testing.T) {

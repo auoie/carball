@@ -533,6 +533,30 @@ func TestGameServerCallsUnderAFleetCeiling(t *testing.T) {
 	}
 }
 
+// RV-1077: a call the fleet's ceiling refuses isn't charged to its server's own budget: once the fleet's refills, the
+// server's calls go through though it was refused meanwhile (its own budget here 3 an hour, the fleet's 2 a minute)
+func TestAFleetRefusalSpendsNoneOfTheServersOwnBudget(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.GameServer = server.Limit{Burst: 3, Window: time.Hour}
+	limits.GameServerFleet = server.Limit{Burst: 2, Window: time.Minute}
+	e := setup(t, &limits)
+	call := func() int {
+		body := map[string]any{"event": "started", "match": "00000000000000ab", "server": euServer}
+		return e.gameCallAs(euServer, http.MethodPost, "/api/fleet/events", gameToken, body).StatusCode
+	}
+	got := []int{}
+	for range 5 {
+		got = append(got, call())
+	}
+	if want := []int{204, 204, 429, 429, 429}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("five calls: %v, want the fleet's 2 then 429", got)
+	}
+	e.clock.Add(time.Minute)
+	if code := call(); code != http.StatusNoContent {
+		t.Errorf("the fleet refilled: %d, want its own third call through (none spent by the fleet's refusals)", code)
+	}
+}
+
 // RV-1020: rejoin questions on their own budgets: each account's (here 2), then everyone's; never the game servers'
 // outbox budget, which is each server's own (by its X-Carball-Server name: here 3), so neither a replayed rejoin
 // ticket nor one server's burst holds another server's results and events
