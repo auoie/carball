@@ -246,16 +246,19 @@ mod tests {
     fn this_threads_cpu_and_the_memory_are_read() {
         // (the test's thread is neither "game" nor "log": the rest's. It spins until that has grown 10 ms, 5 s at most:
         // the other tests share the cores, so a fixed spin's CPU time isn't known)
+        // (at least one spin: the other tests' threads, the rest's too, can pass 10 ms before it, RV-1087)
         let before = thread_cpu();
         let start = std::time::Instant::now();
-        let mut after = thread_cpu();
         let mut x = 0u64;
-        while after.network - before.network < 0.01 && start.elapsed() < Duration::from_secs(5) {
+        let after = loop {
             for _ in 0..100_000 {
                 x = x.wrapping_add(std::hint::black_box(1));
             }
-            after = thread_cpu();
-        }
+            let after = thread_cpu();
+            if after.network - before.network >= 0.01 || start.elapsed() >= Duration::from_secs(5) {
+                break after;
+            }
+        };
         assert!(x > 0);
         assert!(after.network - before.network >= 0.01, "{before:?} -> {after:?}");
         assert!(after.game >= before.game && after.log >= before.log, "{before:?} -> {after:?}");

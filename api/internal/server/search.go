@@ -259,7 +259,7 @@ func (s *Server) fleetEvent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "ticket")
 			return
 		}
-		s.Matchmaker.RejoinRefused(body.Server, accountID(t.Account), id)
+		s.Matchmaker.RejoinRefused(body.Server, accountID(t.Account), id, t.Nonce)
 		s.log(r).Info("a rejoin refused at its server: the account's searches free", "match", body.Match, "server", body.Server,
 			"account", accountID(t.Account), "name", t.Name)
 	case body.Event == "over" && matchOK:

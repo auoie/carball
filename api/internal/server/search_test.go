@@ -562,7 +562,20 @@ func TestARejoinRefusedAtItsServerFreesTheSearch(t *testing.T) {
 	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a search after a refused event: %d, want 403 (still held)", resp.StatusCode)
 	}
+	// (a second rejoin let through, its own ticket: the first one's refusal, coming after it, frees nothing, RV-1086)
+	resp = e.write(b1, http.MethodPost, "/api/ticket?rejoin="+match, nil)
+	second, _ := decode(t, resp)["ticket"].(string)
+	asked = e.gameCall(http.MethodPost, "/api/fleet/rejoin", gameToken, map[string]string{"match": match, "server": euServer, "ticket": second})
+	if allowed := decode(t, asked)["rejoin"]; second == "" || allowed != true {
+		t.Fatalf("the second rejoin's question: %v", allowed)
+	}
 	if code := event(map[string]any{"event": "rejoin-refused", "match": match, "ticket": rejoin}); code != http.StatusNoContent {
+		t.Fatalf("the first rejoin refused at its server: %d", code)
+	}
+	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a search after the first rejoin's refusal, the second's held: %d, want 403", resp.StatusCode)
+	}
+	if code := event(map[string]any{"event": "rejoin-refused", "match": match, "ticket": second}); code != http.StatusNoContent {
 		t.Fatalf("the rejoin refused at its server: %d", code)
 	}
 	if resp := e.searchAs(b1, []int{1}, pings); resp.StatusCode != http.StatusOK {

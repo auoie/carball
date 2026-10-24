@@ -905,10 +905,10 @@ func TestRejoinCheckAtTheRejoin(t *testing.T) {
 	h.m.Started("eu:4433", first.ID, h.now)
 	seat := slices.IndexFunc(h.m.matches[first.ID].accounts, func(a string) bool { return a == "j" })
 	h.m.Left("eu:4433", first.ID, seat)
-	if !h.m.RejoinCheck("j", first.ID, "eu:4433") {
+	if !h.m.RejoinCheck("j", first.ID, "eu:4433", nonce1) {
 		t.Fatal("an ordinary rejoin refused")
 	}
-	if h.m.RejoinCheck("j", first.ID, "us:4433") {
+	if h.m.RejoinCheck("j", first.ID, "us:4433", nonce1) {
 		t.Error("a rejoin asked by another server than the match's")
 	}
 	// (the rejoin let through held j's searches; its server never told it back: free again after RejoinHold, RV-1026)
@@ -918,7 +918,7 @@ func TestRejoinCheckAtTheRejoin(t *testing.T) {
 	}
 	h.at(time.Second + RejoinHold)
 	h.search(t, player("j", 1500), []byte{1}, far)
-	if h.m.RejoinCheck("j", first.ID, "eu:4433") {
+	if h.m.RejoinCheck("j", first.ID, "eu:4433", nonce1) {
 		t.Error("a rejoin while its account searches")
 	}
 	h.search(t, player("l", 1500), []byte{1}, far)
@@ -927,10 +927,10 @@ func TestRejoinCheckAtTheRejoin(t *testing.T) {
 	if second == nil || second.Server != "us:4433" {
 		t.Fatalf("j not matched at the other server: %+v", second)
 	}
-	if h.m.RejoinCheck("j", first.ID, "eu:4433") {
+	if h.m.RejoinCheck("j", first.ID, "eu:4433", nonce1) {
 		t.Error("a rejoin of the first match while the account is matched at another server")
 	}
-	if !h.m.RejoinCheck("stranger", 7, "eu:4433") {
+	if !h.m.RejoinCheck("stranger", 7, "eu:4433", nonce1) {
 		t.Error("an account the matchmaker doesn't know refused")
 	}
 }
@@ -946,7 +946,7 @@ func TestARejoinLetThroughHoldsSearchesTillItsBack(t *testing.T) {
 	h.m.Started("eu:4433", first.ID, h.now)
 	seat := slices.IndexFunc(h.m.matches[first.ID].accounts, func(a string) bool { return a == "j" })
 	h.m.Left("eu:4433", first.ID, seat)
-	if !h.m.RejoinCheck("j", first.ID, "eu:4433") {
+	if !h.m.RejoinCheck("j", first.ID, "eu:4433", nonce1) {
 		t.Fatal("an ordinary rejoin refused")
 	}
 	elsewhere := map[string]int{"us:4433": 30}
@@ -978,14 +978,14 @@ func TestARejoinHoldIsForAKnownMatchAndEndsWithIt(t *testing.T) {
 	h, ended := left()
 	h.m.Ended("eu:4433", ended.ID)
 	// (still its latest: let through, the ban's rule; its server says concluded)
-	if !h.m.RejoinCheck("j", ended.ID, "eu:4433") {
+	if !h.m.RejoinCheck("j", ended.ID, "eu:4433", nonce1) {
 		t.Fatal("a rejoin of its latest match refused")
 	}
 	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); err != nil {
 		t.Errorf("a search right after a yes for an ended match: %v, want none held", err)
 	}
 	h, m := left()
-	if !h.m.RejoinCheck("j", m.ID, "eu:4433") {
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433", nonce1) {
 		t.Fatal("an ordinary rejoin refused")
 	}
 	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); !errors.Is(err, ErrInMatch) {
@@ -997,8 +997,14 @@ func TestARejoinHoldIsForAKnownMatchAndEndsWithIt(t *testing.T) {
 	}
 }
 
+// The rejoins' tickets' one-time ids (made up)
+var (
+	nonce1 = [16]byte{1}
+	nonce2 = [16]byte{2}
+)
+
 // RV-1076: a rejoin let through and refused at its server frees the account's searches at that server's word; another
-// server's word, or one about another match, frees nothing
+// server's word, one about another match, or one about an earlier rejoin of it (RV-1086) frees nothing
 func TestARejoinRefusedAtItsServerFreesItsHold(t *testing.T) {
 	h := newHarness()
 	h.search(t, player("j", 1500), []byte{1}, near)
@@ -1007,7 +1013,7 @@ func TestARejoinRefusedAtItsServerFreesItsHold(t *testing.T) {
 	m := h.found(t, "j")
 	h.m.Started("eu:4433", m.ID, h.now)
 	h.m.Left("eu:4433", m.ID, slices.IndexFunc(h.m.matches[m.ID].accounts, func(a string) bool { return a == "j" }))
-	if !h.m.RejoinCheck("j", m.ID, "eu:4433") {
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433", nonce1) {
 		t.Fatal("an ordinary rejoin refused")
 	}
 	elsewhere := map[string]int{"us:4433": 30}
@@ -1018,11 +1024,17 @@ func TestARejoinRefusedAtItsServerFreesItsHold(t *testing.T) {
 		}
 	}
 	held("before any word")
-	h.m.RejoinRefused("us:4433", "j", m.ID)
+	h.m.RejoinRefused("us:4433", "j", m.ID, nonce1)
 	held("another server's word")
-	h.m.RejoinRefused("eu:4433", "j", m.ID+1)
+	h.m.RejoinRefused("eu:4433", "j", m.ID+1, nonce1)
 	held("a word about another match")
-	h.m.RejoinRefused("eu:4433", "j", m.ID)
+	// (a second rejoin let through, its own ticket: the first's refusal, coming after it, isn't this one's, RV-1086)
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433", nonce2) {
+		t.Fatal("a second rejoin refused")
+	}
+	h.m.RejoinRefused("eu:4433", "j", m.ID, nonce1)
+	held("the earlier rejoin's word, after a later one's yes")
+	h.m.RejoinRefused("eu:4433", "j", m.ID, nonce2)
 	if _, _, err := h.m.Start(player("j", 1500), req([]byte{1}, elsewhere), h.now); err != nil {
 		t.Errorf("a search after its server refused the rejoin: %v", err)
 	}
@@ -1039,7 +1051,7 @@ func TestALateBackFindsItsAccountStillHeld(t *testing.T) {
 	h.m.Started("eu:4433", m.ID, h.now)
 	seat := slices.IndexFunc(h.m.matches[m.ID].accounts, func(a string) bool { return a == "j" })
 	h.m.Left("eu:4433", m.ID, seat)
-	if !h.m.RejoinCheck("j", m.ID, "eu:4433") {
+	if !h.m.RejoinCheck("j", m.ID, "eu:4433", nonce1) {
 		t.Fatal("an ordinary rejoin refused")
 	}
 	h.alive(13 * time.Second)

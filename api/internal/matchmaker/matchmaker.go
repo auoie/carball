@@ -187,10 +187,12 @@ type Matchmaker struct {
 	arrivals  uint64
 }
 
-// hold is a rejoin let through: until when its account's searches wait for its Back, and its match
+// hold is a rejoin let through: until when its account's searches wait for its Back, its match, and its ticket's one-time
+// id (only that rejoin's refusal lets it go, not an earlier rejoin's of the same match: RV-1086)
 type hold struct {
 	until time.Time
 	match uint64
+	nonce [16]byte
 }
 
 // New is an empty matchmaker that signs match tickets with issue, its clock now
@@ -671,7 +673,7 @@ func (m *Matchmaker) RejoinAllowed(account string, id uint64) bool {
 // held till its Back, RejoinHold, or the match freed: one started between the answer and that word would be matched
 // into a second match (RV-1026). A match it no longer knows (ended: its server refuses that rejoin as concluded; or from
 // before this matchmaker's start) holds nothing (RV-1075)
-func (m *Matchmaker) RejoinCheck(account string, id uint64, server string) bool {
+func (m *Matchmaker) RejoinCheck(account string, id uint64, server string, nonce [16]byte) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mt := m.matches[id]
@@ -682,21 +684,22 @@ func (m *Matchmaker) RejoinCheck(account string, id uint64, server string) bool 
 		return false
 	}
 	if mt != nil {
-		m.rejoining[account] = hold{until: m.now().Add(RejoinHold), match: id}
+		m.rejoining[account] = hold{until: m.now().Add(RejoinHold), match: id, nonce: nonce}
 	}
 	return true
 }
 
 // RejoinRefused notes a game server's word that a rejoin let through was refused there (its match concluded, its seat
-// gone: RV-1076): the account's hold for that match let go, its searches free. A hold for another match stays, and a
-// match this matchmaker gave another server isn't this one's to tell of
-func (m *Matchmaker) RejoinRefused(server, account string, id uint64) {
+// gone: RV-1076), the rejoin known by its ticket's one-time id: the account's hold for that rejoin let go, its searches
+// free. A hold for another match, or for a later rejoin of it (an earlier one's refusal arriving after it: RV-1086),
+// stays; and a match this matchmaker gave another server isn't this one's to tell of
+func (m *Matchmaker) RejoinRefused(server, account string, id uint64, nonce [16]byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if mt := m.matches[id]; mt != nil && mt.server != server {
 		return
 	}
-	if h, ok := m.rejoining[account]; ok && h.match == id {
+	if h, ok := m.rejoining[account]; ok && h.match == id && h.nonce == nonce {
 		delete(m.rejoining, account)
 	}
 }

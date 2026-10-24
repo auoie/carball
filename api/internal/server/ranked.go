@@ -235,7 +235,7 @@ func (s *Server) rejoinCheck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "busy")
 		return
 	}
-	ok := s.Matchmaker.RejoinCheck(account, t.Match, body.Server)
+	ok := s.Matchmaker.RejoinCheck(account, t.Match, body.Server, t.Nonce)
 	if !ok {
 		s.log(r).Info("a rejoin refused: the account searched or was matched since, or the match is another server's", "match", body.Match,
 			"server", body.Server, "account", account, "name", t.Name)

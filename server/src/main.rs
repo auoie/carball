@@ -266,7 +266,12 @@ fn dev_info_on(args: &Args) -> bool {
 /// loopback (a bridged container's 0.0.0.0, published on the host's 127.0.0.1 alone, is fine; a host-networked one's
 /// isn't): said loudly at the start (RV-1085)
 fn metrics_beyond_loopback(args: &Args) -> bool {
-    dev_info_on(args) && args.cert.is_some() && !args.info_bind.is_loopback()
+    // (an IPv4-mapped loopback, ::ffff:127.0.0.1, loopback too: IPv6's own is_loopback is ::1's alone, RV-1087)
+    let loopback = match args.info_bind {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(v6.is_loopback(), |v4| v4.is_loopback()),
+        ip => ip.is_loopback(),
+    };
+    dev_info_on(args) && args.cert.is_some() && !loopback
 }
 
 impl Cli {
@@ -1216,6 +1221,11 @@ mod tests {
         assert!(dev_info_on(&parse_with(&["--dev-info", "on"], &env).unwrap()), "asked: on");
         assert!(!metrics_beyond_loopback(&parse_with(&["--dev-info", "on"], &env).unwrap()));
         assert!(metrics_beyond_loopback(&parse_with(&["--dev-info", "on", "--info-bind", "0.0.0.0"], &env).unwrap()));
+        assert!(metrics_beyond_loopback(&parse_with(&["--dev-info", "on", "--info-bind", "::"], &env).unwrap()));
+        for loopback in ["::1", "::ffff:127.0.0.1", "127.0.0.2"] {
+            let args = parse_with(&["--dev-info", "on", "--info-bind", loopback], &env).unwrap();
+            assert!(!metrics_beyond_loopback(&args), "{loopback}: loopback");
+        }
         assert!(!metrics_beyond_loopback(&parse_with(&["--info-bind", "0.0.0.0"], &env).unwrap()), "not asked: none");
         assert!(
             !metrics_beyond_loopback(&parse(&["--dev", "--info-bind", "0.0.0.0"]).unwrap()),
