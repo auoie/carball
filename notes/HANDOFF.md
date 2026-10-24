@@ -133,8 +133,8 @@ the game thread ends; SIGTERM exits at once), SEC-8 (one World a tick to the oth
 (`--healthcheck`, the image's HEALTHCHECK) reports the game thread's heartbeat. The images: `scripts/build_images.sh`
 builds the root `Dockerfile`: `client/dist` (nginx on :3000, `config.json` from `GAME_SERVER_URL` at start:
 `client/docker/`) and the release binary with the meshes (`debian:trixie-slim`; libstdc++ is linked in, so glibc 2.38+
-is enough: `server/build.rs`). The client reads `config.json` for the game server (no certificate hash: a real certificate) unless
-`?queue=` names a development server. The images build here (Docker with BuildKit: the root `Dockerfile`,
+is enough: `server/build.rs`). The client reads `config.json` for the game servers (no certificate hash: a real
+certificate); `?queue=` and `?matchmaker=` are gone (design 4: the queue only against the real services). The images build here (Docker with BuildKit: the root `Dockerfile`,
 `scripts/build_images.sh`, APP-CONTRACT.md); the game image's production mode (a PEM certificate, reloads on SIGHUP and
 on file changes, the health check, SIGTERM) is checked in a container, and the reload is in `tests/end_to_end.rs`. If a Windows browser can't reach a WSL development server's info endpoint on 127.0.0.1, run it
 with `--info-bind 0.0.0.0`.
@@ -327,9 +327,16 @@ test hooks and a plain-http `API_URL`), the web image, and an nginx edge putting
 the tunnel does). Its setup builds the images from the working tree (`scripts/build_images.sh --worktree --e2e e2e`;
 `CARBALL_E2E_IMAGES=TAG` skips it) and makes the stacks' secrets and a self-signed localhost certificate; Chrome takes
 it by `--origin-to-force-quic-on` plus `--ignore-certificate-errors-spki-list` (`services/fixtures.ts`: the Q1 probe
-showed WebTransport honours them; no certHash in config.json). Ports 14460..14468 and subnets 10.211.80-82.0/24, all on
-127.0.0.1; each stack's logs land in `client/test-results/services/<stack>.log` and its teardown runs `down -v`. The
-release images carry no hook: the checks stage greps both release binaries for the e2e markers.
+showed WebTransport honours them; no certHash in config.json). Ports 14460..14471 and subnets 10.211.80-83.0/24, on
+loopback (127.0.0.1; the game servers' UDP on [::1] too: Chrome tries localhost's IPv6 first and QUIC never falls back);
+each stack's logs land in `client/test-results/services/<stack>.log`, its secrets, certificate and the run's lock in
+`client/.e2e-services/` (one run at a time); its teardown runs `down -v`, as an interrupted run's does
+(`services/interrupts.ts`: Ctrl-C, SIGTERM). The release images carry no hook: the checks stage greps both release
+binaries for the e2e markers and runs the release game binary to see its hooks refused; each e2e image checks the
+markers are in its own binary. Part 2 (2026-10-24) removed the development queue (the development matchmaker and key,
+`/dev-ticket`, `--api-url`, `?queue=`, `?matchmaker=`, the preview's proxy; `--dev` is the open match's alone) and added
+`flows.spec.ts` (a fourth stack, forfeit votes at once): a sign-up through the page, a 1v1's result and ratings, a
+leaver's ban line, a rejoin refused across servers (RV-1008) and let in at its own.
 
 ## Earlier (2026-10-08)
 - **Where:** the repository is on the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, the

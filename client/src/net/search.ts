@@ -1,42 +1,7 @@
-// The regions' pings (notes/matchmaking.md, Regions: a hello with intent "ping" timed to the server's Pong) and this
-// browser's key (a development page's player: its account the key twice). The search itself is the accounts service's
-// matchmaker's (net/matchmaker.ts).
+// The regions' pings (notes/matchmaking.md, Regions: a hello with intent "ping" timed to the server's Pong). The search
+// itself is the accounts service's matchmaker's (net/matchmaker.ts).
 import { type ServerAddress } from "./connection";
 import { PROTOCOL_VERSION, REFUSED_VERSION, decodeControl, encodeControl } from "./protocol";
-
-const BROWSER_KEY = "carball.browserKey";
-/** This page's key when the browser keeps none (storage blocked) */
-let pageKey = 0n;
-
-function randomKey(): bigint {
-  const words = crypto.getRandomValues(new Uint32Array(2));
-  const key = (BigInt(words[0] ?? 0) << 32n) | BigInt(words[1] ?? 0);
-  return key === 0n ? 1n : key;
-}
-
-/** The browser's own key (a development page's player, its account the key twice): random, kept in local storage across
- *  tabs and visits; this page's alone if the browser keeps nothing */
-export function browserKey(storage: Pick<Storage, "getItem" | "setItem"> | null = local()): bigint {
-  try {
-    const stored = storage?.getItem(BROWSER_KEY) ?? "";
-    if (/^[1-9][0-9]{0,19}$/.test(stored) && BigInt(stored) < 1n << 64n) return BigInt(stored);
-    const key = randomKey();
-    storage?.setItem(BROWSER_KEY, key.toString());
-    if (storage) return key;
-  } catch {
-    // (not kept: this page's key)
-  }
-  if (pageKey === 0n) pageKey = randomKey();
-  return pageKey;
-}
-
-function local(): Pick<Storage, "getItem" | "setItem"> | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
 
 /** A region's ping waits this long at most (ms): its connection and the answer (notes/matchmaking.md, Regions) */
 const PING_TIMEOUT_MS = 4000;

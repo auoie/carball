@@ -2,7 +2,7 @@
 // polls and answers, refusals, a restart's 404 searched once more, failed polls retried, Cancel Search and the page going
 import { describe, expect, it, vi } from "vitest";
 import { type FoundMatch, type SearchHandlers } from "../game/matchmaking";
-import { MATCHMAKER_TEXT, MatchmakerSearchSession, type SearchRequest, devMatchmakerBase, foundMatch } from "./matchmaker";
+import { MATCHMAKER_TEXT, MatchmakerSearchSession, type SearchRequest, foundMatch } from "./matchmaker";
 import { REFUSED_IN_MATCH } from "./protocol";
 import { queueBanText } from "./tickets";
 
@@ -93,20 +93,11 @@ describe("the search with the matchmaker", () => {
       ],
     });
     const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
     await done;
     expect(got).toEqual(["searching", "found ab at game-eu.example:4433 (2v2) dGlj.a2V0.c2ln"]);
     expect(calls[0]).toMatchObject({ method: "POST", path: "/api/search", body: request });
     expect(calls.slice(1).map((c) => c.path)).toEqual([`/api/search/${"a".repeat(32)}?after=1`, `/api/search/${"a".repeat(32)}?after=1`]);
-  });
-
-  it("a development matchmaker's: its base, the player named in the body", async () => {
-    const { http, calls } = service({ "POST http://127.0.0.1:8090/api/search": [{ status: 503, body: { error: "no-server" } }] });
-    const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "http://127.0.0.1:8090", dev: { name: "Dev", key: "0123456789abcdef" } }, request, handlers, {}, http, noWait);
-    await done;
-    expect(calls[0]?.body).toEqual({ ...request, name: "Dev", key: "0123456789abcdef" });
-    expect(got).toEqual([`failed ${MATCHMAKER_TEXT.noServer}`]);
   });
 
   it("says each refusal: signed out, banned (until when), in a match, a no-show's cooldown, the limit", async () => {
@@ -121,14 +112,7 @@ describe("the search with the matchmaker", () => {
       const { http } = service({ "POST /api/search": [reply] });
       const { handlers, got, done } = answers();
       const notes: string[] = [];
-      MatchmakerSearchSession.start(
-        { base: "" },
-        request,
-        handlers,
-        { signedOut: () => notes.push("signedOut"), banned: () => notes.push("banned") },
-        http,
-        noWait,
-      );
+      MatchmakerSearchSession.start(request, handlers, { signedOut: () => notes.push("signedOut"), banned: () => notes.push("banned") }, http, noWait);
       await done;
       expect(got.slice(0, want.length)).toEqual(want);
       expect(notes).toEqual(noted);
@@ -140,7 +124,7 @@ describe("the search with the matchmaker", () => {
     const { handlers, done } = answers();
     const noted: { until: number | null } = { until: null };
     const before = Date.now();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, { banned: (end) => (noted.until = end) }, http, noWait);
+    MatchmakerSearchSession.start(request, handlers, { banned: (end) => (noted.until = end) }, http, noWait);
     await done;
     const until = noted.until;
     if (until === null) throw new Error("no ban noted");
@@ -156,7 +140,7 @@ describe("the search with the matchmaker", () => {
     ] as const) {
       const { http } = service({ "POST /api/search": [started], "GET /api/search/": [{ status: 200, body }] });
       const { handlers, got, done } = answers();
-      MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+      MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
       await done;
       expect(got).toEqual(["searching", want]);
     }
@@ -168,13 +152,13 @@ describe("the search with the matchmaker", () => {
       "GET /api/search/": [{ status: 404 }, { status: 200, body: { version: 2, state: "found", match } }],
     });
     const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
     await done;
     expect(got).toEqual(["searching", "found ab at game-eu.example:4433 (2v2) dGlj.a2V0.c2ln"]);
     expect(calls.filter((c) => c.method === "POST").length).toBe(2);
     const twice = service({ "POST /api/search": [started, started], "GET /api/search/": [{ status: 404 }, { status: 404 }] });
     const second = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, second.handlers, {}, twice.http, noWait);
+    MatchmakerSearchSession.start(request, second.handlers, {}, twice.http, noWait);
     await second.done;
     expect(second.got).toEqual(["searching", `failed ${MATCHMAKER_TEXT.restarted}`]);
   });
@@ -190,13 +174,13 @@ describe("the search with the matchmaker", () => {
       "GET /api/search/": [{ status: 502 }, { status: 503 }, { status: 200, body: { version: 2, state: "found", match } }],
     });
     const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    MatchmakerSearchSession.start(request, handlers, {}, http, pause);
     await done;
     expect(got.at(-1)?.startsWith("found")).toBe(true);
     expect(pauses).toEqual([1000, 2000]);
     const down = service({ "POST /api/search": [started] });
     const lost = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, lost.handlers, {}, down.http, noWait);
+    MatchmakerSearchSession.start(request, lost.handlers, {}, down.http, noWait);
     await lost.done;
     expect(lost.got).toEqual(["searching", `failed ${MATCHMAKER_TEXT.lost}`]);
   });
@@ -208,7 +192,7 @@ describe("the search with the matchmaker", () => {
     });
     const { http } = service({ "POST /api/search": [started], "GET /api/search/": [], "DELETE /api/search/": [{ status: 204, after: slow }] });
     const { handlers, got } = answers();
-    const search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    const search = MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
     await vi.waitFor(() => {
       expect(got).toEqual(["searching"]);
     });
@@ -226,7 +210,7 @@ describe("the search with the matchmaker", () => {
   it("Cancel Search: the search deleted at the service, nothing said after; the page going: deleted, then a match found before still said", async () => {
     const { http, calls } = service({ "POST /api/search": [started], "GET /api/search/": [], "DELETE /api/search/": [{ status: 204 }] });
     const { handlers, got } = answers();
-    const search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    const search = MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
     await vi.waitFor(() => {
       expect(got).toEqual(["searching"]);
     });
@@ -238,7 +222,7 @@ describe("the search with the matchmaker", () => {
     const replies: Record<string, Reply[]> = { "POST /api/search": [started], "DELETE /api/search/": [{ status: 204 }], "GET /api/search/": [] };
     const going = service(replies);
     const last = answers();
-    const page = MatchmakerSearchSession.start({ base: "" }, request, last.handlers, {}, going.http, noWait);
+    const page = MatchmakerSearchSession.start(request, last.handlers, {}, going.http, noWait);
     await vi.waitFor(() => {
       expect(last.got).toEqual(["searching"]);
     });
@@ -249,7 +233,7 @@ describe("the search with the matchmaker", () => {
     const quietPolls: Reply[] = [];
     const quiet = service({ "POST /api/search": [started], "DELETE /api/search/": [{ status: 204 }], "GET /api/search/": quietPolls });
     const nothing = answers();
-    const going2 = MatchmakerSearchSession.start({ base: "" }, request, nothing.handlers, {}, quiet.http, noWait);
+    const going2 = MatchmakerSearchSession.start(request, nothing.handlers, {}, quiet.http, noWait);
     await vi.waitFor(() => {
       expect(nothing.got).toEqual(["searching"]);
     });
@@ -265,7 +249,7 @@ describe("the search with the matchmaker", () => {
       "DELETE /api/search/": [{ status: 204 }],
     });
     const early = answers();
-    const going3 = MatchmakerSearchSession.start({ base: "" }, request, early.handlers, {}, slow.http, noWait);
+    const going3 = MatchmakerSearchSession.start(request, early.handlers, {}, slow.http, noWait);
     await vi.waitFor(() => {
       expect(slow.calls.length).toBe(1);
     });
@@ -296,7 +280,7 @@ describe("the search with the matchmaker", () => {
       ],
     });
     const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    MatchmakerSearchSession.start(request, handlers, {}, http, pause);
     await done;
     expect(got.at(-1)?.startsWith("found")).toBe(true);
     expect(pauses).toEqual([1000, 2000, 1000]);
@@ -309,7 +293,7 @@ describe("the search with the matchmaker", () => {
     });
     const { http, calls } = service({ "POST /api/search": [{ ...started, after: slow }], "DELETE /api/search/": [{ status: 204 }] });
     const { handlers, got } = answers();
-    const search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    const search = MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
     await vi.waitFor(() => {
       expect(calls.length).toBe(1);
     });
@@ -325,7 +309,7 @@ describe("the search with the matchmaker", () => {
     const { http } = service({ "POST /api/search": [started], "GET /api/search/": [{ status: 401, body: { error: "signed-out" } }] });
     const { handlers, got, done } = answers();
     const notes: string[] = [];
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, { signedOut: () => notes.push("signedOut") }, http, noWait);
+    MatchmakerSearchSession.start(request, handlers, { signedOut: () => notes.push("signedOut") }, http, noWait);
     await done;
     expect(got).toEqual(["searching", "failed sign in to play online"]);
     expect(notes).toEqual(["signedOut"]);
@@ -342,7 +326,7 @@ describe("the search with the matchmaker", () => {
       built++;
       return Promise.resolve({ ...request, pings: { "game-eu.example:4433": 30 + built } });
     };
-    MatchmakerSearchSession.start({ base: "" }, build, handlers, {}, http, noWait);
+    MatchmakerSearchSession.start(build, handlers, {}, http, noWait);
     await done;
     expect(built).toBe(2);
     const posts = calls.filter((c) => c.method === "POST").map((c) => (c.body as { pings: Record<string, number> }).pings);
@@ -360,21 +344,21 @@ describe("the search with the matchmaker", () => {
       "GET /api/search/": [{ status: 200, body: { version: 2, state: "found", match } }],
     });
     const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    MatchmakerSearchSession.start(request, handlers, {}, http, pause);
     await done;
     expect(got.at(-1)?.startsWith("found")).toBe(true);
     expect(pauses).toEqual([1000, 2000]);
     // (a 503 that's the service's own answer, no server answered: said at once)
     const none = service({ "POST /api/search": [{ status: 503, body: { error: "no-server" } }] });
     const noServer = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, noServer.handlers, {}, none.http, pause);
+    MatchmakerSearchSession.start(request, noServer.handlers, {}, none.http, pause);
     await noServer.done;
     expect(noServer.got).toEqual([`failed ${MATCHMAKER_TEXT.noServer}`]);
     // (no answer ever: 1 + 5 tries, the pauses doubling to 8 s, then not reachable: RV-922's X04)
     const down = service({});
     const unreachable = answers();
     const downPauses: number[] = [];
-    MatchmakerSearchSession.start({ base: "" }, request, unreachable.handlers, {}, down.http, (ms) => {
+    MatchmakerSearchSession.start(request, unreachable.handlers, {}, down.http, (ms) => {
       downPauses.push(ms);
       return Promise.resolve();
     });
@@ -387,7 +371,7 @@ describe("the search with the matchmaker", () => {
   it("the calls' guards: the page's credentials and write header; Cancel Search's delete kept alive past the page (RV-887's M12-M15)", async () => {
     const { http, calls } = service({ "POST /api/search": [started], "GET /api/search/": [], "DELETE /api/search/": [{ status: 204 }] });
     const { handlers, got } = answers();
-    const search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, noWait);
+    const search = MatchmakerSearchSession.start(request, handlers, {}, http, noWait);
     await vi.waitFor(() => {
       expect(got).toEqual(["searching"]);
     });
@@ -401,19 +385,6 @@ describe("the search with the matchmaker", () => {
     expect(del?.init?.keepalive).toBe(true);
     expect(del?.init?.signal ?? null).toBeNull(); // (never aborted with the page: RV-913's M12)
     expect((del?.init?.headers as Record<string, string>)["X-Carball"]).toBe("1");
-    // (a development matchmaker's: no credentials)
-    const dev = service({ "POST http://127.0.0.1:8090/api/search": [{ status: 503, body: { error: "no-server" } }] });
-    const devAnswers = answers();
-    MatchmakerSearchSession.start(
-      { base: "http://127.0.0.1:8090", dev: { name: "D", key: "0123456789abcdef" } },
-      request,
-      devAnswers.handlers,
-      {},
-      dev.http,
-      noWait,
-    );
-    await devAnswers.done;
-    expect(dev.calls[0]?.init?.credentials).toBe("omit");
   });
 
   it("polls lost, 504 or no answer, tried 1 + 5 times, the pauses doubling to 8 s; then the connection said lost (RV-913's M11, X04)", async () => {
@@ -424,7 +395,7 @@ describe("the search with the matchmaker", () => {
     };
     const { http, calls } = service({ "POST /api/search": [started], "GET /api/search/": Array.from({ length: 10 }, () => ({ status: 504 })) });
     const { handlers, got, done } = answers();
-    MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    MatchmakerSearchSession.start(request, handlers, {}, http, pause);
     await done;
     expect(got.at(-1)).toBe(`failed ${MATCHMAKER_TEXT.lost}`);
     expect(pauses).toEqual([1000, 2000, 4000, 8000, 8000]);
@@ -439,14 +410,13 @@ describe("the search with the matchmaker", () => {
       search?.cancel();
       return Promise.resolve();
     };
-    search = MatchmakerSearchSession.start({ base: "" }, request, handlers, {}, http, pause);
+    search = MatchmakerSearchSession.start(request, handlers, {}, http, pause);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     // (the request still being made, its pings measured, when Cancel Search comes)
     let made = (): void => undefined;
     const slow = service({ "POST /api/search": [started] });
     const building = MatchmakerSearchSession.start(
-      { base: "" },
       () =>
         new Promise<SearchRequest>((resolve) => {
           made = () => {
@@ -462,16 +432,6 @@ describe("the search with the matchmaker", () => {
     made();
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(slow.calls).toEqual([]);
-  });
-
-  it("a development page's matchmaker: the preview's same-origin path, or this machine's host:port; nothing else (RV-911, RV-913's Q01)", () => {
-    expect(devMatchmakerBase("/dev-matchmaker/14451")).toBe("/dev-matchmaker/14451");
-    expect(devMatchmakerBase("127.0.0.1:14451")).toBe("http://127.0.0.1:14451");
-    expect(devMatchmakerBase("[::1]:8090")).toBe("http://[::1]:8090");
-    expect(devMatchmakerBase("h".repeat(64))).toBe(`http://${"h".repeat(64)}`);
-    for (const bad of [null, "", "h".repeat(65), "/dev-matchmaker/x", "/elsewhere/1", "evil.example/path", "a b:1", "x@y:1"]) {
-      expect(devMatchmakerBase(bad), String(bad)).toBeNull();
-    }
   });
 
   it("reads a found match's fields, nothing else", () => {

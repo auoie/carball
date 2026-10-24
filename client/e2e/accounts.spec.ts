@@ -154,8 +154,9 @@ test("a sign-in's notice (a ban's end) and a development page with no accounts; 
   await expect(modal).toContainText("This account is banned until 2026-12-01.");
   expect(new URL(page.url()).search).toBe("?render=off");
   await modal.getByRole("button", { name: /^ok$/i }).click();
-  // (a development page: its queue named, its server's own tickets, no entry)
-  await page.goto("/?queue=127.0.0.1:1&render=off");
+  // (a development page: no config.json, no accounts service, no entry)
+  await page.unrouteAll();
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await expect(page.locator("#main-menu .main-menu-account")).toBeHidden();
   await page.goto("/privacy.html");
@@ -431,7 +432,7 @@ test("a deployment's page going while it searches deletes its search, with the w
   await expect.poll(() => started, { timeout: 15_000 }).toBe(true);
   await expect(page.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
   // (the page's pagehide as a reload or a close fires it: a real unload's keepalive delete goes, but Playwright doesn't
-  // see a request of a page that's gone; the reload itself is e2e/queueEdges.spec.ts's, at a development matchmaker)
+  // see a request of a page that's gone; the reload itself is e2e/services/queueEdges.spec.ts's, against the services)
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
   await expect.poll(() => deletes.length, { timeout: 10_000 }).toBe(1);
   expect(deletes[0]).toEqual({ guarded: true, cookie: "cb_made_up=session" });

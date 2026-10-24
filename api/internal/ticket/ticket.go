@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -106,9 +105,6 @@ type Signer struct {
 func NewSigner(keyID, seed string) (*Signer, error) {
 	if keyID == "" || len(keyID) > 32 || strings.ContainsAny(keyID, " \t\r\n") {
 		return nil, errors.New("a ticket key's id is 1-32 characters, no spaces")
-	}
-	if keyID == DevKeyID {
-		return nil, fmt.Errorf("the key id %q is the development key's", DevKeyID)
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(seed))
 	if err != nil || len(raw) != ed25519.SeedSize {
@@ -486,7 +482,7 @@ func read(keyID string, payload []byte) (Ticket, error) {
 
 // ParsePublic reads public key lines as the game server's TICKET_PUBLIC_KEYS lists them ("KID BASE64", comma- or
 // newline-separated), by its rules (server/src/ticket.rs `parse_keys`, AP2-5, RV-948): a key id 1-32 characters, never
-// the development key's, never twice; a key 32 bytes, never one of small order (a signature "checks" under one for any
+// twice; a key 32 bytes, never one of small order (a signature "checks" under one for any
 // message). An error names the entry by its number, never its text (a seed pasted in the wrong file stays out of the
 // log: RV-953)
 func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
@@ -506,8 +502,6 @@ func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
 		switch {
 		case err != nil || len(raw) != ed25519.PublicKeySize:
 			return nil, fmt.Errorf("ticket: key entry %d isn't 32 bytes of base64", n)
-		case kid == DevKeyID:
-			return nil, fmt.Errorf("ticket: key entry %d has the development key's id", n)
 		case smallOrder(raw):
 			return nil, fmt.Errorf("ticket: key entry %d is of small order (no signer's)", n)
 		}
@@ -557,18 +551,4 @@ func smallOrder(key []byte) bool {
 		}
 	}
 	return false
-}
-
-// DevKeyID is the development key's id; DevSeedText what its seed is the SHA-256 of. Published on purpose: only a
-// development game server (--dev) takes this key's tickets (the id is reserved: a listed key can't take it), and one
-// hands a ticket to anyone who asks anyway; the development matchmaker (`carball-api matchmaker --dev`) signs with it
-const (
-	DevKeyID    = "dev"
-	DevSeedText = "carball development ticket key"
-)
-
-// DevSigner signs with the development key
-func DevSigner() *Signer {
-	seed := sha256.Sum256([]byte(DevSeedText))
-	return &Signer{KeyID: DevKeyID, key: ed25519.NewKeyFromSeed(seed[:])}
 }

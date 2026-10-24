@@ -12,8 +12,7 @@ anyhow = "1"
 getrandom = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"], optional = true }
 wtransport = { version = "0.7", features = ["quinn"], optional = true }
-# (the tickets' keys: Ed25519 (the development key's) and base64 (the keys list, a ticket's one-time id))
-ring = { version = "0.17", optional = true }
+# (base64: the tickets' keys list, a ticket's one-time id)
 base64 = { version = "0.22", optional = true }
 # (the results' and quitters' HTTPS calls to the accounts service: rustls with Mozilla's roots built in (webpki-roots),
 # no OpenSSL, no cookies; pinned: the user's choice, 2026-10-18)
@@ -23,9 +22,9 @@ serde_json = { version = "1", optional = true }
 # (the log: one line per event, the network server's and the local host's; the game's modules are both's)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"], optional = true }
-# (the development info server, its tickets and the health endpoint: axum's routes on hyper's HTTP/1 connections,
-# their header read time and number capped)
-axum = { version = "0.8", default-features = false, features = ["query"], optional = true }
+# (the development info server and the health endpoint: axum's routes on hyper's HTTP/1 connections, their header read
+# time and number capped)
+axum = { version = "0.8", default-features = false, optional = true }
 hyper = { version = "1", features = ["server", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio", "service"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -44,7 +43,6 @@ net = [
     "dep:governor",
     "dep:tracing-appender",
     "dep:wtransport",
-    "dep:ring",
     "dep:base64",
     "dep:reqwest",
     "dep:serde_json",
@@ -76,6 +74,8 @@ required-features = ["host"]
 
 [dev-dependencies]
 serde_json = "1"
+# (the tests' tickets: their Ed25519 keys from seeds, signed as the accounts service signs; in the tree already)
+ring = "0.17"
 wiremock = "0.6"
 # (the engine's bindings, src/engine_ffi.rs, made and checked by tests/engine_bindings.rs: bindgen's exact version, its
 # output changing with it; libclang loaded at run time, clang-sys telling whether there's one)

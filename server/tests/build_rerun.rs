@@ -356,6 +356,31 @@ fn the_guard_refuses_a_path_it_cant_resolve() {
     inputs_of(Path::new(""), "add_library(x STATIC ${UNKNOWN}/a.cpp)");
 }
 
+/// The Dockerfile's last stage, what a build with no --target makes, is a release image, never an e2e one (RV-1042); the
+/// release server's cargo build takes no features, the e2e one's `e2e` alone (RV-1045)
+#[test]
+fn the_dockerfile_ends_on_a_release_stage_and_only_the_e2e_build_has_its_feature() {
+    let dockerfile = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../Dockerfile"));
+    let stages: Vec<&str> = dockerfile.lines().filter(|l| l.starts_with("FROM ")).collect();
+    let last = stages.last().unwrap();
+    assert!(!last.contains("-e2e"), "the last stage {last:?}");
+    let joined = dockerfile.replace("\\\n", " ");
+    let mut stage = "";
+    let mut builds = Vec::new();
+    for line in joined.lines() {
+        if let Some(name) = line.strip_prefix("FROM ").and_then(|l| l.split(" AS ").nth(1)) {
+            stage = name.trim();
+        } else if line.starts_with("RUN ") && line.contains("cargo build") {
+            builds.push((stage, line.contains("--features e2e"), line.contains("--features")));
+        }
+    }
+    assert_eq!(
+        builds,
+        [("server", false, false), ("server-e2e", true, true)],
+        "the cargo builds: (stage, e2e, any features)"
+    );
+}
+
 /// The image build's cargo builds of the server's crate each clean it first (RV-927): its cache-mounted target dir would
 /// otherwise let cargo's fingerprints decide, and the files' times are no guide there (the context's are the commit's; an
 /// engine library from the layer cache keeps an old one), so a revert could ship the build before it

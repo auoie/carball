@@ -64,6 +64,8 @@ node_modules/
 # web client build and test output
 client/dist/
 client/test-results/
+# (the browser tests' service stacks' secrets, certificate and lock: client/e2e/services/stacks.ts)
+client/.e2e-services/
 client/playwright-report/
 
 # game server build output

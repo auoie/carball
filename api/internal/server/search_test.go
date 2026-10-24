@@ -5,9 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -389,95 +387,6 @@ func TestSearchLimit(t *testing.T) {
 	}
 	if codes[0] != http.StatusOK || codes[1] != http.StatusOK || codes[2] != http.StatusTooManyRequests {
 		t.Errorf("the searches' limit: %v", codes)
-	}
-}
-
-// The development matchmaker: a page on this machine searches by its key and name (CORS), others refused; tickets
-// signed with the development key
-func TestDevMatchmaker(t *testing.T) {
-	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
-	s := &server.Server{Tickets: ticket.DevSigner(), Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	s.SetLimits(server.DefaultLimits())
-	s.NewMatchmaker()
-	srv := httptest.NewServer(s.DevHandler())
-	defer srv.Close()
-	call := func(method, path, origin, body string) reply {
-		req, _ := http.NewRequestWithContext(t.Context(), method, srv.URL+path, strings.NewReader(body))
-		if origin != "" {
-			req.Header.Set("Origin", origin)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		read, _ := io.ReadAll(resp.Body)
-		return reply{StatusCode: resp.StatusCode, Header: resp.Header, Body: read}
-	}
-	pre := call(http.MethodOptions, "/api/search", "http://localhost:4173", "")
-	if pre.StatusCode != http.StatusNoContent || pre.Header.Get("Access-Control-Allow-Origin") != "http://localhost:4173" ||
-		!strings.Contains(pre.Header.Get("Access-Control-Allow-Headers"), "X-Carball") {
-		t.Errorf("the preflight: %d %v", pre.StatusCode, pre.Header)
-	}
-	if resp := call(http.MethodPost, "/api/search", "https://carball.example", `{}`); resp.StatusCode != http.StatusForbidden {
-		t.Errorf("another site's page: %d", resp.StatusCode)
-	}
-	search := func(key string) string {
-		body := `{"playlists":[1],"pings":{"127.0.0.1:14446":3},"regions":["127.0.0.1:14446"],"name":"Dev ` + key[:2] + `","key":"` + key + `"}`
-		resp := call(http.MethodPost, "/api/search", "http://localhost:4173", body)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("a development search: %d", resp.StatusCode)
-		}
-		id := decode(t, resp)["search"].(string)
-		call(http.MethodGet, "/api/search/"+id+"?after=0", "http://localhost:4173", "") // (its first poll: RV-892)
-		return id
-	}
-	a, b := search("0123456789abcdef"), search("fedcba9876543210")
-	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", `{"playlists":[1],"pings":{},"name":"N","key":"short"}`); resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("a malformed key: %d", resp.StatusCode)
-	}
-	s.Matchmaker.Tick(now)
-	resp := call(http.MethodGet, "/api/search/"+a+"?after=1", "http://127.0.0.1:4173", "")
-	st := decode(t, resp)
-	m, _ := st["match"].(map[string]any)
-	if m == nil {
-		t.Fatalf("not found: %v", st)
-	}
-	tk, err := ticket.Verify(m["ticket"].(string), map[string]ed25519.PublicKey{ticket.DevKeyID: ticket.DevSigner().PublicKey()}, now, 30*time.Second)
-	if err != nil || tk.Server != "127.0.0.1:14446" || fmt.Sprintf("%x", tk.Account) != "0123456789abcdef0123456789abcdef" || tk.Name != "Dev 01" {
-		t.Errorf("a development match ticket: %+v, %v", tk, err)
-	}
-	// (a development server's events and result, with no credential)
-	if resp := call(http.MethodPost, "/api/fleet/events", "", `{"event":"started","match":"`+m["id"].(string)+`","server":"127.0.0.1:14446"}`); resp.StatusCode != http.StatusNoContent {
-		t.Errorf("a development server's event: %d", resp.StatusCode)
-	}
-	if resp := call(http.MethodPost, "/api/results", "", `{"match":"`+m["id"].(string)+`","players":[]}`); resp.StatusCode != http.StatusOK {
-		t.Errorf("a development server's result: %d", resp.StatusCode)
-	}
-	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", `{"playlists":[1],"pings":{"127.0.0.1:14446":3},"regions":["127.0.0.1:14446"],"name":"Dev","key":"0123456789abcdef"}`); resp.StatusCode != http.StatusOK {
-		t.Errorf("after the result: %d", resp.StatusCode)
-	}
-	// (a development quitter: banned, its search refused; a refill lifts it)
-	var account [16]byte
-	copy(account[:], []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef})
-	seatTicket, _, _ := ticket.DevSigner().IssueSeat(account, "Dev", [3]ticket.Shown{}, ticket.Seat{Match: 5, Server: "127.0.0.1:14445", Playlist: 1, Roster: 2}, now)
-	if resp := call(http.MethodPost, "/api/quitters", "", `{"match":"0000000000000005","ticket":"`+seatTicket+`"}`); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("a development quitter: %d", resp.StatusCode)
-	}
-	search2 := `{"playlists":[1],"pings":{"127.0.0.1:14446":3},"regions":["127.0.0.1:14446"],"name":"Dev","key":"0123456789abcdef"}`
-	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", search2); resp.StatusCode != http.StatusForbidden {
-		t.Errorf("a development quitter's search: %d", resp.StatusCode)
-	}
-	rejoin, _, _ := ticket.DevSigner().IssueRejoin(account, "Dev", [3]ticket.Shown{}, 5, now)
-	if resp := call(http.MethodPost, "/api/refills", "", `{"match":"0000000000000005","ticket":"`+rejoin+`"}`); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("a development refill: %d", resp.StatusCode)
-	}
-	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", search2); resp.StatusCode != http.StatusOK {
-		t.Errorf("after the refill: %d", resp.StatusCode)
-	}
-	if _, ok := s.Matchmaker.Poll(t.Context(), b, "", 0, 0); !ok {
-		t.Error("the other search gone")
 	}
 }
 

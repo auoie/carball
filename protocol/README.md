@@ -32,11 +32,9 @@ with the public keys it's given by id (`TICKET_PUBLIC_KEYS`: keys rotate), withi
 one-time id once; the account's id (its first 8 bytes, big-endian) is then the session's key and the ticket's name its
 name, in place of the `Hello`'s. A claim takes a match ticket for this server alone, a rejoin a rejoin's ticket for that
 match alone (`POST /api/ticket?rejoin=MATCH`; else `Refused` 4); a leaver's queue ban doesn't stop a rejoin's ticket of
-the ban's own match, so they can come back and refill the lobby. A development queue server (`--dev`) takes the
-development key's tickets (id `dev`, a fixed key: a development matchmaker's match tickets) and signs rejoin tickets for
-the pages that ask at `http://host:infoPort/dev-ticket?name=…&id=…&rejoin=…` (`id` 32 hex digits; `r1`, `r2`, `r3` the
-playlists' ratings, a new account's 1500 when none; `rejoin` the match, 16 hex digits, required); the open match
-(intent 0) and the browser's local host take no ticket. The longest ticket is 885 characters; the `Hello` takes 1024 at
+the ban's own match, so they can come back and refill the lobby. The open match (intent 0, a development server's
+`--dev`) and the browser's local host take no ticket; there is no development queue server (design 4, 2026-10-24: the
+browser tests run the queue against the real services). The longest ticket is 885 characters; the `Hello` takes 1024 at
 most. `protocol/ticket_vector.json` holds a rejoin's and a seat's ticket made by the API's code, which both sides' tests
 read.
 

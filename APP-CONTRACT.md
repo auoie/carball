@@ -120,8 +120,8 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 ## carball-game
 
 Each variable below is also a flag (given after the image name in `docker run`, it wins over the variable):
-`carball-server --help` lists them with their variables and defaults (`API_URL`'s is `--accounts-url`: `--api-url` is a
-development matchmaker's). A setting the server can't read stops it, the error naming the setting.
+`carball-server --help` lists them with their variables and defaults (`API_URL`'s is `--accounts-url`). A setting the
+server can't read stops it, the error naming the setting.
 
 | Env | Default in the image | |
 |---|---|---|
@@ -133,26 +133,22 @@ development matchmaker's). A setting the server can't read stops it, the error n
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
 | `SERVER_MODE` | `queue` | `queue`: the accounts service's matchmaker's 1v1 / 2v2 / 3v3 matches (claims and rejoins only: a search or a decline is refused, `Refused` 3); `direct`: one open match, development only (with a certificate it's refused: anyone would join without a ticket) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
-| `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a claim without a match ticket (a JWT, EdDSA: notes/accounts.md §3) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
+| `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order or a key id twice; the key ids are logged at start); a claim without a match ticket (a JWT, EdDSA: notes/accounts.md §3) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
-| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8 and its ticket spent, that answer being final; no answer, `Refused` 9, never let in unconfirmed, its ticket left good for a retry; one question at a time for a ticket; RV-1008, RV-1020). Every call names this server (`X-Carball-Server`: the API's budget for the game servers' calls is each server's). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
+| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8 and its ticket spent, that answer being final; no answer, `Refused` 9, never let in unconfirmed, its ticket left good for a retry; one question at a time for a ticket; RV-1008, RV-1020). Every call names this server (`X-Carball-Server`: the API's budget for the game servers' calls is each server's). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters`, `/api/refills` and `/api/fleet/*` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
-| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server outside `--dev`: without it, or with a blank one, the server won't start (RX31) |
+| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server: without it, or with a blank one, the server won't start (RX31) |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
-A development run of the image takes `--dev` (refused beside production keys, `TICKET_PUBLIC_KEYS` or its file, and when a
-certificate file is there at `CERT_PATH` or `KEY_PATH`: a public server's; it warns that it signs tickets for anyone): a
-self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
-say, pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as
-the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp -p 127.0.0.1:14503:4434
--e ALLOWED_ORIGIN=http://localhost:13000 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with
-`?queue=localhost:14503` (a web container for it run with `-e GAME_SERVER_URL=https://localhost:14502/play
--e "EXTRA_CONNECT_SRC=http://127.0.0.1:14503 https://127.0.0.1:14502"`: the page reaches a development server on
-`localhost` at 127.0.0.1). Its tickets are the development key's (id `dev`, a fixed key, published: only `--dev` takes
-it): a development matchmaker's match tickets (`carball-api matchmaker --dev`, the page's `?matchmaker=host:port`, the
-server's `--api-url http://127.0.0.1:PORT` for its events), and the rejoin tickets its info endpoint signs for a page that
-asks (`/dev-ticket`), with no sign-in.
+A development run of the image takes `--dev`: the open match (`SERVER_MODE=direct`; a queue server with `--dev` refuses
+to start, as one beside production keys, `TICKET_PUBLIC_KEYS` or its file, or with a certificate file at `CERT_PATH` or
+`KEY_PATH`: a public server's), with a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH` say,
+pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as the
+same port): `docker run --rm -e SERVER_MODE=direct -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp -p
+127.0.0.1:14503:4434 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with `?server=localhost:14503`.
+Anyone joins it, no ticket asked: a development server's alone. The queue's matches are tested against the real
+services instead (the browser tests' stacks, `client/e2e/services`).
 
 - **Ports:** 4433/udp only. Nothing listens on TCP outside the container (the health endpoint is 127.0.0.1; the
   development info server is off with a certificate).
@@ -221,8 +217,7 @@ asks (`/dev-ticket`), with no sign-in.
   quitters reported. Never a ticket. Text a client wrote (a close's reason) is escaped onto its line, never a line of its
   own (RV-1009). Lines are written by a thread of their own: a stalled stderr never holds the game thread; past 128k
   lines waiting, lines are dropped (RV-993).
-- **Development info:** a development server's `GET /info` and `GET /dev-ticket` (on `--info-port`, 127.0.0.1 unless
-  `--info-bind`): HTTP/1, 64 connections at once, 2 s for a request's headers; another path a 404, another method a 405.
+- **Development info:** a development server's `GET /info` (on `--info-port`, 127.0.0.1 unless `--info-bind`): HTTP/1, 64 connections at once, 2 s for a request's headers; another path a 404, another method a 405.
 
 ### Limits (carball-game)
 
@@ -414,6 +409,14 @@ window.
 | A game server call's ticket | ticket | issued within 24 h; each spent once |
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-24 (the working tree on 9683f41, design 4's second step: `scripts/build_images.sh --worktree --e2e e2e`): the
+checks stage passed, its e2e markers one list now (the game's test flags, the tests' sign-in route and `-tags=e2e`), each
+at 0 in both release binaries, the release game binary run to see `--test-goal-after` and an http `API_URL` refused, and
+each e2e image finding its own markers (the list proven against what it guards). The browser tests passed 89/89 (the
+services' 21 against four stacks, the new flows among them: a sign-up through the page, a conceded 1v1's result and
+ratings, a leaver's ban line, a rejoin refused at another region's server and let in at its own; two local specs on
+their rerun, timing flakes beside the services' four stacks). A run stopped with Ctrl-C or SIGTERM took its stacks down.
 
 2026-10-24 (the working tree on 6660225, design 4's first step: `scripts/build_images.sh --worktree --e2e e2e`): the
 checks stage passed, now also finding none of the e2e builds' markers (the tests' sign-in route, the game server's test

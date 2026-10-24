@@ -2,8 +2,7 @@
 // service's matchmaker, by long polling. `POST /api/search` starts it with the ticked regions and the pings measured just
 // before; `GET /api/search/{id}?after=N` is answered at its next change (or after 25 s), each poll sent as the last one
 // returns (a hidden tab's timers are throttled: MX1R-16); `DELETE` is Cancel Search. A found match carries the
-// player's match ticket for their seat at its server. A development page searches a development matchmaker
-// (`?matchmaker=host:port`: `carball-api matchmaker --dev`), naming its player by its key and name.
+// player's match ticket for their seat at its server. On this page's origin, with its signed-in session.
 import { type FoundMatch, type SearchHandlers } from "../game/matchmaking";
 import { REFUSED_IN_MATCH, REFUSED_QUEUE_BANNED, isTicketText } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
@@ -12,12 +11,6 @@ import { queueBanText } from "./tickets";
 /** A ban's end from its seconds left, on this page's clock (the service's never compared with it, RV-1001); now if none */
 function endIn(seconds: unknown): number {
   return Date.now() + (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0);
-}
-
-/** Where the matchmaker is: this page's origin (the deployment's), or a development matchmaker with the player it names */
-export interface MatchmakerEndpoint {
-  readonly base: string;
-  readonly dev?: { readonly name: string; readonly key: string };
 }
 
 /** A search's request: its ticked playlists (team sizes), every listed region's server that answered the ping just
@@ -51,7 +44,7 @@ export const MATCHMAKER_TEXT = {
    *  the next step said (RV-886, RV-912: the game has no words for it, ours) */
   inMatch: "you're playing a match in another tab, window or device: finish it there, then search again",
   restarted: "the matchmaker restarted: search again",
-  noMatchmaker: "no matchmaker to search with (a development page: ?matchmaker=host:port, or the preview's /dev-matchmaker/PORT)",
+  noMatchmaker: "no matchmaker on a development page: online play is the deployment's",
 } as const;
 
 /** How many times a poll that fails (no answer, a 502/503/504: the service restarting) is tried again, and the longest
@@ -62,14 +55,6 @@ const POLL_PAUSE_MAX_MS = 8000;
 interface Answer {
   readonly status: number;
   readonly body: Record<string, unknown> | null;
-}
-
-/** A development page's matchmaker from `?matchmaker=`: the preview's same-origin path to one (`/dev-matchmaker/PORT`:
- *  the browser tests', RV-911), or a host:port of this machine's (`npm run dev`'s, cross-origin); none for anything else */
-export function devMatchmakerBase(param: string | null): string | null {
-  if (param === null) return null;
-  if (/^\/dev-matchmaker\/\d{1,5}$/.test(param)) return param;
-  return /^[A-Za-z0-9.[\]:-]{1,64}$/.test(param) ? `http://${param}` : null;
 }
 
 /** A match found's fields as the page keeps them; null if they're not a match's */
@@ -91,7 +76,6 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
   #done: Promise<void> = Promise.resolve();
 
   private constructor(
-    private readonly endpoint: MatchmakerEndpoint,
     private readonly request: SearchRequest | (() => Promise<SearchRequest>),
     private readonly handlers: SearchHandlers,
     private readonly notes: SearchNotes,
@@ -101,7 +85,6 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
 
   /** Starts the search; its answers to `handlers` */
   static start(
-    endpoint: MatchmakerEndpoint,
     request: SearchRequest | (() => Promise<SearchRequest>),
     handlers: SearchHandlers,
     notes: SearchNotes = {},
@@ -109,7 +92,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
     http: typeof fetch = async (input, init) => fetch(input, init),
     pause: (ms: number) => Promise<void> = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ): MatchmakerSearchSession {
-    const search = new MatchmakerSearchSession(endpoint, request, handlers, notes, http, pause);
+    const search = new MatchmakerSearchSession(request, handlers, notes, http, pause);
     search.#done = search.#run();
     return search;
   }
@@ -118,11 +101,11 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
   async #call(method: "POST" | "GET" | "DELETE", path: string, body?: unknown, keepalive = false): Promise<Answer> {
     const headers: Record<string, string> = method === "GET" ? {} : { "X-Carball": "1" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const response = await this.http(`${this.endpoint.base}${path}`, {
+    const response = await this.http(path, {
       method,
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      credentials: this.endpoint.dev ? "omit" : "same-origin",
+      credentials: "same-origin",
       cache: "no-store",
       keepalive,
       // (a poll's own wait is the service's 25 s: a hung one given up past that, as a failed poll; a cancel stops the polls,
@@ -167,7 +150,7 @@ export class MatchmakerSearchSession implements MatchmakerSearch {
     if (this.#over) return false;
     const request = typeof this.request === "function" ? await this.request() : this.request;
     if (this.#isOver()) return false;
-    const body = { playlists: request.playlists, pings: request.pings, regions: request.regions, ...this.endpoint.dev };
+    const body = { playlists: request.playlists, pings: request.pings, regions: request.regions };
     let answer: Answer = { status: 0, body: null };
     for (let failures = 0; ; failures++) {
       try {

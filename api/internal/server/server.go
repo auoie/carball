@@ -93,6 +93,8 @@ type Turnstile interface {
 type Server struct {
 	Store  Store
 	Origin string
+	// Dev is development mode (`serve --dev`: a localhost origin only); the e2e build's routes answer only under it
+	Dev bool
 	// Google is nil when not configured
 	Google *google.Client
 	Steam  *steam.Verifier
@@ -129,10 +131,6 @@ type Server struct {
 	requestLines *ratelimit.Limiter
 	linesMu      sync.Mutex
 	unlogged     map[string]int
-
-	// (the development matchmaker's quitters' bans: devmatchmaker.go)
-	devMu   sync.Mutex
-	devBans map[string]time.Time
 
 	// (the kinds of peer whose CF-Connecting-IP was ignored, each warned of once)
 	forwardMu     sync.Mutex

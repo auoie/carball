@@ -4,7 +4,7 @@ Status: **step 1 built (2026-10-18): `api/`**, the service itself (schema and mi
 pre-auth cookie, sign-up with Turnstile, sessions, rate limits, names, deletion with the 30-day block, the admin's ban
 commands, its image); **step 2 built (2026-10-18)**: the tickets (`POST /api/ticket`, `api/internal/ticket`), the game
 server's check (`server/src/ticket.rs`: protocol 26's Hello ticket, `TICKET_PUBLIC_KEYS`, `--dev`'s own key and
-`/dev-ticket`, a claim bound to the searching account), the client's ticket sources (`client/src/net/tickets.ts`) and
+`/dev-ticket` until design 4 removed them on 2026-10-24, a claim bound to the searching account), the client's ticket sources (`client/src/net/tickets.ts`) and
 its account page (`client/src/ui/accountPages.ts`: sign in with Google or Steam, the sign-up with Turnstile, rename,
 sign out, sign out everywhere, delete; Find Match signed out asks to sign in; the deployment's page only), the CSP for
 Turnstile and the privacy page (`client/public/privacy.html`). Next: ratings, results, queue bans and rejoin with the

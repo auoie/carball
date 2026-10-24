@@ -1,0 +1,9 @@
+# The flows stack's game servers (stacks.ts, flows.spec.ts; over compose.yaml): forfeit votes from the clock's first
+# second (the game-e2e build's --forfeit-vote-wait), so a matched 1v1 ends in its result at once
+x-command: &command ["--max-per-address", "1000", "--claims-per-address", "100000/100000", "--pings-per-address", "100000/100000", "--forfeit-vote-wait", "0"]
+
+services:
+  game-a:
+    command: *command
+  game-b:
+    command: *command

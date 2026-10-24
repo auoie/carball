@@ -2,7 +2,7 @@
 import { cpSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Plugin, type ProxyOptions, type ViteDevServer, defineConfig } from "vite";
+import { type Plugin, type ViteDevServer, defineConfig } from "vite";
 
 const here = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 
@@ -104,22 +104,8 @@ function chunkModules(worker = false): Plugin {
   };
 }
 
-/** The preview's development matchmakers, same-origin as a deployment's (RV-911: a cross-origin keepalive delete needs a
- *  preflight, which a page going drops): CARBALL_PREVIEW_MATCHMAKERS's loopback ports (the browser tests', e2e/servers.ts),
- *  each at /dev-matchmaker/PORT */
-function devMatchmakers(): Record<string, ProxyOptions> {
-  const ports = (process.env.CARBALL_PREVIEW_MATCHMAKERS ?? "").split(",").filter((p) => /^\d{1,5}$/.test(p));
-  return Object.fromEntries(
-    ports.map((port) => [
-      `/dev-matchmaker/${port}/`,
-      { target: `http://127.0.0.1:${port}`, rewrite: (path: string) => path.slice(`/dev-matchmaker/${port}`.length) },
-    ]),
-  );
-}
-
 export default defineConfig({
   plugins: [localAssets(), botPackages(), chunkModules()],
-  preview: { proxy: devMatchmakers() },
   // (the worker's build recorded too: its files' modules and sources for the shipped-data guard)
   worker: { format: "es", plugins: () => [chunkModules(true)] },
   // (whether this build has the bots: dead code without them, their worker, host and runtime never bundled)

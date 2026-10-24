@@ -6,9 +6,11 @@
 # page and /api/, as the deployment's tunnel routes them. Only the edge's port and the game servers' are published, on
 # loopback (the game servers' on ::1 too: Chrome tries localhost's IPv6 address first, and QUIC doesn't fall back). The settings (stacks.ts): TAG, the images' tag; EDGE_PORT; GAME_A_PORT and GAME_B_PORT (the `regions`
 # profile's second server, given whether or not it runs); SUBNET; SECRETS and CERTS, the directories of the stacks' secrets and certificate;
-# GAME_SERVERS, the page's (40-carball-config.sh)
+# GAME_SERVERS, the page's (40-carball-config.sh). Our images never pulled (a tag not built is an error, not a registry's
+# image of that name: RV-1051)
 x-game: &game
   image: carball-game-e2e:${TAG:?}
+  pull_policy: never
   # (every page from one address: the per-address limits out of the way)
   command: ["--max-per-address", "1000", "--claims-per-address", "100000/100000", "--pings-per-address", "100000/100000"]
   volumes:
@@ -49,6 +51,7 @@ services:
 
   migrate:
     image: carball-api-e2e:${TAG:?}
+    pull_policy: never
     command: ["migrate"]
     environment:
       MIGRATE_DATABASE_URL: postgres://carball_owner@db:5432/carball
@@ -62,6 +65,7 @@ services:
 
   api:
     image: carball-api-e2e:${TAG:?}
+    pull_policy: never
     command: ["serve", "--dev"]
     read_only: true
     environment:
@@ -85,6 +89,7 @@ services:
 
   web:
     image: carball-web:${TAG:?}
+    pull_policy: never
     environment:
       GAME_SERVERS: ${GAME_SERVERS:?}
     healthcheck:

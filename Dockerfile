@@ -17,6 +17,10 @@
 
 # (each compiler's parallel jobs: the three engine builds and two cargo builds can run at once)
 ARG JOBS=8
+# The e2e builds' markers (their test hooks' strings): none may be in a release binary (the checks below), and each must be
+# in its e2e binary (the e2e images' own check: the pattern proven against what it guards, RV-1045)
+ARG E2E_GAME_MARKERS="test-goal-after forfeit-vote-wait"
+ARG E2E_API_MARKERS="/api/e2e/ -tags=e2e"
 
 FROM emscripten/emsdk:6.0.13@sha256:fb7864e398acfda863dfcea78b8bc8adad359fa60c6a0bbeb845931de64aa68a AS emsdk
 FROM rust:1.91.1-trixie@sha256:867f1d1162913c401378a8504fb17fe2032c760dc316448766f150a130204aad AS rust
@@ -181,6 +185,8 @@ RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts
 # paths of panic messages are the ones the old builds had too), nor the e2e builds' hooks (the tests' sign-in route, the
 # game server's test flags: the game-e2e and api-e2e images' alone)
 FROM client AS checks
+ARG E2E_GAME_MARKERS
+ARG E2E_API_MARKERS
 COPY --from=engine-check /engine-identical /tmp/engine-identical
 COPY --from=rust-notices /out/ /tmp/rust-notices/
 COPY --from=server /out/carball-server /game/carball-server
@@ -198,9 +204,12 @@ RUN for f in THIRD_PARTY_NOTICES-rust.txt THIRD_PARTY_NOTICES-rust-std.html; do 
     && for f in /game/carball-server /api/carball-api; do \
          n=$(grep -a -c -E '/root/|/usr/local/cargo|/target/|/engine/lib' "$f" || true); \
          echo "build paths in $f: $n"; [ "$n" = 0 ] || exit 1; \
-         n=$(grep -a -c -E '/api/e2e/|test-goal-after|forfeit-vote-wait' "$f" || true); \
-         echo "e2e hooks in $f: $n"; [ "$n" = 0 ] || exit 1; \
-       done
+         for m in $E2E_GAME_MARKERS $E2E_API_MARKERS; do \
+           n=$(grep -a -c -F -- "$m" "$f" || true); echo "e2e marker $m in $f: $n"; [ "$n" = 0 ] || exit 1; \
+         done; \
+       done \
+    && ! /game/carball-server --test-goal-after 1 > /tmp/hook.out 2>&1 && grep -q "unexpected argument '--test-goal-after'" /tmp/hook.out \
+    && ! API_URL=http://a.example GAME_SERVER_TOKEN_FILE=/t /game/carball-server > /tmp/hook.out 2>&1 && grep -q "API_URL must be https" /tmp/hook.out
 
 # The web client: its static build, served by unprivileged nginx (uid 101) on :3000. The game server's WebTransport URL
 # goes into /config.json when the container starts, from GAME_SERVER_URL. (nginx 1.30.6, the stable line, alpine; RV-371)
@@ -272,10 +281,18 @@ ENTRYPOINT ["/app/carball-api"]
 # The browser tests' images (client/e2e/services: never pushed or deployed): the game and accounts images with their e2e
 # builds in place of the release binaries (scripts/build_images.sh --e2e)
 FROM game AS game-e2e
+ARG E2E_GAME_MARKERS
 COPY --from=server-e2e /out/carball-server /app/carball-server
+RUN for m in $E2E_GAME_MARKERS; do grep -aqF -- "$m" /app/carball-server || { echo "e2e marker $m not in the e2e build: the checks' list is stale"; exit 1; }; done
 LABEL org.opencontainers.image.title="carball-game-e2e" \
       org.opencontainers.image.description="Carball's game server, its e2e build: the browser tests' alone, never deployed"
 FROM api AS api-e2e
+ARG E2E_API_MARKERS
 COPY --from=api-e2e-build /out/carball-api-e2e /app/carball-api
+RUN for m in $E2E_API_MARKERS; do grep -aqF -- "$m" /app/carball-api || { echo "e2e marker $m not in the e2e build: the checks' list is stale"; exit 1; }; done
 LABEL org.opencontainers.image.title="carball-api-e2e" \
       org.opencontainers.image.description="Carball's accounts service, its e2e build: the browser tests' alone, never deployed"
+
+# The build with no --target: the accounts service's release image, as before the e2e stages came (never an e2e image by
+# accident, RV-1042; scripts/build_images.sh names each target)
+FROM api AS release

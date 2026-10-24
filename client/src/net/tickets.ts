@@ -1,11 +1,7 @@
 // The rejoin tickets (notes/accounts.md §3): a rejoin says who the player is with a ticket the game server checks
-// offline (a claim's is its match ticket, the matchmaker's: notes/matchmaking.md). The deployment's come from the
-// accounts service (POST /api/ticket?rejoin= on this page's origin: the signed-in session's cookie); a development
-// server's from its own info server (`/dev-ticket`: signed with the development key, the browser's key standing for an
-// account, the settings' name its name).
-import { loadSettings } from "../settings/settings";
+// offline (a claim's is its match ticket, the matchmaker's: notes/matchmaking.md). They come from the accounts service
+// (POST /api/ticket?rejoin= on this page's origin: the signed-in session's cookie).
 import { isTicketText } from "./protocol";
-import { browserKey } from "./search";
 
 /** The page has no signed-in session, or it ended: sign in to play online */
 export class SignedOutError extends Error {
@@ -72,20 +68,6 @@ export function ticketRefusalText(status: number): string {
 /** A match's id as the tickets name it: 16 hex digits */
 function matchHex(id: bigint): string {
   return id.toString(16).padStart(16, "0");
-}
-
-/** A development server's ticket source: its info server's rejoin ticket for the match asked, for this browser's
- *  account (its key twice: 16 bytes) and the settings' name */
-export function devTicket(host: string, infoPort: number, get: typeof fetch = fetch): (rejoin: bigint) => Promise<string> {
-  return async (rejoin: bigint) => {
-    const key = browserKey().toString(16).padStart(16, "0");
-    const name = encodeURIComponent(loadSettings().chat.name);
-    const response = await get(`http://${host}:${String(infoPort)}/dev-ticket?name=${name}&id=${key}${key}&rejoin=${matchHex(rejoin)}`, {
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`the development server's ticket: HTTP ${String(response.status)}`);
-    return ticketOf(await response.json());
-  };
 }
 
 function ticketOf(body: unknown): string {

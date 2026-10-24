@@ -402,14 +402,67 @@ fn ticketed_hello(intent: u8, playlist: u8, token: u64, ticket: String) -> Vec<u
     .encode()
 }
 
-/// A queue server (the matchmaker's matches) with the development key's tickets, its name `localhost:PORT`; its port
-/// and certificate hash, its tickets (for the tests' match tickets), and the short idle timeout's server when `quick`
-async fn ticketed_server(quick: bool) -> (u16, [u8; 32], Arc<Tickets>) {
+/// The tests' stand-in for the accounts service's ticket key (id "test", a made-up seed): the tickets it issues, signed
+/// and shaped as the service's (api/internal/ticket), and the server's keys that check them
+struct TestKey {
+    signing: jsonwebtoken::EncodingKey,
+    tickets: Arc<Tickets>,
+}
+
+impl TestKey {
+    fn new() -> Self {
+        use base64::Engine;
+        use ring::signature::KeyPair;
+        const SEED: [u8; 32] = [42; 32];
+        // (an Ed25519 seed's PKCS#8 v1 (RFC 8410) before the seed: the signing key's form jsonwebtoken takes)
+        const PKCS8_PREFIX: [u8; 16] =
+            [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
+        let public =
+            ring::signature::Ed25519KeyPair::from_seed_unchecked(&SEED).unwrap().public_key().as_ref().to_vec();
+        let list = format!("test {}", base64::engine::general_purpose::STANDARD.encode(public));
+        Self {
+            signing: jsonwebtoken::EncodingKey::from_ed_der(&[PKCS8_PREFIX.as_slice(), &SEED].concat()),
+            tickets: Arc::new(Tickets::from_list(&list).unwrap()),
+        }
+    }
+
+    /// A ticket for `account` named `name` with a new account's ratings, for `purpose`, issued now for its purpose's life
+    /// (a rejoin's 120 s, a seat's 30 s), a fresh one-time id
+    fn issue(&self, account: [u8; 16], name: &str, purpose: Purpose) -> String {
+        use base64::Engine;
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).unwrap();
+        let now = unix_now();
+        let rating = [DEFAULT_RATING.rating, DEFAULT_RATING.deviation];
+        let mut claims = serde_json::json!({
+            "iss": "carball", "sub": account.iter().map(|b| format!("{b:02x}")).collect::<String>(), "iat": now,
+            "exp": now + 120, "jti": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(nonce), "name": name,
+            "ratings": [rating, rating, rating], "purpose": "rejoin",
+        });
+        match purpose {
+            Purpose::Rejoin(m) => claims["match"] = format!("{m:016x}").into(),
+            Purpose::Seat(seat) => {
+                claims["match"] = format!("{:016x}", seat.match_id).into();
+                (claims["purpose"], claims["exp"], claims["aud"]) =
+                    ("seat".into(), (now + 30).into(), seat.server.into());
+                (claims["playlist"], claims["seat"], claims["roster"]) =
+                    (seat.playlist.into(), seat.seat.into(), seat.roster.into());
+            }
+        }
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::EdDSA);
+        header.kid = Some("test".into());
+        jsonwebtoken::encode(&header, &claims, &self.signing).unwrap()
+    }
+}
+
+/// A queue server (the matchmaker's matches) taking the tests' key's tickets, its name `localhost:PORT`; its port and
+/// certificate hash, the key (for the tests' tickets), and the short idle timeout's server when `quick`
+async fn ticketed_server(quick: bool) -> (u16, [u8; 32], TestKey) {
     ticketed_server_limited(quick, open_limits()).await
 }
 
 /// `ticketed_server` with these limits (its tickets and name added)
-async fn ticketed_server_limited(quick: bool, limits: NetLimits) -> (u16, [u8; 32], Arc<Tickets>) {
+async fn ticketed_server_limited(quick: bool, limits: NetLimits) -> (u16, [u8; 32], TestKey) {
     engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = if quick {
@@ -437,31 +490,24 @@ async fn ticketed_server_limited(quick: bool, limits: NetLimits) -> (u16, [u8; 3
     std::thread::spawn(move || {
         game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
     });
-    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
-    let limits = NetLimits { tickets: Some(tickets.clone()), server_name: Some(format!("localhost:{port}")), ..limits };
+    let key = TestKey::new();
+    let limits =
+        NetLimits { tickets: Some(key.tickets.clone()), server_name: Some(format!("localhost:{port}")), ..limits };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    (port, cert_hash, tickets)
+    (port, cert_hash, key)
 }
 
 /// A match ticket for `account`'s seat of match `match_id` (`roster` seats, a 1v1's 2) at `server`
-fn seat_ticket(
-    tickets: &Tickets,
-    account: u8,
-    name: &str,
-    match_id: u64,
-    seat: u8,
-    roster: u8,
-    server: &str,
-) -> String {
+fn seat_ticket(key: &TestKey, account: u8, name: &str, match_id: u64, seat: u8, roster: u8, server: &str) -> String {
     let seat = Seat { match_id, server: server.into(), playlist: roster / 2, seat, roster };
-    tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], Purpose::Seat(seat), unix_now()).unwrap()
+    key.issue([account; 16], name, Purpose::Seat(seat))
 }
 
 /// A region's ping is answered at once, its session closed right after (its slot free, not held for the page's close:
 /// RV-856); a search or a decline isn't served here (the accounts service's matchmaker has the one queue)
 #[tokio::test(flavor = "multi_thread")]
 async fn a_ping_is_answered_and_closed_at_once_and_a_search_or_a_decline_is_refused() {
-    let (port, cert_hash, _tickets) = ticketed_server(false).await;
+    let (port, cert_hash, _key) = ticketed_server(false).await;
     let (pong, connection, _recv) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
     assert_eq!(
         pong,
@@ -488,7 +534,7 @@ async fn an_addresss_pings_and_claims_each_have_their_own_allowance() {
         pings: net::Rate { burst: 3, per_minute: 1 },
         ..open_limits()
     };
-    let (port, cert_hash, _tickets) = ticketed_server_limited(false, limits).await;
+    let (port, cert_hash, _key) = ticketed_server_limited(false, limits).await;
     let mut pongs = Vec::new();
     for _ in 0..4 {
         let reply = any_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
@@ -525,17 +571,16 @@ async fn any_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> Option<Con
 /// rejoin's, a rejoin's not another match's); a 1v1 has no rejoin
 #[tokio::test(flavor = "multi_thread")]
 async fn match_tickets_open_their_match_here_once_each_seat_its_own() {
-    let (port, cert_hash, tickets) = ticketed_server(false).await;
+    let (port, cert_hash, key) = ticketed_server(false).await;
     let here = format!("localhost:{port}");
-    let ticket = |account: u8, name: &str, match_id: u64, seat: u8| {
-        seat_ticket(&tickets, account, name, match_id, seat, 2, &here)
-    };
+    let ticket =
+        |account: u8, name: &str, match_id: u64, seat: u8| seat_ticket(&key, account, name, match_id, seat, 2, &here);
     let refused = Control::Refused { reason: protocol::REFUSED_TICKET };
     let (none, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
     assert_eq!(none, refused, "a claim without a ticket");
     let (junk, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, "AAAA".into())).await;
     assert_eq!(junk, refused, "a malformed ticket");
-    let elsewhere = seat_ticket(&tickets, 1, "Ada", 0xa1, 0, 2, "game-eu.example:4433");
+    let elsewhere = seat_ticket(&key, 1, "Ada", 0xa1, 0, 2, "game-eu.example:4433");
     let (other_server, ..) =
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, elsewhere)).await;
     assert_eq!(other_server, refused, "another server's match ticket");
@@ -566,8 +611,7 @@ async fn match_tickets_open_their_match_here_once_each_seat_its_own() {
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(1, "Ada", 0xb2, 0))).await;
     assert_eq!(busy, Control::Refused { reason: protocol::REFUSED_IN_MATCH }, "a second match for Ada here");
     // (each ticket for its own, AP3)
-    let rejoin_ticket =
-        |m: u64| tickets.dev_ticket([1; 16], "Ada", [DEFAULT_RATING; 3], Purpose::Rejoin(m), unix_now()).unwrap();
+    let rejoin_ticket = |m: u64| key.issue([1; 16], "Ada", Purpose::Rejoin(m));
     let (seat_for_rejoin, ..) =
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xa1, ticket(1, "Ada", 0xa1, 0))).await;
     assert_eq!(seat_for_rejoin, refused, "a match ticket for a rejoin");
@@ -588,9 +632,9 @@ async fn match_tickets_open_their_match_here_once_each_seat_its_own() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lost_leaver_reported_can_rejoin() {
     let service = rejoin_service(true).await;
-    let (port, cert_hash, tickets) = ticketed_server_limited(true, asking(service.uri())).await;
+    let (port, cert_hash, key) = ticketed_server_limited(true, asking(service.uri())).await;
     let here = format!("localhost:{port}");
-    let ticket = |account: u8, name: &str, seat: u8| seat_ticket(&tickets, account, name, 0xc3, seat, 4, &here);
+    let ticket = |account: u8, name: &str, seat: u8| seat_ticket(&key, account, name, 0xc3, seat, 4, &here);
     // (Ada's claim on a runtime of its own, so that its connection can vanish)
     let claim = ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(1, "Ada", 0));
     let (welcomed_tx, welcomed_rx) = std::sync::mpsc::channel::<Option<u64>>();
@@ -631,8 +675,7 @@ async fn a_lost_leaver_reported_can_rejoin() {
     go_tx.send(()).unwrap();
     client.join().unwrap();
     tokio::time::sleep(Duration::from_millis(8500)).await;
-    let rejoin =
-        tickets.dev_ticket([1; 16], "Ada", [DEFAULT_RATING; 3], Purpose::Rejoin(match_id), unix_now()).unwrap();
+    let rejoin = key.issue([1; 16], "Ada", Purpose::Rejoin(match_id));
     let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, match_id, rejoin)).await;
     drop(kept);
     assert!(matches!(reply, Control::Welcome { .. }), "the seat to rejoin: {reply:?}");
@@ -646,8 +689,9 @@ async fn a_queue_servers_unserved_intents_never_reach_the_game() {
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, mut messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
-    let limits = NetLimits { tickets: Some(tickets), server_name: Some(format!("localhost:{port}")), ..open_limits() };
+    let key = TestKey::new();
+    let limits =
+        NetLimits { tickets: Some(key.tickets), server_name: Some(format!("localhost:{port}")), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
     for intent in [protocol::INTENT_JOIN, 9] {
         let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(intent, 0, 0, String::new())).await;
@@ -666,15 +710,15 @@ async fn a_queue_servers_unserved_intents_never_reach_the_game() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rejoin_the_matchmaker_refuses_or_cant_confirm_is_refused() {
     let service = rejoin_service(false).await;
-    let (port, cert_hash, tickets) = ticketed_server_limited(false, asking(service.uri())).await;
-    let rejoin = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd4), unix_now()).unwrap();
+    let (port, cert_hash, key) = ticketed_server_limited(false, asking(service.uri())).await;
+    let rejoin = key.issue([5; 16], "Eve", Purpose::Rejoin(0xd4));
     let hello = || ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd4, rejoin.clone());
     let (reply, ..) = first_reply(port, cert_hash, hello()).await;
     assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_REJOIN_GONE }, "the matchmaker's no");
     let (replayed, ..) = first_reply(port, cert_hash, hello()).await;
     assert_eq!(replayed, Control::Refused { reason: protocol::REFUSED_TICKET }, "spent: a replay refused as used");
     assert_eq!(service.received_requests().await.unwrap().len(), 1, "the matchmaker asked once");
-    let other = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd5), unix_now()).unwrap();
+    let other = key.issue([5; 16], "Eve", Purpose::Rejoin(0xd5));
     let hello = || ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd5, other.clone());
     service.reset().await;
     wiremock::Mock::given(wiremock::matchers::path("/api/fleet/rejoin"))
@@ -693,8 +737,8 @@ async fn a_rejoin_the_matchmaker_refuses_or_cant_confirm_is_refused() {
     );
     // (the matchmaker down: a server asking at a port nothing listens on)
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let (port, cert_hash, tickets) = ticketed_server_limited(false, asking(format!("http://127.0.0.1:{closed}"))).await;
-    let third = tickets.dev_ticket([5; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd6), unix_now()).unwrap();
+    let (port, cert_hash, key) = ticketed_server_limited(false, asking(format!("http://127.0.0.1:{closed}"))).await;
+    let third = key.issue([5; 16], "Eve", Purpose::Rejoin(0xd6));
     let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xd6, third)).await;
     assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_UNCONFIRMED }, "the matchmaker down");
 }

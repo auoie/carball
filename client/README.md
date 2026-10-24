@@ -61,6 +61,10 @@ npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive
                                # game servers, the web image, built from the working tree; needs docker compose)
 npx playwright test --project=local      # the local specs alone (no Docker)
 npx playwright test --project=services   # the services' alone (CARBALL_E2E_IMAGES=TAG: images already built)
+# (a full run builds the images while the local specs run, which can trip their timing; build them first instead:
+#  scripts/build_images.sh --worktree --e2e e2e, then CARBALL_E2E_IMAGES=e2e npm run e2e)
+# A run that's stopped takes its stacks down (Ctrl-C, SIGTERM); one killed outright leaves them to the next run, or:
+#  for s in queue edges regions flows; do docker compose -p carball-e2e-$s down -v; done
 ```
 - **TypeScript** (`tsconfig.app.json`): `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no unused
   code, no implicit returns or fallthrough. Tests (`tsconfig.test.json`) and config/e2e files (`tsconfig.node.json`) are

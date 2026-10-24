@@ -46,9 +46,9 @@ test("off this machine, a config.json that can't be read is no search and no dev
     await menu.getByRole("button", { name: /^find match$/i }).click();
     await expect(page.locator("#modal"), what).toContainText("The game's servers can't be reached right now. Try again later.");
     await expect(page.locator("#search-banner"), what).toBeHidden();
-    // (nothing asked of a development server: its info port, its tickets)
+    // (nothing asked of a development server: its info port)
     expect(
-      requests.filter((u) => u.includes(":4434") || u.includes("/dev-ticket") || u.includes("/info")),
+      requests.filter((u) => u.includes(":4434") || u.includes("/info")),
       what,
     ).toEqual([]);
     await context.close();

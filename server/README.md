@@ -9,24 +9,22 @@ the game's as decoded in `notes/netcode.md`.
 cd server
 cargo run --release                    # WebTransport on :4433, dev info on http://localhost:4434/info
 cargo run --release -- --port 4433 --info-port 4434 --meshes ../out/arena/collision_meshes
-cargo run --release -- --mode queue --dev   # the queue's 1v1, 2v2 and 3v3 matches (searches and claims only)
 ```
 The server has no web page of its own: the game connects to it over UDP. To play, also run the web client
 (`cd client && npm run dev`) and open `http://localhost:5173/?server` (or `?server=host:infoPort` for another
-machine or info port): a development server's one open match, which anyone joins. With `--mode queue`, the main
-menu's Play → 1v1 / 2v2 / 3v3 → Find Match searches it (`?queue=host:infoPort` names it; default this page's host,
-info port 4434). The build compiles the engine with CMake (`build.rs`).
+machine or info port): a development server's one open match, which anyone joins. The queue's matches (`--mode queue`)
+are a public server's alone, with the accounts service: the browser tests run them against the real services in Docker
+(`client/e2e/services`). The build compiles the engine with CMake (`build.rs`).
 
 Development identity: a self-signed certificate (valid 14 days, the WebTransport limit for certificate hashes) made at
 start-up. The info endpoint (127.0.0.1 unless `--info-bind`, e.g. 0.0.0.0 for another machine) publishes its SHA-256 so
 the browser can connect with `serverCertificateHashes`. A public server runs with a real certificate (`CERT_PATH` and
 `KEY_PATH`, or `--cert` and `--key`; a key that isn't the certificate's is refused): no info endpoint, reloaded when its
 files change or on SIGHUP; it needs `ALLOWED_ORIGIN` (empty or blank is an error, not "any"). A queue server needs a
-certificate or `--dev` (a self-signed one, whatever the certificate's variables say: RV-381), and the tickets' public
-keys, `TICKET_PUBLIC_KEYS` (notes/accounts.md §3: a claim and a rejoin are a signed-in account's, its ticket, a JWT,
-checked offline in the session's hello; `--dev` makes a key of its own and its info endpoint signs rejoin tickets at
-`/dev-ticket?name=…&id=…&rejoin=…` with no sign-in), and the accounts service for the rated matches' calls, `API_URL` and
-`GAME_SERVER_TOKEN_FILE` (`--dev` logs them instead: APP-CONTRACT.md). Without `--meshes` or
+certificate (`--dev`, the open match's, is refused with it: RV-381), the tickets' public keys, `TICKET_PUBLIC_KEYS`
+(notes/accounts.md §3: a claim and a rejoin are a signed-in account's, its ticket, a JWT, checked offline in the
+session's hello), and the accounts service for the rated matches' calls, `API_URL` and `GAME_SERVER_TOKEN_FILE`
+(APP-CONTRACT.md). Without `--meshes` or
 `MESHES_DIR` the meshes are the repository's `out/arena/collision_meshes` above the binary. The deployment's interface
 (its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
 `scripts/build_images.sh` (the root `Dockerfile`; the web image's nginx files in `client/docker/`).
@@ -50,6 +48,8 @@ cargo fmt --check                       # the layout (rustfmt.toml at the repo's
 cargo test                              # protocol vectors, input buffer, game logic, a real WebTransport client, the
                                         # engine bindings against rlengine.h (with libclang)
 cargo clippy --all-targets -- -D warnings
+# the e2e build's too (the browser tests' hooks: its own CLI tests, the http API_URL taken)
+cargo clippy --all-targets --features e2e -- -D warnings && cargo test --features e2e --bin carball-server
 # the local host's configuration (the client's in-browser server: scripts/build_host.sh); its tests need `net`, so
 # no --all-targets (RV-547, RV-552)
 cargo clippy --no-default-features --features host --lib --bins -- -D warnings

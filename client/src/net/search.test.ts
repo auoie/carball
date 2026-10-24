@@ -1,37 +1,12 @@
-// The regions' pings against a stand-in server, and this browser's key
+// The regions' pings against a stand-in server
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeTransport, type FakeTransportRecord } from "../testing/fakeTransport";
 import { decodeControl, encodeControl } from "./protocol";
-import { browserKey, pingServer } from "./search";
+import { pingServer } from "./search";
 
-const memory = (): Pick<Storage, "getItem" | "setItem"> => {
-  const map = new Map<string, string>();
-  return { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => void map.set(k, v) };
-};
-
-describe("the pings and the browser's key", () => {
+describe("the pings", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("keeps the browser's key: random, 64 bits, the same next time; this page's own if storage fails", () => {
-    const storage = memory();
-    const key = browserKey(storage);
-    expect(key > 0n && key < 1n << 64n).toBe(true);
-    expect(browserKey(storage)).toBe(key);
-    storage.setItem("carball.browserKey", "garbage");
-    expect(browserKey(storage)).not.toBe(0n);
-    const failing: Pick<Storage, "getItem" | "setItem"> = {
-      getItem: () => {
-        throw new Error("denied");
-      },
-      setItem: () => {
-        throw new Error("denied");
-      },
-    };
-    const page = browserKey(failing);
-    expect(page).not.toBe(0n);
-    expect(browserKey(null)).toBe(page);
   });
 
   it("a region's ping: a hello with intent ping, no ticket, timed to the server's answer, the better of two; none, null (Regions)", async () => {

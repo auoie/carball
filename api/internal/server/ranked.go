@@ -200,14 +200,6 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 // account's latest match is still that one, at that server (Matchmaker.RejoinCheck); false once it searched or was
 // matched since. The server refuses the rejoin unless told true. Nothing spent: the server takes the ticket's one-time id
 func (s *Server) rejoinCheck(w http.ResponseWriter, r *http.Request) {
-	s.answerRejoin(w, r, func(encoded, match string, now time.Time) (ticket.Ticket, error) {
-		return s.playerTicket(encoded, ticket.PurposeRejoin, match, now)
-	})
-}
-
-// answerRejoin answers a rejoin's question, its ticket checked by `verify` (the service's keys, or a development
-// matchmaker's key)
-func (s *Server) answerRejoin(w http.ResponseWriter, r *http.Request, verify func(encoded, match string, now time.Time) (ticket.Ticket, error)) {
 	var body struct {
 		Match  string `json:"match"`
 		Server string `json:"server"`
@@ -221,7 +213,7 @@ func (s *Server) answerRejoin(w http.ResponseWriter, r *http.Request, verify fun
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
-	t, err := verify(body.Ticket, body.Match, s.Now())
+	t, err := s.playerTicket(body.Ticket, ticket.PurposeRejoin, body.Match, s.Now())
 	if err != nil {
 		s.log(r).Warn("a rejoin's ticket refused", "match", body.Match, "server", body.Server, "err", err)
 		writeError(w, http.StatusForbidden, "ticket")
@@ -235,7 +227,7 @@ func (s *Server) answerRejoin(w http.ResponseWriter, r *http.Request, verify fun
 	}
 	ok := s.Matchmaker.RejoinCheck(account, t.Match, body.Server)
 	if !ok {
-		s.log(r).Info("a rejoin refused: the account searched or was matched since", "match", body.Match,
+		s.log(r).Info("a rejoin refused: the account searched or was matched since, or the match is another server's", "match", body.Match,
 			"server", body.Server, "account", account, "name", t.Name)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"rejoin": ok})

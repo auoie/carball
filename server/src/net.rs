@@ -773,7 +773,7 @@ async fn session(
                     refuse(&mut send, &connection, protocol::REFUSED_REJOIN_GONE).await;
                     bail!(
                         "{}: the rejoin of match {m:016x} refused: the matchmaker says the account searched or was matched \
-                         since",
+                         since, or the match is another server's",
                         request.who()
                     );
                 }
@@ -959,83 +959,23 @@ async fn serve_http(
 /// A development or health endpoint's request buffer at most (bytes; hyper's least is 8 KiB)
 const MAX_REQUEST_BUFFER: usize = 16 * 1024;
 
-/// A development endpoint's answer: its JSON (any page may read it, never cached), or a 400 for a request it can't serve
-fn dev_answer(body: Option<String>) -> axum::response::Response {
-    use axum::http::{StatusCode, header};
+/// The development info's answer: its JSON (any page may read it, never cached)
+fn dev_answer(body: String) -> axum::response::Response {
+    use axum::http::header;
     use axum::response::IntoResponse;
     let open = [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"), (header::CACHE_CONTROL, "no-store")];
-    match body {
-        Some(body) => (open, [(header::CONTENT_TYPE, "application/json")], body).into_response(),
-        None => (StatusCode::BAD_REQUEST, open).into_response(),
-    }
+    (open, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
 /// Development helper: `GET /info` on plain HTTP returns the WebTransport port and the certificate hash, so a browser
-/// on this machine can connect to the self-signed server; a development queue server's `GET /dev-ticket` its tickets
-/// (`dev_ticket`). A development server's only (SEC-6): on `bind` (127.0.0.1 unless asked), 64 connections at once, 2 s
-/// for a request's headers
-pub async fn serve_info(
-    bind: IpAddr,
-    port: u16,
-    webtransport_port: u16,
-    cert_hash: [u8; 32],
-    dev_tickets: Option<Arc<crate::ticket::Tickets>>,
-) -> anyhow::Result<()> {
+/// on this machine can connect to the self-signed server (the direct `--dev` server's alone, SEC-6): on `bind`
+/// (127.0.0.1 unless asked), 64 connections at once, 2 s for a request's headers
+pub async fn serve_info(bind: IpAddr, port: u16, webtransport_port: u16, cert_hash: [u8; 32]) -> anyhow::Result<()> {
     use axum::routing::get;
     let hex: String = cert_hash.iter().map(|b| format!("{b:02x}")).collect();
     let info = serde_json::json!({ "port": webtransport_port, "certHash": hex }).to_string();
-    let mut app = axum::Router::new().route("/info", get(move || std::future::ready(dev_answer(Some(info.clone())))));
-    if let Some(tickets) = dev_tickets {
-        // (a query it can't read (a field twice) its own 400, with the page's headers, not axum's bare one: RV-940)
-        app = app.route(
-            "/dev-ticket",
-            get(
-                move |query: Result<axum::extract::Query<DevTicketQuery>, axum::extract::rejection::QueryRejection>| {
-                    std::future::ready(dev_answer(query.ok().and_then(|q| dev_ticket(&tickets, &q.0))))
-                },
-            ),
-        );
-    }
+    let app = axum::Router::new().route("/info", get(move || std::future::ready(dev_answer(info.clone()))));
     serve_http(tokio::net::TcpListener::bind((bind, port)).await?, app, 64, Duration::from_secs(2)).await
-}
-
-/// A development ticket's query (`/dev-ticket?…`, form-decoded): `name` ("Dev " and the account's first 4 hex digits
-/// when none, so two nameless players aren't one name), `id` (the account's 16 bytes as 32 hex digits, kept by the page
-/// so its searches are one account's; random when none), `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing: a
-/// new account's when none) and `rejoin` (the match the rejoin's ticket is for: 16 hex digits, as the API's; required)
-#[derive(Debug, Default, serde::Deserialize)]
-struct DevTicketQuery {
-    name: Option<String>,
-    id: Option<String>,
-    r1: Option<String>,
-    r2: Option<String>,
-    r3: Option<String>,
-    rejoin: Option<String>,
-}
-
-/// A development ticket's JSON for its query; None for a malformed one
-fn dev_ticket(tickets: &crate::ticket::Tickets, query: &DevTicketQuery) -> Option<String> {
-    let mut ratings = [crate::ticket::DEFAULT_RATING; 3];
-    let rejoin = query.rejoin.as_deref()?;
-    let match_id = u64::from_str_radix(rejoin, 16).ok().filter(|&m| m != 0 && rejoin.len() == 16)?;
-    let mut account = [0u8; 16];
-    getrandom::fill(&mut account).ok()?;
-    let name =
-        query.name.as_deref().map(str::trim).filter(|n| !n.is_empty() && n.len() <= crate::protocol::MAX_NAME_BYTES);
-    if let Some(id) = query.id.as_deref().filter(|id| id.len() == 32) {
-        for (i, byte) in account.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(id.get(2 * i..2 * i + 2)?, 16).ok()?;
-        }
-    }
-    for (rating, value) in ratings.iter_mut().zip([&query.r1, &query.r2, &query.r3]) {
-        if let Some(value) = value {
-            rating.rating = value.parse().ok()?;
-        }
-    }
-    let name = name.map_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]), str::to_string);
-    let purpose = crate::ticket::Purpose::Rejoin(match_id);
-    let ticket = tickets.dev_ticket(account, &name, ratings, purpose, crate::ticket::unix_now())?;
-    Some(serde_json::json!({ "ticket": ticket }).to_string())
 }
 
 /// The health endpoint's port bound, on 127.0.0.1 (the start fails if it's taken: another process's /healthz would
@@ -1134,44 +1074,13 @@ mod tests {
         assert_eq!(one_line("a plain \"name\" stays as it is"), "a plain \"name\" stays as it is");
     }
 
-    #[test]
-    fn a_development_ticket_is_for_the_asked_account_and_name() {
-        let tickets = crate::ticket::Tickets::from_list("").unwrap().with_dev_key().unwrap();
-        let ticket_of = |query: &str| {
-            let uri: axum::http::Uri = format!("http://localhost/dev-ticket?{query}").parse().ok()?;
-            let axum::extract::Query(query) = axum::extract::Query::<DevTicketQuery>::try_from_uri(&uri).ok()?;
-            let body = dev_ticket(&tickets, &query)?;
-            let ticket = body.strip_prefix("{\"ticket\":\"")?.strip_suffix("\"}")?;
-            tickets.check(ticket, crate::ticket::unix_now()).ok()
-        };
-        let id = "0123456789abcdef".repeat(2);
-        let t = ticket_of(&format!("name=Caf%C3%A9+Ada&id={id}&rejoin=00000000000000a1")).unwrap();
-        assert_eq!((t.name.as_str(), t.account[0], t.account[15]), ("Café Ada", 0x01, 0xef));
-        assert_eq!(t.purpose, crate::ticket::Purpose::Rejoin(0xa1), "a rejoin's, for its match");
-        assert!(ticket_of("rejoin=00000000000000a1").unwrap().name.starts_with("Dev "), "no name: Dev and the digits");
-        assert_eq!(ticket_of(&format!("name=%20%20&id={id}&rejoin=00000000000000a1")).unwrap().name, "Dev 0123");
-        // (form decoding's, as a browser's: a malformed escape kept as it is)
-        assert_eq!(ticket_of(&format!("name=%zz&id={id}&rejoin=00000000000000a1")).unwrap().name, "%zz");
-        assert!(ticket_of(&format!("id={}&rejoin=00000000000000a1", "zz".repeat(16))).is_none(), "a malformed id");
-        let long = ticket_of(&format!("name={}&id={id}&rejoin=00000000000000a1", "x".repeat(40)));
-        assert_eq!(long.unwrap().name, "Dev 0123", "too long");
-        assert!(
-            ticket_of(&format!("name=Ada&id={id}")).is_none(),
-            "no match: no ticket (a search's are the matchmaker's)"
-        );
-        for bad in ["a1", "0000000000000000", "zz000000000000a1"] {
-            assert!(ticket_of(&format!("id={id}&rejoin={bad}")).is_none(), "a malformed match {bad}");
-        }
-    }
-
     /// The development info server as HTTP: its routes and methods (anything else a 404 or 405), the CORS and no-store
     /// headers, a request split across reads read whole, a connection that sends nothing let go after 2 s
     #[tokio::test]
     async fn the_info_server_answers_its_routes_as_http() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let tickets = Arc::new(crate::ticket::Tickets::from_list("").unwrap().with_dev_key().unwrap());
-        tokio::spawn(serve_info([127, 0, 0, 1].into(), port, 4433, [0xab; 32], Some(tickets)));
+        tokio::spawn(serve_info([127, 0, 0, 1].into(), port, 4433, [0xab; 32]));
         tokio::time::sleep(Duration::from_millis(100)).await;
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let get = |path: &str| client.get(format!("http://127.0.0.1:{port}{path}")).send();
@@ -1184,15 +1093,10 @@ mod tests {
         assert_eq!(get("/").await.unwrap().status(), 404, "not the info for any path");
         let posted = client.post(format!("http://127.0.0.1:{port}/info")).send().await.unwrap();
         assert_eq!(posted.status(), 405, "nor for any method");
-        let ticket = get("/dev-ticket?name=Ada&rejoin=00000000000000a1").await.unwrap();
-        assert_eq!(ticket.status(), 200);
-        assert_eq!(get("/dev-ticket?name=Ada").await.unwrap().status(), 400, "no match");
-        assert_eq!(get("/dev-ticket?rejoin=zz").await.unwrap().status(), 400);
-        // (a query it can't read, a field twice: its own 400, the page's headers on it, RV-940)
-        let twice = get("/dev-ticket?rejoin=00000000000000a1&name=a&name=b").await.unwrap();
         assert_eq!(
-            (twice.status().as_u16(), twice.headers()["access-control-allow-origin"].to_str().unwrap()),
-            (400, "*")
+            get("/dev-ticket?rejoin=00000000000000a1").await.unwrap().status(),
+            404,
+            "no tickets here: the accounts service issues them"
         );
         // (a request in two writes, apart: read whole, answered)
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();

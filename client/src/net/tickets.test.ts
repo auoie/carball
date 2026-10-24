@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket, devTicket, queueBanText } from "./tickets";
+import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket, queueBanText } from "./tickets";
 
 const answer = (body: unknown, status = 200) => vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status })));
 
@@ -40,18 +40,5 @@ describe("rejoin tickets", () => {
     await expect(accountTicket(1n, answer({ ticket: `${longest}A` }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(1n, answer({ ticket: "A".repeat(100) }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(1n, answer({}))).rejects.toThrow(/malformed/);
-  });
-
-  it("asks a development server's info server for one on this browser's key", async () => {
-    const get = answer({ ticket: "Zm9v.YmFy.c2ln" });
-    const source = devTicket("127.0.0.1", 4434, get);
-    expect(await source(0xfedcba9876543210n)).toBe("Zm9v.YmFy.c2ln");
-    const url = String((get.mock.calls[0] as unknown[])[0]);
-    const id = /&id=([0-9a-f]{32})&rejoin=fedcba9876543210$/.exec(url)?.[1] ?? "";
-    expect(url.startsWith("http://127.0.0.1:4434/dev-ticket?name=")).toBe(true);
-    expect(id.slice(0, 16)).toBe(id.slice(16)); // (the browser's key, twice: one account per browser)
-    await source(0xfedcba9876543210n);
-    expect(String((get.mock.calls[1] as unknown[])[0])).toBe(url);
-    await expect(devTicket("127.0.0.1", 4434, answer({}, 404))(1n)).rejects.toThrow(/404/);
   });
 });

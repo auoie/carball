@@ -174,7 +174,7 @@ func (s *Server) pollSearch(w http.ResponseWriter, r *http.Request) {
 	s.poll(w, r, id, ss.AccountID, after)
 }
 
-// poll answers a search's poll, the account's own (none: any, a development matchmaker's)
+// poll answers a search's poll, the account's own
 func (s *Server) poll(w http.ResponseWriter, r *http.Request, id, account string, after int) {
 	state, ok := s.Matchmaker.Poll(r.Context(), id, account, after, PollWait)
 	if !ok {

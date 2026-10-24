@@ -347,8 +347,8 @@ func TestATicketPastMaxBytesIsRefused(t *testing.T) {
 	}
 }
 
-// The public keys' list by the game server's rules (AP2-5, RV-948): a key of small order (its sign bit either way), the
-// development key's id, an id twice, a key not 32 bytes of base64: refused; an error names the entry, never its text
+// The public keys' list by the game server's rules (AP2-5, RV-948): a key of small order (its sign bit either way), an
+// id twice, a key not 32 bytes of base64: refused; an error names the entry, never its text
 // (RV-953)
 func TestParsePublicRefusesWhatTheGameServerRefuses(t *testing.T) {
 	good := func(seed byte) string {
@@ -369,12 +369,11 @@ func TestParsePublicRefusesWhatTheGameServerRefuses(t *testing.T) {
 	}
 	secret := "c2VlZC1vZi1hLWtleS1uZXZlci10by1iZS1sb2dnZWQhIQ=="
 	for name, list := range map[string]string{
-		"the development key's id": "dev " + good(1),
-		"an id twice":              "k1 " + good(1) + ", k1 " + good(2),
-		"not 32 bytes":             "k1 c2hvcnQ=",
-		"not base64":               "k1 !!!",
-		"three fields":             "k1 " + secret + " extra",
-		"a seed, not a key":        "k1 " + secret,
+		"an id twice":       "k1 " + good(1) + ", k1 " + good(2),
+		"not 32 bytes":      "k1 c2hvcnQ=",
+		"not base64":        "k1 !!!",
+		"three fields":      "k1 " + secret + " extra",
+		"a seed, not a key": "k1 " + secret,
 	} {
 		_, err := ParsePublic(list)
 		if err == nil {
@@ -382,9 +381,6 @@ func TestParsePublicRefusesWhatTheGameServerRefuses(t *testing.T) {
 		} else if strings.Contains(err.Error(), secret) {
 			t.Errorf("%s: the entry's text in the error: %v", name, err)
 		}
-	}
-	if _, err := NewSigner(DevKeyID, base64.StdEncoding.EncodeToString(make([]byte, 32))); err == nil {
-		t.Error("a signer with the development key's id")
 	}
 }
 
@@ -432,13 +428,5 @@ func TestSeat(t *testing.T) {
 		if _, _, err := s.IssueSeat([16]byte{7}, "Seated", [3]Shown{}, bad, now); err == nil {
 			t.Errorf("%s: issued", name)
 		}
-	}
-}
-
-// The development key: its id and its public key fixed (the game server's --dev takes it: server/src/ticket.rs)
-func TestDevSigner(t *testing.T) {
-	d := DevSigner()
-	if d.KeyID != DevKeyID || d.Public() != "dev 1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=" {
-		t.Errorf("the development key: %q", d.Public())
 	}
 }

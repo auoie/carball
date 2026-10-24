@@ -16,17 +16,11 @@
 //! A rejoin's ticket is for its match alone (the network server takes it for that rejoin, nothing else): the accounts
 //! service issues one to a leaver its queue ban holds, so they can come back and refill the lobby (LV1, AP3).
 //! protocol/ticket_vector.json holds tickets the API's code makes, checked by both sides' tests.
-//!
-//! A development server (`--dev`) also takes tickets of the development key (id "dev": a fixed key, published, the seed
-//! the SHA-256 of `DEV_SEED_TEXT`, the API's `ticket.DevSigner` too): the development matchmaker's match tickets, and
-//! the rejoin tickets its info server hands to the pages that ask (`dev_ticket`), so the browser tests and a development
-//! page play without the service. Only `--dev` takes that key (its id reserved), and it hands a ticket to anyone anyway.
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use jsonwebtoken::errors::ErrorKind;
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use ring::signature::{Ed25519KeyPair, KeyPair};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
@@ -36,18 +30,11 @@ const ISSUER: &str = "carball";
 pub const MAX_BYTES: usize = 1024;
 /// A match ticket's server address's longest (bytes; the API's `ticket.MaxServer`)
 const MAX_SERVER: usize = 64;
-/// What the development key's seed is the SHA-256 of (the API's `ticket.DevSeedText`)
-const DEV_SEED_TEXT: &str = "carball development ticket key";
-/// An Ed25519 seed's PKCS#8 v1 (RFC 8410) before the seed: the signing key's form jsonwebtoken takes
-const PKCS8_PREFIX: [u8; 16] =
-    [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
 /// The two boxes' clocks apart at most (s)
 const SKEW: i64 = 30;
-/// A development ticket's life (s; the API's `ticket.Lifetime`); a match ticket's (`ticket.SeatLifetime`)
+/// A rejoin ticket's life (s; the API's `ticket.Lifetime`); a match ticket's (`ticket.SeatLifetime`)
 const LIFETIME: i64 = 120;
 const SEAT_LIFETIME: i64 = 30;
-/// The development key's id (reserved: a listed key can't take it)
-pub const DEV_KEY_ID: &str = "dev";
 
 /// The Ed25519 public keys of small order (libsodium's list, sign bit aside: each checked to decode to a point P with
 /// [8]P the identity): a signature "checks" under one for many messages, so none is taken (AP2-5)
@@ -142,12 +129,12 @@ pub enum Refusal {
 
 /// A ticket's claims as the API writes them (a seat's `aud`, playlist, seat and roster: none in a rejoin's); none else,
 /// and none null (RV-954)
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Claims {
     iss: String,
     sub: String,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
     aud: Option<String>,
     iat: i64,
     exp: i64,
@@ -157,11 +144,11 @@ struct Claims {
     purpose: String,
     #[serde(rename = "match")]
     match_id: String,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
     playlist: Option<u8>,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
     seat: Option<u8>,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
     roster: Option<u8>,
 }
 
@@ -192,12 +179,6 @@ fn strict_header(encoded: &str) -> Option<String> {
         .then_some(header.kid)
 }
 
-/// The development key: its signing key (jsonwebtoken's, PKCS#8) and its public key
-struct DevKey {
-    signing: EncodingKey,
-    public: Vec<u8>,
-}
-
 /// The keys tickets are checked with (reloadable: a rotation without a restart, AP2-4), the one-time ids taken (until
 /// their tickets expire), and when this process started (a ticket issued before it may have been used with the one
 /// before: refused, with no clock skew allowed, deliberately: a skew would let a ticket spent on the last process through
@@ -208,7 +189,6 @@ pub struct Tickets {
     nonces: Mutex<HashMap<[u8; 16], i64>>,
     /// The one-time ids whose use is being decided now (a rejoin's question to the API): one at a time (RV-1020)
     deciding: Mutex<std::collections::HashSet<[u8; 16]>>,
-    dev: Option<DevKey>,
     started: i64,
 }
 
@@ -226,7 +206,7 @@ impl Drop for Deciding<'_> {
 
 impl std::fmt::Debug for Tickets {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // (the keys' ids alone: never a development key's secret)
+        // (the keys' ids alone)
         f.debug_struct("Tickets").field("keys", &self.key_ids()).finish_non_exhaustive()
     }
 }
@@ -239,7 +219,6 @@ impl Tickets {
             keys: RwLock::new(parse_keys(list)?),
             nonces: Mutex::new(HashMap::new()),
             deciding: Mutex::new(std::collections::HashSet::new()),
-            dev: None,
             started: unix_now(),
         })
     }
@@ -263,34 +242,13 @@ impl Tickets {
         ids
     }
 
-    /// The listed keys replaced by a new list (a rotation: `TICKET_PUBLIC_KEYS_FILE` read again on SIGHUP), the
-    /// development key kept; a bad list changes nothing
+    /// The listed keys replaced by a new list (a rotation: `TICKET_PUBLIC_KEYS_FILE` read again on SIGHUP); a bad list
+    /// changes nothing
     pub fn reload(&self, list: &str) -> anyhow::Result<()> {
-        let mut keys = parse_keys(list)?;
+        let keys = parse_keys(list)?;
         anyhow::ensure!(!keys.is_empty(), "TICKET_PUBLIC_KEYS: no key");
-        if let Some(dev) = &self.dev {
-            keys.insert(DEV_KEY_ID.to_string(), dev.public.clone());
-        }
         *self.keys.write().unwrap_or_else(std::sync::PoisonError::into_inner) = keys;
         Ok(())
-    }
-
-    /// A development server's: the development key besides (fixed: the development matchmaker's), whose tickets
-    /// `dev_ticket` signs too
-    pub fn with_dev_key(mut self) -> anyhow::Result<Self> {
-        let seed = ring::digest::digest(&ring::digest::SHA256, DEV_SEED_TEXT.as_bytes());
-        let pair =
-            Ed25519KeyPair::from_seed_unchecked(seed.as_ref()).map_err(|_| anyhow::anyhow!("a development key"))?;
-        let dev = DevKey {
-            signing: EncodingKey::from_ed_der(&[PKCS8_PREFIX.as_slice(), seed.as_ref()].concat()),
-            public: pair.public_key().as_ref().to_vec(),
-        };
-        self.keys
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(DEV_KEY_ID.to_string(), dev.public.clone());
-        self.dev = Some(dev);
-        Ok(self)
     }
 
     /// A ticket checked at `now` (Unix s): `verify`, then `spend`
@@ -358,46 +316,6 @@ impl Tickets {
         nonces.insert(ticket.nonce, ticket.expires);
         Ok(())
     }
-
-    /// A development ticket for `account` named `name` with `ratings`, for `purpose`, at `now`, signed with the
-    /// development key; None without one (a server not `--dev`) or for a name that won't fit
-    pub fn dev_ticket(
-        &self,
-        account: [u8; 16],
-        name: &str,
-        ratings: [Shown; 3],
-        purpose: Purpose,
-        now: i64,
-    ) -> Option<String> {
-        let dev = self.dev.as_ref()?;
-        if name.is_empty() || name.len() > 32 {
-            return None;
-        }
-        let mut nonce = [0u8; 16];
-        getrandom::fill(&mut nonce).ok()?;
-        let (match_id, seat) = match &purpose {
-            Purpose::Rejoin(m) => (*m, None),
-            Purpose::Seat(s) => (s.match_id, Some(s)),
-        };
-        let claims = Claims {
-            iss: ISSUER.to_string(),
-            sub: account.iter().map(|b| format!("{b:02x}")).collect(),
-            aud: seat.map(|s| s.server.clone()),
-            iat: now,
-            exp: now + if seat.is_some() { SEAT_LIFETIME } else { LIFETIME },
-            jti: URL_SAFE_NO_PAD.encode(nonce),
-            name: name.to_string(),
-            ratings: ratings.map(|r| [r.rating, r.deviation]),
-            purpose: if seat.is_some() { "seat" } else { "rejoin" }.to_string(),
-            match_id: format!("{match_id:016x}"),
-            playlist: seat.map(|s| s.playlist),
-            seat: seat.map(|s| s.seat),
-            roster: seat.map(|s| s.roster),
-        };
-        let mut header = Header::new(Algorithm::EdDSA);
-        header.kid = Some(DEV_KEY_ID.to_string());
-        jsonwebtoken::encode(&header, &claims, &dev.signing).ok()
-    }
 }
 
 /// What a ticket's signature and claims are checked for: EdDSA alone, issued by the accounts service, an account and an
@@ -413,7 +331,7 @@ fn validation() -> Validation {
 }
 
 /// `TICKET_PUBLIC_KEYS`'s keys: "KID BASE64" each, separated by commas or new lines; a malformed line, a key not 32
-/// bytes, a key of small order, a key id twice or the development key's id refused (AP2-5)
+/// bytes, a key of small order or a key id twice refused (AP2-5)
 fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     let mut keys = HashMap::new();
     // (an error names the entry by its number, never its text: a seed pasted in the wrong file stays out of the log,
@@ -429,7 +347,6 @@ fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
             .map_err(|_| anyhow::anyhow!("TICKET_PUBLIC_KEYS: key entry {n} isn't base64"))?;
         anyhow::ensure!(key.len() == 32, "TICKET_PUBLIC_KEYS: key entry {n}'s key isn't 32 bytes");
         anyhow::ensure!(!kid.is_empty() && kid.len() <= 32, "TICKET_PUBLIC_KEYS: key entry {n}'s id isn't 1-32 bytes");
-        anyhow::ensure!(kid != DEV_KEY_ID, "TICKET_PUBLIC_KEYS: key entry {n} has the id {DEV_KEY_ID:?}, --dev's own");
         anyhow::ensure!(!small_order(&key), "TICKET_PUBLIC_KEYS: key entry {n} is of small order (no signer's)");
         anyhow::ensure!(keys.insert(kid.to_string(), key).is_none(), "TICKET_PUBLIC_KEYS: key entry {n} repeats an id");
     }
@@ -489,10 +406,13 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jsonwebtoken::{EncodingKey, Header};
+    use ring::signature::{Ed25519KeyPair, KeyPair};
 
     const NOW: i64 = 1_792_300_000;
-    /// The development key's public key (the API's `ticket.DevSigner().Public()`, checked by its test too)
-    const DEV_PUBLIC_KEY: &str = "1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=";
+    /// An Ed25519 seed's PKCS#8 v1 (RFC 8410) before the seed: the signing key's form jsonwebtoken takes
+    const PKCS8_PREFIX: [u8; 16] =
+        [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
 
     /// A key of the seed `[seed; 32]`: its signing key and the tickets that check with it (key id "test", started at
     /// NOW)
@@ -519,16 +439,39 @@ mod tests {
         jsonwebtoken::encode(&header, claims, key).unwrap()
     }
 
+    /// A ticket as the API issues one, signed with `key`: `account` named `name` with a new account's ratings, for
+    /// `purpose`, issued at `issued` for its purpose's life, a fresh one-time id
+    fn issued(key: &EncodingKey, account: [u8; 16], name: &str, purpose: &Purpose, issued: i64) -> String {
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).unwrap();
+        let (rating, deviation) = (DEFAULT_RATING.rating, DEFAULT_RATING.deviation);
+        let mut claims = serde_json::json!({
+            "iss": "carball", "sub": account.iter().map(|b| format!("{b:02x}")).collect::<String>(), "iat": issued,
+            "exp": issued + LIFETIME, "jti": URL_SAFE_NO_PAD.encode(nonce), "name": name,
+            "ratings": [[rating, deviation], [rating, deviation], [rating, deviation]], "purpose": "rejoin",
+        });
+        match purpose {
+            Purpose::Rejoin(m) => claims["match"] = format!("{m:016x}").into(),
+            Purpose::Seat(seat) => {
+                claims["match"] = format!("{:016x}", seat.match_id).into();
+                (claims["purpose"], claims["exp"], claims["aud"]) =
+                    ("seat".into(), (issued + SEAT_LIFETIME).into(), seat.server.clone().into());
+                (claims["playlist"], claims["seat"], claims["roster"]) =
+                    (seat.playlist.into(), seat.seat.into(), seat.roster.into());
+            }
+        }
+        signed(key, &claims)
+    }
+
     /// The tickets the API's code made (protocol/ticket_vector.json, api/internal/ticket's vector test: a rejoin's and a
     /// seat's): read as they say
     /// RV-1020: a ticket's use decided one at a time: a second decision while the first is held is refused (Reused); once
     /// it's dropped, free again
     #[test]
     fn a_tickets_use_is_decided_one_at_a_time() {
-        let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap();
-        let now = unix_now();
-        let encoded = tickets.dev_ticket([7; 16], "Eve", [DEFAULT_RATING; 3], Purpose::Rejoin(0xd4), now).unwrap();
-        let ticket = tickets.verify(&encoded, now).unwrap();
+        let (k, tickets) = key(9);
+        let encoded = issued(&k, [7; 16], "Eve", &Purpose::Rejoin(0xd4), NOW);
+        let ticket = tickets.verify(&encoded, NOW).unwrap();
         let first = tickets.decide(&ticket).unwrap();
         assert!(matches!(tickets.decide(&ticket), Err(Refusal::Reused)), "a second while the first is decided");
         drop(first);
@@ -627,11 +570,11 @@ mod tests {
     }
 
     #[test]
-    fn a_development_ticket_checks_once_within_its_time() {
-        let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
+    fn a_ticket_checks_once_within_its_time() {
+        let (k, tickets) = key(10);
         let account = [7u8; 16];
-        let dev = || tickets.dev_ticket(account, "Made Up", [DEFAULT_RATING; 3], Purpose::Rejoin(0xa1), NOW).unwrap();
-        let encoded = dev();
+        let fresh = || issued(&k, account, "Made Up", &Purpose::Rejoin(0xa1), NOW);
+        let encoded = fresh();
         assert!(encoded.len() <= MAX_BYTES);
         let ticket = tickets.check(&encoded, NOW + 10).unwrap();
         assert_eq!(
@@ -647,13 +590,17 @@ mod tests {
             }
         );
         assert_eq!(tickets.check(&encoded, NOW + 11), Err(Refusal::Reused), "used once");
-        assert_eq!(tickets.check(&dev(), NOW + LIFETIME + SKEW), Err(Refusal::OutOfTime), "past its time and the skew");
-        assert_eq!(tickets.check(&dev(), NOW - SKEW - 1), Err(Refusal::OutOfTime), "before it was issued");
-        assert!(tickets.check(&dev(), NOW + LIFETIME + SKEW - 1).is_ok(), "within the skew");
+        assert_eq!(
+            tickets.check(&fresh(), NOW + LIFETIME + SKEW),
+            Err(Refusal::OutOfTime),
+            "past its time and the skew"
+        );
+        assert_eq!(tickets.check(&fresh(), NOW - SKEW - 1), Err(Refusal::OutOfTime), "before it was issued");
+        assert!(tickets.check(&fresh(), NOW + LIFETIME + SKEW - 1).is_ok(), "within the skew");
         // (the skew pinned, and a one-time id kept to the end of its ticket's time and the skew: a replay a second before
         // refused as used, at that end as out of its time (RV-952's R5, R7))
         assert_eq!(SKEW, 30);
-        let replayed = dev();
+        let replayed = fresh();
         assert!(tickets.check(&replayed, NOW).is_ok());
         assert_eq!(
             tickets.check(&replayed, NOW + LIFETIME + SKEW - 1),
@@ -725,48 +672,37 @@ mod tests {
         assert_eq!(long_tickets.check(&long, NOW), Err(Refusal::Malformed), "past MAX_BYTES");
     }
 
-    /// A match ticket: its seat read back, at its server, its header the API's (EdDSA, its key's id, typ JWT); the
-    /// development key fixed (the API's `ticket.DevSigner`: the development matchmaker's tickets checked by a
-    /// development server)
+    /// A match ticket: its seat read back, at its server, its life a seat's
     #[test]
-    fn a_match_tickets_seat_reads_back_and_the_development_key_is_the_apis() {
-        let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
+    fn a_match_tickets_seat_reads_back() {
+        let (k, tickets) = key(11);
         let seat = Seat { match_id: 0xfeed, server: "game-eu.example:4433".into(), playlist: 3, seat: 5, roster: 6 };
-        let encoded =
-            tickets.dev_ticket([7; 16], "Made Up", [DEFAULT_RATING; 3], Purpose::Seat(seat.clone()), NOW).unwrap();
-        let header = jsonwebtoken::decode_header(&encoded).unwrap();
-        assert_eq!(
-            (header.alg, header.kid.as_deref(), header.typ.as_deref()),
-            (Algorithm::EdDSA, Some("dev"), Some("JWT"))
-        );
-        let ticket = tickets.check(&encoded, NOW + 1).unwrap();
+        let ticket =
+            tickets.check(&issued(&k, [7; 16], "Made Up", &Purpose::Seat(seat.clone()), NOW), NOW + 1).unwrap();
         assert_eq!((ticket.purpose, ticket.expires), (Purpose::Seat(seat), NOW + SEAT_LIFETIME));
-        // (the API's development key: its public key, as `carball-api matchmaker --dev` logs it)
-        let ids = tickets.keys.read().unwrap();
-        assert_eq!(STANDARD.encode(&ids[DEV_KEY_ID]), DEV_PUBLIC_KEY);
     }
 
     /// Another key's signature, a changed payload, alg none, an HMAC keyed with the public key, not a JWT, too long, an
     /// unknown key id: refused
     #[test]
     fn a_ticket_of_another_key_or_changed_is_refused() {
-        let ours = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
+        let (signer, ours) = key(2);
         // (the same key id, another key: a key "test" listed, a ticket signed by another)
         let ((_, tests), (other, _)) = (key(3), key(4));
         let foreign = signed(&other, &rejoin_claims(NOW, NOW + 120, 1));
         assert_eq!(tests.check(&foreign, NOW), Err(Refusal::BadSignature), "the same key id, another key");
-        let encoded = ours.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Rejoin(0xa1), NOW).unwrap();
+        let encoded = issued(&signer, [1; 16], "Name", &Purpose::Rejoin(0xa1), NOW);
         let parts: Vec<&str> = encoded.split('.').collect();
         let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
         let changed = URL_SAFE_NO_PAD.encode(payload.replace("\"name\":\"Name\"", "\"name\":\"Mame\""));
         assert_ne!(changed, parts[1]);
         let tampered = format!("{}.{changed}.{}", parts[0], parts[2]);
         assert_eq!(ours.check(&tampered, NOW), Err(Refusal::BadSignature), "its payload changed");
-        let none = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","kid":"dev","typ":"JWT"}"#);
+        let none = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","kid":"test","typ":"JWT"}"#);
         assert_eq!(ours.check(&format!("{none}.{}.", parts[1]), NOW), Err(Refusal::Malformed), "alg none");
-        let public = ours.keys.read().unwrap()[DEV_KEY_ID].clone();
+        let public = ours.keys.read().unwrap()["test"].clone();
         let mut hs = Header::new(Algorithm::HS256);
-        hs.kid = Some(DEV_KEY_ID.into());
+        hs.kid = Some("test".into());
         let claims: serde_json::Value = serde_json::from_str(&payload).unwrap();
         let confused = jsonwebtoken::encode(&hs, &claims, &EncodingKey::from_secret(&public)).unwrap();
         assert_eq!(ours.check(&confused, NOW), Err(Refusal::Malformed), "HS256 keyed with the public key");
@@ -774,10 +710,6 @@ mod tests {
         assert_eq!(ours.check(&"A".repeat(MAX_BYTES + 1), NOW), Err(Refusal::Malformed));
         let nobody = Tickets::from_list("").unwrap();
         assert_eq!(nobody.check(&encoded, NOW), Err(Refusal::UnknownKey), "no key of that id");
-        assert!(
-            nobody.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Rejoin(0xa1), NOW).is_none(),
-            "a server not --dev signs none"
-        );
     }
 
     #[test]
@@ -837,8 +769,8 @@ mod tests {
         assert!(tickets.check(&at(NOW, NOW + 60, 7), NOW + 10).is_ok(), "issued as it started");
     }
 
-    /// AP2-5: a key of small order, a key id twice, the development key's id: refused; a reload replaces the listed keys,
-    /// keeps the development key, and a bad list changes nothing
+    /// AP2-5: a key of small order, a key id twice: refused; a reload replaces the listed keys, and a bad list changes
+    /// nothing
     #[test]
     fn the_keys_list_refuses_bad_keys_and_reloads() {
         let b64 =
@@ -850,12 +782,11 @@ mod tests {
             assert!(Tickets::from_list(&format!("so {}", STANDARD.encode(signed_bit))).is_err(), "its sign bit set");
         }
         assert!(Tickets::from_list(&format!("k1 {}, k1 {}", b64(1), b64(2))).is_err(), "a key id twice");
-        assert!(Tickets::from_list(&format!("dev {}", b64(1))).is_err(), "--dev's own id");
-        let tickets = Tickets::from_list(&format!("k1 {}", b64(1))).unwrap().with_dev_key().unwrap();
+        let tickets = Tickets::from_list(&format!("k1 {}", b64(1))).unwrap();
         tickets.reload(&format!("k2 {}", b64(2))).unwrap();
-        assert_eq!(tickets.key_ids(), ["dev", "k2"]);
+        assert_eq!(tickets.key_ids(), ["k2"]);
         assert!(tickets.reload(" , ").is_err(), "no key");
         assert!(tickets.reload(&format!("k3 {}", STANDARD.encode(SMALL_ORDER[1]))).is_err());
-        assert_eq!(tickets.key_ids(), ["dev", "k2"], "unchanged");
+        assert_eq!(tickets.key_ids(), ["k2"], "unchanged");
     }
 }

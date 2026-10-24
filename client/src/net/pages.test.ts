@@ -190,13 +190,13 @@ describe("the pages' handoffs", () => {
     // (config.json unreadable twice, then read: the claim goes on)
     const flaky = vi.fn<() => Promise<GameServerConfig>>();
     flaky.mockResolvedValueOnce({ kind: "unreachable" }).mockResolvedValueOnce({ kind: "unreachable" }).mockResolvedValue(deployedConfig);
-    const address = await claimAddress(new URLSearchParams(""), "carball.zolt.top", flaky, pause);
+    const address = await claimAddress(flaky, pause);
     expect(address.url).toBe("https://game.example:4433/play");
     expect(flaky).toHaveBeenCalledTimes(3);
     expect(pauses).toEqual([CLAIM_RETRY_MS, CLAIM_RETRY_MS]);
     // (unreadable every time: CLAIM_TRIES tries, then the failure)
     const down = vi.fn(() => Promise.resolve<GameServerConfig>({ kind: "unreachable" }));
-    await expect(claimAddress(new URLSearchParams(""), "carball.zolt.top", down, pause)).rejects.toThrow(SERVERS_UNREACHABLE);
+    await expect(claimAddress(down, pause)).rejects.toThrow(SERVERS_UNREACHABLE);
     expect(down).toHaveBeenCalledTimes(CLAIM_TRIES);
     // (the ticket: the service down once, then given)
     const post = vi.fn<typeof fetch>();
@@ -215,8 +215,8 @@ describe("the pages' handoffs", () => {
 
   it("keeps the page's other parameters across the pages, without a development server's or the match page's", () => {
     expect(pageUrl("match", { pathname: "/", search: "" })).toBe("/?match");
-    expect(pageUrl("match", { pathname: "/", search: "?queue=127.0.0.1:14440&render=off" })).toBe("/?queue=127.0.0.1%3A14440&render=off&match");
-    expect(pageUrl("menu", { pathname: "/", search: "?queue=q&match" })).toBe("/?queue=q");
+    expect(pageUrl("match", { pathname: "/", search: "?render=off" })).toBe("/?render=off&match");
+    expect(pageUrl("menu", { pathname: "/", search: "?render=off&match" })).toBe("/?render=off");
     expect(pageUrl("menu", { pathname: "/x/", search: "?match&server=a:1" })).toBe("/x/");
     // (the offline match against bots: its own page, ?bots)
     expect(pageUrl("bots", { pathname: "/", search: "?render=off" })).toBe("/?render=off&bots");
@@ -294,42 +294,32 @@ describe("the pages' handoffs", () => {
     expect(configServers({ gameServer: "ftp://x" })).toEqual([]);
   });
 
-  it("finds each region's address, a region by its id (else the first), development servers by ?queue", async () => {
+  it("finds each region's address, a region by its id (else the first); a development page none", async () => {
     const eu = { id: "eu", name: "Europe", url: "https://game-eu.example:4433/play" };
     const us = { id: "us-east", name: "US-East", url: "https://game.example:4433/play" };
     const deployed = (): Promise<GameServerConfig> => Promise.resolve({ kind: "deployed", url: us.url, servers: [us, eu] });
-    const regions = await queueRegions(new URLSearchParams(""), "carball.zolt.top", deployed);
+    const regions = await queueRegions(deployed);
     expect(regions.map((r) => [r.id, r.name, r.address.url, r.address.certHash])).toEqual([
       ["us-east", "US-East", us.url, null],
       ["eu", "Europe", eu.url, null],
     ]);
-    expect((await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed, "eu")).url).toBe(eu.url);
-    expect((await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed, "gone")).url).toBe(us.url);
-    expect((await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed)).url).toBe(us.url);
-    expect((await claimAddress(new URLSearchParams(""), "carball.zolt.top", deployed, () => Promise.resolve(), "eu")).url).toBe(eu.url);
+    expect((await queueAddress(deployed, "eu")).url).toBe(eu.url);
+    expect((await queueAddress(deployed, "gone")).url).toBe(us.url);
+    expect((await queueAddress(deployed)).url).toBe(us.url);
+    expect((await claimAddress(deployed, () => Promise.resolve(), "eu")).url).toBe(eu.url);
     // (a claim's ticket its match ticket, not one fetched: RV-887's P01)
-    const claiming = await claimAddress(new URLSearchParams(""), "carball.zolt.top", deployed, () => Promise.resolve(), "eu", "bWF0Y2g");
+    const claiming = await claimAddress(deployed, () => Promise.resolve(), "eu", "bWF0Y2g");
     expect(await claiming.ticket?.(5n)).toBe("bWF0Y2g");
     // (its server's URL handed over by the menu: opened with it at once, config.json not read again: the flow audit's 1)
     const unread = (): Promise<GameServerConfig> => Promise.reject(new Error("config.json read"));
-    const direct = await claimAddress(new URLSearchParams(""), "carball.zolt.top", unread, () => Promise.resolve(), "eu", "bWF0Y2g", eu.url);
+    const direct = await claimAddress(unread, () => Promise.resolve(), "eu", "bWF0Y2g", eu.url);
     expect([direct.url, direct.certHash, await direct.ticket?.(5n)]).toEqual([eu.url, null, "bWF0Y2g"]);
     // (each region's server as the matchmaker names it, 443 when its URL has no port: P02)
     expect(regions.map((r) => r.server)).toEqual(["game.example:4433", "game-eu.example:4433"]);
     expect(serverOfUrl("https://Game.Example/play")).toBe("game.example:443");
     expect(serverOfUrl("not a url")).toBe("");
-    // (development servers: ?queue=a,b, each named by itself; one alone, no name)
-    const info = vi.fn((url: string) =>
-      Promise.resolve(new Response(JSON.stringify({ port: url.includes("14446") ? 14445 : 14447, certHash: "ab".repeat(32) }))),
-    );
-    vi.stubGlobal("fetch", info);
-    const dev = await queueRegions(new URLSearchParams("queue=127.0.0.1:14446,127.0.0.1:14448"), "carball.zolt.top", deployed);
-    expect(dev.map((r) => [r.id, r.name, r.address.url])).toEqual([
-      ["127.0.0.1:14446", "127.0.0.1:14446", "https://127.0.0.1:14445/play"],
-      ["127.0.0.1:14448", "127.0.0.1:14448", "https://127.0.0.1:14447/play"],
-    ]);
-    const lone = await queueRegions(new URLSearchParams("queue=127.0.0.1:14446"), "carball.zolt.top", deployed);
-    expect(lone.map((r) => [r.id, r.name])).toEqual([["127.0.0.1:14446", ""]]);
+    // (a development page: no regions, no queue: the deployment's services alone)
+    expect(await queueRegions(() => Promise.resolve<GameServerConfig>({ kind: "development" }))).toEqual([]);
   });
 
   it("keeps the match's region and match ticket with a claim, and the region with a saved seat; a bad one dropped", () => {
@@ -444,15 +434,15 @@ describe("the pages' handoffs", () => {
     expect(await deployedGameServer(json({ gameServer: "https://x/play" }, 503))).toEqual(unreachable);
     expect(await deployedGameServer(() => Promise.resolve(new Response("not json")))).toEqual(unreachable);
     expect(await deployedGameServer(() => Promise.reject(new Error("offline")))).toEqual(unreachable);
-    await expect(queueAddress(new URLSearchParams(""), "carball.zolt.top", () => Promise.resolve(unreachable))).rejects.toThrow(SERVERS_UNREACHABLE);
-    // (the deployment's: by name, its real certificate; a development page's ?queue wins over it)
+    await expect(queueAddress(() => Promise.resolve(unreachable))).rejects.toThrow(SERVERS_UNREACHABLE);
+    // (the deployment's: by name, its real certificate)
     const deployed = (): Promise<GameServerConfig> =>
       Promise.resolve({
         kind: "deployed",
         url: "https://game.carball.zolt.top:4433/play",
         servers: [{ id: "default", name: "", url: "https://game.carball.zolt.top:4433/play" }],
       });
-    const deployedAddress = await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed);
+    const deployedAddress = await queueAddress(deployed);
     expect(deployedAddress).toEqual({
       url: "https://game.carball.zolt.top:4433/play",
       certHash: null,
@@ -463,24 +453,6 @@ describe("the pages' handoffs", () => {
     vi.stubGlobal("fetch", post);
     expect(await deployedAddress.ticket?.(0xabcn)).toBe("UmVq.b2lu.c2ln");
     expect(String((post.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=0000000000000abc");
-    // ?queue= wins: the development server's info, its certificate by hash, config.json not even read (RX13's C7)
-    const info = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ port: 14439, certHash: "ab".repeat(32) }))));
-    vi.stubGlobal("fetch", info);
-    const notRead = vi.fn(deployed);
-    const address = await queueAddress(new URLSearchParams("queue=127.0.0.1:14440"), "carball.zolt.top", notRead);
-    expect(address.url).toBe("https://127.0.0.1:14439/play");
-    expect(address.certHash?.length).toBe(32);
-    expect(info).toHaveBeenCalledWith("http://127.0.0.1:14440/info", { cache: "no-store" });
-    expect(notRead).not.toHaveBeenCalled();
-    // (its tickets the development server's own: from its info server, for this browser's key and the settings' name)
-    info.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ticket: "AbC.-_9.c2ln" }))));
-    expect(await address.ticket?.(0xabcn)).toBe("AbC.-_9.c2ln");
-    expect(info).toHaveBeenLastCalledWith(
-      expect.stringMatching(/^http:\/\/127\.0\.0\.1:14440\/dev-ticket\?name=[^&]*&id=[0-9a-f]{32}&rejoin=0000000000000abc$/),
-      {
-        cache: "no-store",
-      },
-    );
   });
 
   afterEach(() => {
@@ -514,8 +486,6 @@ describe("the pages' handoffs", () => {
       servers: [{ id: "default", name: "", url: "https://game.example:4433/play" }],
     };
     const address = await claimAddress(
-      new URLSearchParams(""),
-      "carball.zolt.top",
       () => Promise.resolve(deployedConfig),
       () => Promise.resolve(),
     );

@@ -22,9 +22,9 @@ export const test = base.extend({
 });
 
 /** The context's browser signed in to a new account of its own (the stack's POST /api/e2e/sign-in, from a page on its
- *  origin as the page's writes go: an account as a sign-up makes one, `label` and a few random letters its name); its
- *  id and name */
-export async function signIn(context: BrowserContext, label: string): Promise<{ account: string; name: string }> {
+ *  origin as the page's writes go: an account as a sign-up makes one, `label` and a few random letters its name), or to
+ *  `subject`'s account if it has one already (a returning sign-in); its id and the name asked */
+export async function signIn(context: BrowserContext, label: string, subject = `e2e-${randomUUID()}`): Promise<{ account: string; name: string }> {
   const name = `${label} ${randomBytes(3).toString("hex")}`;
   const page = await context.newPage();
   await page.goto("/healthz");
@@ -37,7 +37,7 @@ export async function signIn(context: BrowserContext, label: string): Promise<{ 
       });
       return { status: response.status, account: ((await response.json()) as { account?: unknown }).account };
     },
-    { subject: `e2e-${randomUUID()}`, name },
+    { subject, name },
   );
   await page.close();
   if (answer.status !== 200 || typeof answer.account !== "string") throw new Error(`the e2e sign-in: HTTP ${String(answer.status)}`);

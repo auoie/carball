@@ -38,16 +38,9 @@ import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
 import { chooseRegions, pingAnswer, searchPlan, storedPings, storedRegions, storePings, storeRegions, toggleRegion } from "./net/regions";
-import { browserKey, pingServer } from "./net/search";
+import { pingServer } from "./net/search";
 import { REFUSED_VERSION } from "./net/protocol";
-import {
-  MATCHMAKER_TEXT,
-  type MatchmakerEndpoint,
-  type MatchmakerSearch,
-  MatchmakerSearchSession,
-  type SearchRequest,
-  devMatchmakerBase,
-} from "./net/matchmaker";
+import { MATCHMAKER_TEXT, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, readGamepad } from "./input/devices";
@@ -241,12 +234,10 @@ async function main(): Promise<void> {
     let match: MatchSession = { intent: "join" };
     if (claim) {
       // (a claim's ticket its match ticket, the matchmaker's; a rejoin's fetched)
-      address = await claimAddress(params, location.hostname, undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket, claim.url).catch(
-        (e: unknown) => {
-          claimFailed(e);
-          throw e;
-        },
-      );
+      address = await claimAddress(undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket, claim.url).catch((e: unknown) => {
+        claimFailed(e);
+        throw e;
+      });
       match = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
     } else if (__CARBALL_BOTS__ && botMatch) {
       // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
@@ -514,8 +505,8 @@ async function main(): Promise<void> {
     freeplayRestart = () => {
       freeplay.restart();
     };
-    // The regions (notes/matchmaking.md, Regions): listed early only where there can be two or more (a deployment's list,
-    // a development page's ?queue=a,b); their pings measured as Play's page opens (again after a minute), or by a search
+    // The regions (notes/matchmaking.md, Regions): listed early only where there are two or more (a deployment's list);
+    // their pings measured as Play's page opens (again after a minute), or by a search
     // with no choice kept; the ones searched the player's choice, kept, else the lowest ping (kept once measured), else
     // the first
     let regions: readonly Region[] = [];
@@ -550,13 +541,9 @@ async function main(): Promise<void> {
       );
     };
     const regionsListed: Promise<readonly Region[]> = (async (): Promise<readonly Region[]> => {
-      const queue = params.get("queue");
-      if (queue !== null && !queue.includes(",")) return [];
-      if (queue === null) {
-        const config = await deployedGameServer();
-        if (config.kind !== "deployed" || config.servers.length < 2) return [];
-      }
-      return queueRegions(params, location.hostname);
+      const config = await deployedGameServer();
+      if (config.kind !== "deployed" || config.servers.length < 2) return [];
+      return queueRegions();
     })()
       .catch(() => [])
       .then((listed) => {
@@ -614,16 +601,8 @@ async function main(): Promise<void> {
       },
       banned: (until: number) => mainMenu?.setQueueBan(until),
     };
-    /** Where the matchmaker is: the deployment's (this page's origin); a development page's `?matchmaker=host:port`, its
-     *  player named by this browser's key and the settings' name; none for a development page without one */
-    const matchmakerEndpoint = async (): Promise<MatchmakerEndpoint | null> => {
-      const dev = devMatchmakerBase(params.get("matchmaker"));
-      if (dev !== null) {
-        const key = browserKey().toString(16).padStart(16, "0");
-        return { base: dev, dev: { name: settings.chat.name.trim() || `Dev ${key.slice(0, 4)}`, key } };
-      }
-      return params.get("queue") === null && (await deployedGameServer()).kind === "deployed" ? { base: "" } : null;
-    };
+    /** Whether there's a matchmaker: the deployment's (this page's origin); none on a development page */
+    const hasMatchmaker = async (): Promise<boolean> => (await deployedGameServer()).kind === "deployed";
     /** The regions the last search had: a found match's server is one of theirs */
     let searchable: readonly Region[] = [];
     const regionOf = (match: FoundMatch): Region | undefined => searchable.find((r) => r.server === match.server);
@@ -644,10 +623,10 @@ async function main(): Promise<void> {
         };
         regionsListed
           .then(async (listed) => {
-            const all = listed.length > 0 ? listed : await queueRegions(params, location.hostname);
-            const endpoint = await matchmakerEndpoint();
+            const all = listed.length > 0 ? listed : await queueRegions();
+            const matchmaker = await hasMatchmaker();
             if (cancelled) return;
-            if (endpoint === null) {
+            if (!matchmaker) {
               handlers.failed(MATCHMAKER_TEXT.noMatchmaker);
               return;
             }
@@ -667,7 +646,7 @@ async function main(): Promise<void> {
               searchedRegions = all.length > 1 ? chosen : all.map((r) => r.id);
               return plan.request;
             };
-            running = MatchmakerSearchSession.start(endpoint, request, accepted, searchNotes);
+            running = MatchmakerSearchSession.start(request, accepted, searchNotes);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -711,7 +690,7 @@ async function main(): Promise<void> {
         // (its region's address as the menu has it, no config.json read again, as a claim's: RV-988)
         const region = regionOf(found);
         const url = region?.address.certHash === null ? region.address.url : undefined;
-        claimAddress(params, location.hostname, undefined, undefined, region?.id, found.ticket, url)
+        claimAddress(undefined, undefined, region?.id, found.ticket, url)
           .then(async (address) => {
             const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token: found.id });
             connection.close();
@@ -823,8 +802,8 @@ async function main(): Promise<void> {
     window.addEventListener("resize", () => {
       if (garageOn) freeplay.showGarage(garageFrame());
     });
-    // The accounts (notes/accounts.md §5): the deployment's page only (its game server from config.json, no ?queue), where
-    // online play needs a signed-in account; a development page plays on its server's own tickets, with no entry
+    // The accounts (notes/accounts.md §5): the deployment's page only (its game servers from config.json), where online
+    // play needs a signed-in account; a development page has no entry (its online play the direct --dev server's)
     const accountsApi = new AccountsApi();
     let accountsOn = false;
     let account: Account | null = null;
@@ -976,37 +955,35 @@ async function main(): Promise<void> {
     // (a sign-in's return, `/?signin=…` or `/?signup`: read, then out of the address; the account read, the entry shown)
     const returned = signInReturn(params);
     if (returned) history.replaceState(history.state, "", withoutSignInReturn(new URL(location.href)));
-    if (params.get("queue") === null) {
-      accountsReady = deployedGameServer().then(async (config) => {
-        deploymentDown = config.kind === "unreachable";
-        if (config.kind !== "deployed") return;
-        accountsOn = true;
-        await readAccount();
-      });
-      // (a match's result reaches the accounts service after the page that played it went: the ratings and the ban read
-      // again a little later, RX30C)
-      void accountsReady.then(() => {
-        if (!accountsOn || account === null) return;
-        for (const later of [8_000, 30_000]) {
-          setTimeout(() => {
-            void readAccount();
-          }, later);
-        }
-      });
-      void accountsReady.then(async () => {
-        if (!accountsOn) return;
-        if (returned?.kind === "signup") {
-          const signup = await accountsApi.signup().catch(() => null);
-          if (signup) {
-            pages.showSignUp(signup);
-            mainMenu?.showAccount();
-          } else modal.show(ACCOUNT_TEXT.signUpTitle.toUpperCase(), accountErrorText("no-signup"));
-        } else if (returned?.kind === "notice") {
-          const [title, body] = signInNotice(returned.reason, returned.until);
-          modal.show(title, body);
-        }
-      });
-    }
+    accountsReady = deployedGameServer().then(async (config) => {
+      deploymentDown = config.kind === "unreachable";
+      if (config.kind !== "deployed") return;
+      accountsOn = true;
+      await readAccount();
+    });
+    // (a match's result reaches the accounts service after the page that played it went: the ratings and the ban read
+    // again a little later, RX30C)
+    void accountsReady.then(() => {
+      if (!accountsOn || account === null) return;
+      for (const later of [8_000, 30_000]) {
+        setTimeout(() => {
+          void readAccount();
+        }, later);
+      }
+    });
+    void accountsReady.then(async () => {
+      if (!accountsOn) return;
+      if (returned?.kind === "signup") {
+        const signup = await accountsApi.signup().catch(() => null);
+        if (signup) {
+          pages.showSignUp(signup);
+          mainMenu?.showAccount();
+        } else modal.show(ACCOUNT_TEXT.signUpTitle.toUpperCase(), accountErrorText("no-signup"));
+      } else if (returned?.kind === "notice") {
+        const [title, body] = signInNotice(returned.reason, returned.until);
+        modal.show(title, body);
+      }
+    });
     // (the training packs there are: Custom Training with one to play)
     refreshPacks();
     // (the bot packages there are: Play vs Bots with one to play, its page's code and the listing in chunks of their own,

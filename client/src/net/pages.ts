@@ -1,7 +1,7 @@
 // The pages' handoffs (the queue: notes/matchmaking.md v1 checklist): the menu page searches and hands the match page its
 // claim (the seat's match ticket, the matchmaker's); the match page hands the menu page back a notice when it ends (a
 // modal to show, a search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
-import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
+import { RefusedError, type ServerAddress } from "./connection";
 import {
   REFUSED_CONCLUDED,
   REFUSED_IN_MATCH,
@@ -13,7 +13,7 @@ import {
   isTicketText,
 } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
-import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket, devTicket } from "./tickets";
+import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket } from "./tickets";
 
 const CLAIM_KEY = "carball.claim";
 const NOTICE_KEY = "carball.menuNotice";
@@ -305,40 +305,25 @@ export function serverOfUrl(url: string): string {
   }
 }
 
-/** The regions: `?queue=host:infoPort[,host:infoPort…]` (development servers, each its /info giving its port and
- *  certificate hash, named by itself when there are two or more); else the deployment's game servers (`config.json`: their
- *  real certificates, no hash); else, a development page, this page's host, info port 4434; a deployment's config that
- *  can't be read, an error. Their searches' and claims' tickets: the accounts service's for the deployment's, each
- *  development server's own else */
-export async function queueRegions(params: URLSearchParams, host: string, deployed = deployedGameServer): Promise<readonly Region[]> {
-  const queue = params.get("queue");
-  if (queue === null) {
-    const config = await deployed();
-    if (config.kind === "deployed") {
-      return config.servers.map((s) => ({
-        id: s.id,
-        name: s.name,
-        address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(rejoin) },
-        server: serverOfUrl(s.url),
-      }));
-    }
-    if (config.kind === "unreachable") throw new Error(SERVERS_UNREACHABLE);
-  }
-  const entries = (queue ?? "").split(",").filter((e) => e !== "");
-  const named = entries.length > 1;
-  return Promise.all(
-    (entries.length === 0 ? [""] : entries).map(async (entry) => {
-      const [name = host, port = "4434"] = entry === "" ? [] : entry.split(":");
-      const address = { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
-      return { id: entry === "" ? "default" : entry, name: named ? entry : "", address, server: serverOfUrl(address.url) };
-    }),
-  );
+/** The regions: the deployment's game servers (`config.json`: their real certificates, no hash; their rejoins' tickets
+ *  the accounts service's); none on a development page (no queue: the deployment's services alone, or the browser tests'
+ *  stacks of them); a deployment's config that can't be read, an error */
+export async function queueRegions(deployed = deployedGameServer): Promise<readonly Region[]> {
+  const config = await deployed();
+  if (config.kind === "unreachable") throw new Error(SERVERS_UNREACHABLE);
+  if (config.kind !== "deployed") return [];
+  return config.servers.map((s) => ({
+    id: s.id,
+    name: s.name,
+    address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(rejoin) },
+    server: serverOfUrl(s.url),
+  }));
 }
 
 /** A region's address: the one `server` names (a claim's, a saved seat's), else the first's (a record from before the
  *  regions, or of a region no longer listed: its claim then refused, the match gone) */
-export async function queueAddress(params: URLSearchParams, host: string, deployed = deployedGameServer, server?: string): Promise<ServerAddress> {
-  const regions = await queueRegions(params, host, deployed);
+export async function queueAddress(deployed = deployedGameServer, server?: string): Promise<ServerAddress> {
+  const regions = await queueRegions(deployed);
   const region = regions.find((r) => r.id === server) ?? regions[0];
   if (!region) throw new Error(SERVERS_UNREACHABLE);
   return region.address;
@@ -354,15 +339,13 @@ export const CLAIM_RETRY_MS = 1000;
  *  not tried again. A deployment's claim whose server's URL the menu handed over (`url`) opens with it at once, no
  *  config.json read (the flow audit's 1) */
 export async function claimAddress(
-  params: URLSearchParams,
-  host: string,
   deployed = deployedGameServer,
   pause: (ms: number) => Promise<void> = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   server?: string,
   matchTicket?: string,
   url?: string,
 ): Promise<ServerAddress> {
-  if (url !== undefined && matchTicket !== undefined && params.get("queue") === null && SERVER_URL.test(url)) {
+  if (url !== undefined && matchTicket !== undefined && SERVER_URL.test(url)) {
     return { url, certHash: null, ticket: async () => Promise.resolve(matchTicket) };
   }
   const tried = async <T>(attempt: () => Promise<T>, again: (e: unknown) => boolean): Promise<T> => {
@@ -376,7 +359,7 @@ export async function claimAddress(
     }
   };
   const address = await tried(
-    async () => queueAddress(params, host, deployed, server),
+    async () => queueAddress(deployed, server),
     () => true,
   );
   if (matchTicket !== undefined) return { ...address, ticket: async () => Promise.resolve(matchTicket) };

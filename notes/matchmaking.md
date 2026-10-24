@@ -251,10 +251,10 @@ a saved seat; PING (RV-856: the session closes right after the Pong); the shared
 
 **Old pages:** protocol 28, so the new servers answer `REFUSED_VERSION` ("reload the page").
 
-**Development and tests:** `carball-api matchmaker --dev` serves the search and `/api/fleet` with no database or
-sign-in. A search names its player by the page's key and name. Tickets are signed with a fixed development key (id
-`dev`) that only `--dev` game servers accept, as now. Each e2e group gets its own development matchmaker and dev game
-servers. The e2e covers:
+**Development and tests:** (design 4, 2026-10-24, in place of the development matchmaker, its key and the `--dev` queue
+servers, all removed) the browser tests search against the real services in Docker: a Compose stack per spec group
+(`client/e2e/services`: Postgres, the API's e2e build with its test sign-in, real queue game servers, the web image), each
+page signed in to an account of its own. The e2e covers:
 - a match found;
 - a no-show requeued;
 - a quiet region (a player who ticked it alone never matched elsewhere);
@@ -278,7 +278,7 @@ Design (ours; the game's PsyNet matchmaker is unknowable: MM-3 sends regions wit
 - **The page's list:** `carball-web` takes `GAME_SERVERS` (`id|Name|URL`, comma-separated, in order); `config.json` carries
   them as `gameServers` and still carries `gameServer` (the first), so pages loaded before the change keep searching
   the first region. The CSP's `connect-src` names every server's origin. Without `GAME_SERVERS`, `GAME_SERVER_URL` alone is
-  a one-region list (no picker shown). A development page lists `?queue=host:port,host:port`.
+  a one-region list (no picker shown).
 - **Ping:** each region measured from the page: a session opened, a hello with intent `PING` (4), the server's `Pong`
   timed (one round trip on an open connection; the better of two). A server from before the change refuses the intent:
   its refusal is timed instead. Measured when the Play page opens (again after a minute).

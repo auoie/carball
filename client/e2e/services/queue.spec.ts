@@ -23,10 +23,11 @@ async function menuPage(browser: Browser, errors: string[]): Promise<Page> {
   return page;
 }
 
-/** Play, the playlist, Find Match */
+/** Play (one server: no region picker, RV-1048), the playlist, Find Match */
 async function findMatch(page: Page, playlist: string): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+  await expect(menu.locator(".main-menu-regions")).toBeHidden();
   await tickPlaylists(menu, [playlist]);
   await menu.getByRole("button", { name: /^find match$/i }).click();
 }

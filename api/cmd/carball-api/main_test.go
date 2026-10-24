@@ -23,9 +23,6 @@ func TestLoadTicketKeys(t *testing.T) {
 	if _, _, err := loadTicketKeys("k1", seed, "k1 "+other); err == nil || !strings.Contains(err.Error(), "TICKET_PREVIOUS_KEYS") {
 		t.Errorf("a previous key with the signer's id: %v", err)
 	}
-	if _, _, err := loadTicketKeys("k2", seed, "dev "+other); err == nil {
-		t.Error("a previous key with the development key's id")
-	}
 }
 
 func TestBanEnd(t *testing.T) {

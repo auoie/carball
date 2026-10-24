@@ -28,8 +28,8 @@ struct Args {
     queue: bool,
     /// The certificate chain and its key (PEM): a public server's (APP-CONTRACT.md), reloaded when they change or on SIGHUP
     cert: Option<(PathBuf, PathBuf)>,
-    /// A development server (`--dev`): a self-signed certificate whatever CERT_PATH and KEY_PATH say. A queue server
-    /// without a certificate must be asked for it (RV-381: an empty variable in a deployment is no silent outage)
+    /// A development server (`--dev`): the open match with a self-signed certificate, whatever CERT_PATH and KEY_PATH
+    /// say (a queue server has its certificate, keys and accounts service: RV-381, design 4)
     dev: bool,
     /// The host name the server is reached at (logged: its certificate must be for it), and the port when it's published
     /// as another than `--port` (`PUBLIC_PORT`): together this server's name, as its match tickets name it
@@ -38,19 +38,16 @@ struct Args {
     health_port: u16,
     limits: NetLimits,
     /// The tickets' public keys (`TICKET_PUBLIC_KEYS`: "KID BASE64", comma- or line-separated; notes/accounts.md
-    /// §3): a queue server's, required unless --dev (which makes a key of its own as well)
+    /// §3): a queue server's, required
     ticket_keys: Option<String>,
     /// Or their file (`TICKET_PUBLIC_KEYS_FILE`): read at the start and again on SIGHUP (a rotation without a restart,
     /// AP2-4)
     ticket_keys_file: Option<PathBuf>,
     /// The accounts service for the ranked calls (results, quitters: notes/accounts.md §3): its origin (`API_URL`), the
     /// game server's token file, the tunnel's Access service token (its id, its secret's file), and where the calls wait
-    /// (`OUTBOX_DIR`). A queue server's, required unless --dev (which logs the calls only)
+    /// (`OUTBOX_DIR`). A queue server's, required
     api: Option<ApiArgs>,
     outbox_dir: Option<PathBuf>,
-    /// A development server's matchmaker (`--api-url http://127.0.0.1:PORT`: `carball-api matchmaker --dev`), its calls
-    /// sent there, no token
-    dev_api: Option<String>,
 }
 
 impl Args {
@@ -122,13 +119,13 @@ struct Cli {
     /// The open match or the matchmaker's matches
     #[arg(long, env = "SERVER_MODE", value_enum, default_value = "direct")]
     mode: Mode,
-    /// A development server: a self-signed certificate (whatever CERT_PATH and KEY_PATH say), tickets of its own
+    /// A development server: the open match with a self-signed certificate (whatever CERT_PATH and KEY_PATH say)
     #[arg(long)]
     dev: bool,
     /// WebTransport's UDP port
     #[arg(long, env = "GAME_PORT", default_value_t = 4433, value_parser = number_of::<u16>("GAME_PORT (--port)"))]
     port: u16,
-    /// The development info server's port (`/info`, `/dev-ticket`)
+    /// The development info server's port (`/info`)
     #[arg(long, default_value_t = 4434, value_parser = number_of::<u16>("--info-port"))]
     info_port: u16,
     /// The development info server: on without a certificate, off with one, unless asked
@@ -171,9 +168,6 @@ struct Cli {
     /// The port it's published at, when not --port
     #[arg(long, env = "PUBLIC_PORT")]
     public_port: Option<String>,
-    /// A development matchmaker's URL (http://127.0.0.1:PORT, with --dev)
-    #[arg(long)]
-    api_url: Option<String>,
     /// The health endpoint's port (127.0.0.1)
     #[arg(long, env = "HEALTH_PORT", default_value_t = 8081, value_parser = number_of::<u16>("HEALTH_PORT (--health-port)"))]
     health_port: u16,
@@ -270,7 +264,7 @@ fn dev_info_on(args: &Args) -> bool {
 
 impl Cli {
     /// The arguments with the rules between them: a public server (a certificate) needs its page origins; a queue server
-    /// needs a certificate, its tickets' keys, the accounts service and an outbox, or `--dev`
+    /// needs a certificate, its tickets' keys, the accounts service and an outbox (`--dev` is the open match's alone)
     fn validate(self) -> anyhow::Result<Args> {
         // (a setting given blank is no setting, where it may be left out: the image's variables)
         let set = |v: Option<String>| v.filter(|v| !v.trim().is_empty());
@@ -321,7 +315,6 @@ impl Cli {
                 set(self.cf_access_client_secret_file),
             )?,
             outbox_dir: set(self.outbox_dir).map(PathBuf::from),
-            dev_api: self.api_url.map(|u| u.trim_end_matches('/').to_string()),
         };
         // (a name the matchmaker takes, host:port: one it would drop never matches anyone here, RV-868)
         let name = args.server_name();
@@ -336,14 +329,12 @@ impl Cli {
             "PUBLIC_HOST {host:?}: this server's name for the matchmaker is PUBLIC_HOST:port, a host of letters, digits, \
              dots and hyphens (58 at most)"
         );
-        // (a development matchmaker's: plain http on this machine, a development server's alone)
-        if let Some(url) = &args.dev_api {
-            let host = url.strip_prefix("http://").and_then(|h| h.rsplit_once(':')).map(|(h, _)| h);
-            anyhow::ensure!(
-                args.dev && matches!(host, Some("127.0.0.1" | "localhost" | "[::1]")),
-                "--api-url is a development matchmaker's (http://127.0.0.1:PORT), with --dev alone"
-            );
-        }
+        // (the queue's matches are accounts': their tickets, the accounts service and a real certificate, never a
+        // development server's self-signed one and anyone's tickets, design 4)
+        anyhow::ensure!(
+            !(args.queue && args.dev),
+            "--dev is a development server's open match (--mode direct): the queue needs its certificate, the ticket keys and the accounts service"
+        );
         // (the queue's matches are ranked: online play is ranked only, the user's decision; --match-type the open
         // match's, casual by default, RX32)
         args.match_type = match (args.queue, self.match_type) {
@@ -358,25 +349,25 @@ impl Cli {
             "TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE, not both"
         );
         anyhow::ensure!(
-            !args.queue || args.dev || args.ticket_keys.is_some() || args.ticket_keys_file.is_some(),
-            "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE (the accounts service's ticket keys), or --dev for a development server"
+            !args.queue || args.ticket_keys.is_some() || args.ticket_keys_file.is_some(),
+            "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE (the accounts service's ticket keys)"
         );
-        // (--dev signs its own tickets: never beside production keys, AP2-7)
+        // (--dev is a development server: never beside production keys, AP2-7)
         anyhow::ensure!(
             !args.dev || (args.ticket_keys.is_none() && args.ticket_keys_file.is_none()),
-            "--dev signs tickets of its own: it refuses production keys (TICKET_PUBLIC_KEYS, TICKET_PUBLIC_KEYS_FILE)"
+            "--dev is a development server: it refuses production keys (TICKET_PUBLIC_KEYS, TICKET_PUBLIC_KEYS_FILE)"
         );
         anyhow::ensure!(
-            !args.queue || args.dev || args.api.is_some(),
-            "the queue's matches are rated: it needs API_URL and GAME_SERVER_TOKEN_FILE (the accounts service and the game server's token), or --dev for a development server"
+            !args.queue || args.api.is_some(),
+            "the queue's matches are rated: it needs API_URL and GAME_SERVER_TOKEN_FILE (the accounts service and the game server's token)"
         );
         // (a blank one too: its calls kept in memory alone would go with a restart, RX31)
         anyhow::ensure!(
-            !args.queue || args.dev || args.outbox_dir.is_some(),
-            "the queue's ranked calls are kept on disk until sent: it needs OUTBOX_DIR (a small volume), or --dev for a development server"
+            !args.queue || args.outbox_dir.is_some(),
+            "the queue's ranked calls are kept on disk until sent: it needs OUTBOX_DIR (a small volume)"
         );
         if args.dev {
-            // (a certificate there is a public server's: --dev on it would hand out its own tickets to the internet,
+            // (a certificate there is a public server's: --dev on it would open a match to anyone without a ticket,
             // AP2-7)
             let mounted = |p: &Option<PathBuf>| p.as_ref().is_some_and(|p| !p.as_os_str().is_empty() && p.is_file());
             anyhow::ensure!(
@@ -398,7 +389,7 @@ impl Cli {
         };
         anyhow::ensure!(
             !args.queue || args.cert.is_some(),
-            "the queue serves the public: it needs a certificate (CERT_PATH and KEY_PATH, or --cert and --key), or --dev for a development server"
+            "the queue serves the public: it needs a certificate (CERT_PATH and KEY_PATH, or --cert and --key)"
         );
         // (a certificate is a public server's, and online play needs a ticket: no open match without one, AP2-9)
         anyhow::ensure!(
@@ -469,7 +460,7 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
             };
             (Some(api.url.clone()), token, access)
         }
-        None => (args.dev_api.clone(), String::new(), None),
+        None => (None, String::new(), None),
     };
     Ok(carball_server::outbox::OutboxConfig {
         api_url,
@@ -479,7 +470,7 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
         server: args.server_name(),
         first_wait: Duration::from_secs(5),
         max_wait: Duration::from_secs(300),
-        https_only: args.dev_api.is_none() && args.api.as_ref().is_none_or(|api| api.url.starts_with("https://")),
+        https_only: args.api.as_ref().is_none_or(|api| api.url.starts_with("https://")),
     })
 }
 
@@ -627,21 +618,15 @@ async fn run() -> anyhow::Result<()> {
     // (the health endpoint's port taken at once, beside the game's: a server that can't have it stops before it has an
     // outbox to write or a game thread to start, RV-986, RV-1011)
     let health = net::bind_health(args.health_port).await?;
-    // (a queue server's searches and claims are accounts': their tickets checked with these keys; a development server's
-    // own key too, its info server signing tickets for the pages that ask)
+    // (a queue server's searches and claims are accounts': their tickets checked with these keys)
     let key_list = match &args.ticket_keys_file {
         Some(file) => std::fs::read_to_string(file)
             .map_err(|e| anyhow::anyhow!("TICKET_PUBLIC_KEYS_FILE {}: {e}", file.display()))?,
         None => args.ticket_keys.clone().unwrap_or_default(),
     };
-    let mut tickets = carball_server::ticket::Tickets::from_list(&key_list)?;
+    let tickets = carball_server::ticket::Tickets::from_list(&key_list)?;
     // (a list that names no key, ", " say: a queue server refusing everyone, AP2-5)
-    anyhow::ensure!(!args.queue || args.dev || !tickets.is_empty(), "TICKET_PUBLIC_KEYS names no key");
-    if args.dev && args.queue {
-        // (development only: anyone may get a ticket from its info server, any account, any name)
-        tracing::warn!("--dev: this server signs tickets of its own for anyone who asks: never a public server");
-        tickets = tickets.with_dev_key()?;
-    }
+    anyhow::ensure!(!args.queue || !tickets.is_empty(), "TICKET_PUBLIC_KEYS names no key");
     if args.queue {
         tracing::info!("ticket keys: {}", tickets.key_ids().join(", "));
     }
@@ -668,7 +653,7 @@ async fn run() -> anyhow::Result<()> {
     let start = Instant::now();
     let heartbeat = Arc::new(AtomicU64::new(0));
     let game_heartbeat = heartbeat.clone();
-    // (a queue server's ranked calls: the outbox, sending to the accounts service; without API_URL, --dev, logged only)
+    // (a queue server's ranked calls: the outbox, sending to the accounts service)
     let reports = if args.queue {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let config = outbox_config(&args)?;
@@ -721,13 +706,7 @@ async fn run() -> anyhow::Result<()> {
     );
     match (dev_info, dev_hash) {
         (true, Some(hash)) => {
-            tokio::spawn(net::serve_info(
-                args.info_bind,
-                args.info_port,
-                args.port,
-                hash,
-                tickets.filter(|_| args.dev),
-            ));
+            tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, hash));
             tracing::info!("dev info on http://{}:{}/info (self-signed certificate)", args.info_bind, args.info_port);
             let query = if args.info_port == 4434 {
                 "server".to_string()
@@ -825,6 +804,24 @@ mod tests {
         parse_with(args, &[])
     }
 
+    /// A public queue server's settings (its certificate, origins, ticket keys, the accounts service, its outbox)
+    const QUEUE: [(&str, &str); 8] = [
+        ("SERVER_MODE", "queue"),
+        ("CERT_PATH", "/certs/fullchain.pem"),
+        ("KEY_PATH", "/certs/privkey.pem"),
+        ("ALLOWED_ORIGIN", "https://a.example"),
+        ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
+        ("API_URL", "https://a.example"),
+        ("GAME_SERVER_TOKEN_FILE", "/run/t"),
+        ("OUTBOX_DIR", "/o"),
+    ];
+
+    /// A queue server's arguments: these flags, QUEUE's settings and these besides
+    fn queue(flags: &[&str], vars: &[(&str, &str)]) -> anyhow::Result<Args> {
+        let all: Vec<(&str, &str)> = QUEUE.iter().chain(vars).copied().collect();
+        parse_with(flags, &all)
+    }
+
     /// A blank PUBLIC_PORT an error, as before clap; --help shows no Access client id's value (RV-943)
     #[test]
     fn a_blank_public_port_is_refused_and_help_hides_the_access_id() {
@@ -856,7 +853,7 @@ mod tests {
         assert_eq!((args.port, args.limits.per_address, args.dev), (46521, 10, true));
         let blank = parse_with(&[], &[("MESHES_DIR", "")]).unwrap();
         assert!(blank.meshes.ends_with("collision_meshes"), "the default meshes: {}", blank.meshes.display());
-        let dev = parse_with(&["--mode", "queue", "--dev"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).unwrap();
+        let dev = parse_with(&["--dev"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).unwrap();
         assert!(dev.cert.is_none(), "--dev with blank certificate variables: self-signed");
         let e = parse_with(&["--mode", "direct"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).err().expect("blank paths");
         assert!(e.to_string().contains("CERT_PATH and KEY_PATH are empty"), "{e}");
@@ -891,33 +888,54 @@ mod tests {
         ] {
             assert_eq!(env(flag).as_deref(), Some(var), "--{flag}");
         }
-        assert_eq!(env("api-url"), None, "--api-url is a development matchmaker's: never API_URL");
         command.debug_assert();
     }
 
     /// RV-868: a queue server whose name the matchmaker wouldn't take refuses to start
     #[test]
     fn a_queue_server_with_a_name_the_matchmaker_wont_take_refuses_to_start() {
-        let named = |host: &str| parse_with(&["--mode", "queue", "--dev"], &[("PUBLIC_HOST", host)]);
+        let named = |host: &str| queue(&[], &[("PUBLIC_HOST", host)]);
         assert!(named("game-eu.example").is_ok());
         for bad in ["bad_name", "ünïcode.example", &"h".repeat(59), "::1"] {
             assert!(named(bad).is_err(), "{bad:?}");
         }
     }
 
-    /// This server's name for the matchmaker: PUBLIC_HOST and its port (PUBLIC_PORT, else --port; 127.0.0.1 for a
-    /// development server); a development matchmaker's URL (--api-url) loopback http, with --dev alone
+    /// The browser tests' hooks: none in a release build (its flags unknown, an http API_URL refused); the e2e build's
+    /// take them (RV-1045, RV-1050)
     #[test]
-    fn the_servers_name_and_a_development_matchmakers_url() {
+    fn the_test_hooks_are_the_e2e_builds_alone() {
+        let hooks = [["--test-goal-after", "1"], ["--forfeit-vote-wait", "0"]];
+        let http = queue(&[], &[("API_URL", "http://edge:8080")]);
+        #[cfg(not(feature = "e2e"))]
+        {
+            for flags in hooks {
+                let e = parse(&flags).err().expect("a release build's flag");
+                assert!(e.to_string().contains("unexpected argument"), "{e}");
+            }
+            assert!(http.is_err(), "an http API_URL");
+        }
+        #[cfg(feature = "e2e")]
+        {
+            assert_eq!(parse(&hooks[0]).unwrap().test_goal_after, Some(1.0));
+            assert_eq!(parse(&hooks[1]).unwrap().forfeit_vote_wait, Some(0.0));
+            let args = http.unwrap();
+            assert_eq!(args.api.as_ref().map(|a| a.url.as_str()), Some("http://edge:8080"), "an e2e stack's service");
+        }
+    }
+
+    /// This server's name for the matchmaker: PUBLIC_HOST and its port (PUBLIC_PORT, else --port; 127.0.0.1 for a
+    /// development server); no development queue server, no development matchmaker's URL (design 4)
+    #[test]
+    fn the_servers_name_and_no_development_queue() {
         let named =
             parse_with(&["--port", "4433"], &[("PUBLIC_HOST", "game-eu.example"), ("PUBLIC_PORT", "443")]).unwrap();
         assert_eq!(named.server_name(), "game-eu.example:443");
         assert_eq!(parse(&["--port", "5000"]).unwrap().server_name(), "127.0.0.1:5000");
-        let dev = parse(&["--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:8090/"]).unwrap();
-        assert_eq!(dev.dev_api.as_deref(), Some("http://127.0.0.1:8090"));
-        assert!(parse(&["--mode", "queue", "--api-url", "http://127.0.0.1:8090"]).is_err(), "without --dev");
-        assert!(parse(&["--mode", "queue", "--dev", "--api-url", "http://example.com:8090"]).is_err(), "not loopback");
-        assert!(parse(&["--mode", "queue", "--dev", "--api-url", "https://127.0.0.1:8090"]).is_err(), "not plain http");
+        let e = parse(&["--mode", "queue", "--dev"]).err().expect("a development queue server");
+        assert!(e.to_string().contains("--dev is a development server's open match"), "{e}");
+        assert!(queue(&["--dev"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).is_err(), "nor beside its settings");
+        assert!(queue(&["--api-url", "http://127.0.0.1:8090"], &[]).is_err(), "no development matchmaker's URL");
     }
 
     #[test]
@@ -929,14 +947,11 @@ mod tests {
         for good in 1..=8 {
             assert_eq!(parse(&["--team-size", &good.to_string()]).unwrap().team_size, good);
         }
-        assert!(parse(&["--mode", "queue", "--dev"]).unwrap().queue);
+        assert!(queue(&[], &[]).unwrap().queue);
         // (the queue's matches ranked, whatever else asked; the open match casual unless --match-type says, RX32)
-        assert_eq!(parse(&["--mode", "queue", "--dev"]).unwrap().match_type, MatchType::Ranked);
-        assert_eq!(
-            parse(&["--mode", "queue", "--dev", "--match-type", "ranked"]).unwrap().match_type,
-            MatchType::Ranked
-        );
-        assert!(parse(&["--mode", "queue", "--dev", "--match-type", "casual"]).is_err());
+        assert_eq!(queue(&[], &[]).unwrap().match_type, MatchType::Ranked);
+        assert_eq!(queue(&["--match-type", "ranked"], &[]).unwrap().match_type, MatchType::Ranked);
+        assert!(queue(&["--match-type", "casual"], &[]).is_err());
         assert_eq!(parse(&[]).unwrap().match_type, MatchType::Casual);
         assert_eq!(parse(&["--match-type", "private"]).unwrap().match_type, MatchType::Private);
         assert!(!parse(&["--mode", "direct"]).unwrap().queue);
@@ -993,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn a_public_server_needs_its_origins_and_a_queue_server_a_certificate_or_dev() {
+    fn a_public_server_needs_its_origins_and_a_queue_server_its_certificate() {
         // (RV-372, RV-381: a blank or missing setting fails closed, not open)
         let with = |vars: &[(&str, &str)], flags: &[&str]| parse_with(flags, vars);
         const CERT: [(&str, &str); 2] = [("CERT_PATH", "/certs/fullchain.pem"), ("KEY_PATH", "/certs/privkey.pem")];
@@ -1019,7 +1034,7 @@ mod tests {
             Some(vec!["https://carball.zolt.top".to_string()]),
             "as browsers send it"
         );
-        // A queue server: a certificate, or --dev
+        // A queue server: a certificate (never --dev's self-signed one)
         assert!(with(&[("SERVER_MODE", "queue")], &[]).is_err());
         assert!(
             with(
@@ -1034,10 +1049,11 @@ mod tests {
             .is_err(),
             "empty paths"
         );
-        let dev =
+        assert!(
             with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"])
-                .unwrap();
-        assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
+                .is_err(),
+            "--dev: the open match's alone"
+        );
         const KEYS: (&str, &str) = ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
         const API: [(&str, &str); 3] =
             [("API_URL", "https://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/run/t"), ("OUTBOX_DIR", "/o")];
@@ -1059,7 +1075,7 @@ mod tests {
             .cert
             .is_some()
         );
-        // (a public queue server's matches are rated: without the accounts service it won't start; --dev logs the calls)
+        // (a public queue server's matches are rated: without the accounts service it won't start)
         let public = [
             ("SERVER_MODE", "queue"),
             CERT[0],
@@ -1082,8 +1098,7 @@ mod tests {
             &[("API_URL", "https://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/t"), ("CF_ACCESS_CLIENT_ID", "id")],
             "the Access id without its secret",
         );
-        assert!(dev.api.is_none(), "--dev without API_URL: calls logged only");
-        // (its calls kept on disk until sent: without OUTBOX_DIR, or a blank one, it won't start; --dev keeps none, RX31)
+        // (its calls kept on disk until sent: without OUTBOX_DIR, or a blank one, it won't start, RX31)
         let without = |outbox: Option<&'static str>| {
             let mut vars =
                 vec![("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example"), KEYS];
@@ -1100,7 +1115,7 @@ mod tests {
         let unwritable = without(Some("/proc/carball-outbox-test")).unwrap();
         let e = outbox_config(&unwritable).expect_err("an unwritable OUTBOX_DIR");
         assert!(e.to_string().contains("OUTBOX_DIR /proc/carball-outbox-test"), "{e}");
-        // (a public queue server's searches are accounts': without the tickets' keys it won't start; --dev makes its own)
+        // (a public queue server's searches are accounts': without the tickets' keys it won't start)
         assert!(
             with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(),
             "no TICKET_PUBLIC_KEYS"
@@ -1146,8 +1161,8 @@ mod tests {
 
     #[test]
     fn dev_refuses_production_keys_and_a_mounted_certificate() {
-        // (AP2-7: --dev's own tickets never beside production keys or a public server's certificate)
-        let with = |vars: &[(&str, &str)]| parse_with(&["--mode", "queue", "--dev"], vars);
+        // (AP2-7: a development server never beside production keys or a public server's certificate)
+        let with = |vars: &[(&str, &str)]| parse_with(&["--dev"], vars);
         assert!(with(&[]).is_ok());
         assert!(with(&[("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")]).is_err());
         assert!(with(&[("TICKET_PUBLIC_KEYS_FILE", "/run/keys")]).is_err());
@@ -1177,6 +1192,6 @@ mod tests {
         assert!(!dev_info_on(&parse_with(&[], &env).unwrap()), "SEC-6: off with a certificate");
         assert!(dev_info_on(&parse(&[]).unwrap()));
         assert!(!dev_info_on(&parse(&["--dev-info", "off"]).unwrap()));
-        assert!(dev_info_on(&parse(&["--mode", "queue", "--dev"]).unwrap()));
+        assert!(dev_info_on(&parse(&["--dev"]).unwrap()));
     }
 }

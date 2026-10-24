@@ -31,10 +31,12 @@ TMPDIR=<a scratch directory> CARBALL_API_REQUIRE_DB=1 go test ./...
 golangci-lint run --build-tags e2e ./... && go test -tags e2e ./internal/server -run E2E   # the e2e build's too
 ```
 
-The `e2e` build tag adds the browser tests' sign-in (`internal/server/e2e.go`: `POST /api/e2e/sign-in`, an account as a
-sign-up makes one and a session for it) for the Dockerfile's `api-e2e` image, which the browser tests' stacks run
-(`client/e2e/services`) and which is never deployed; the release build has no such route (a test says it's a 404, and
-the image checks look for its path in the release binary).
+The `e2e` build tag adds the browser tests' sign-in (`internal/server/e2e.go`: `POST /api/e2e/sign-in`, a session for
+the identity's account, made as a sign-up makes one if it has none; `POST /api/e2e/sign-up`, a pending sign-up as a
+provider's callback leaves it) for the Dockerfile's `api-e2e` image, which the browser tests' stacks run
+(`client/e2e/services`, `serve --dev`) and which is never deployed. Even there the routes answer only under `--dev` (a
+localhost origin), else 404 (RV-1043). The release build has no such route (a test says it's a 404, and the image checks
+look for its markers in the release binary).
 
 The store's and the server's tests start a throwaway Postgres from the installed `initdb` and `pg_ctl` (under
 `$TMPDIR`, on 127.0.0.1 only, stopped and removed after); without them those tests skip, or fail with
