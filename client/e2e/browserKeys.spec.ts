@@ -93,7 +93,7 @@ test("a browser without every bind (Firefox's name, no keyboard lock): its limit
   const inline = page.locator("#settings .browser-notice.inline");
   await expect(inline.locator("li")).toHaveCount(2);
   await expect(inline.getByRole("button")).toHaveCount(0);
-  // (no Fullscreen notice there: no keyboard lock to keep a bind with, the browser's notice says so)
-  await expect(page.locator("#settings .fullscreen-notice")).toHaveCount(0);
+  // (the Fullscreen line too: Firefox has full screen)
+  await expect(page.locator("#settings .fullscreen-notice")).toHaveCount(1);
   await context.close();
 });

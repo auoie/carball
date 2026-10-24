@@ -1,16 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  type Action,
-  type Bindings,
-  DEFAULT_BINDINGS,
-  type KeyboardInput,
-  browserHeldBinds,
-  inputName,
-  keyBound,
-  keyName,
-  setKeyboardLayout,
-  takesBrowserKey,
-} from "./bindings";
+import { type Action, type Bindings, DEFAULT_BINDINGS, type KeyboardInput, inputName, keyBound, keyName, setKeyboardLayout, takesBrowserKey } from "./bindings";
 import { readHeldActions } from "./mapping";
 
 const bound = (code: string): boolean => keyBound(DEFAULT_BINDINGS, code);
@@ -70,15 +59,6 @@ describe("the keys a press in play takes from the browser (RV-1092)", () => {
 });
 
 const withKey = (b: Bindings, action: Action, keyboard: KeyboardInput | null): Bindings => ({ ...b, [action]: { ...b[action], keyboard } });
-
-describe("the binds a normal tab can lose to the browser (the Controls screen's Fullscreen notice)", () => {
-  it("Ctrl, Alt, the OS key and Escape, each once; none else", () => {
-    expect(browserHeldBinds(DEFAULT_BINDINGS)).toEqual([{ kind: "key", code: "ControlLeft" }]);
-    const alt = withKey(withKey(DEFAULT_BINDINGS, "rollLeft", { kind: "key", code: "AltLeft" }), "rearCamera", null);
-    expect(browserHeldBinds(alt)).toEqual([{ kind: "key", code: "AltLeft" }]);
-    expect(browserHeldBinds(withKey(DEFAULT_BINDINGS, "rearCamera", { kind: "key", code: "KeyR" }))).toEqual([]);
-  });
-});
 
 describe("the keys' and buttons' names (RV-1096, RV-1099, RV-1101)", () => {
   it("a layout's letters and punctuation by its keycaps (AZERTY's Z on the W key), its digits as printed", () => {

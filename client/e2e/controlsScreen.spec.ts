@@ -32,25 +32,22 @@ test("the right button binds by right-clicking the waiting slot; right-click cle
   await expect(slot(page, "throttleForward")).toHaveClass(/empty/);
 });
 
-test("the Fullscreen notice names the binds a normal tab can lose, and switches to Fullscreen", async ({ page }) => {
+test("the Fullscreen line, above the slots, whatever the binds; its button switches to Fullscreen", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("carball.settings.v1", JSON.stringify({ bindings: { rearCamera: { keyboard: { kind: "key", code: "KeyR" } } } }));
+  });
   await controls(page);
   const notice = page.locator("#settings .fullscreen-notice");
-  await expect(notice).toContainText("Some of your binds (Left Ctrl) work fully only in Fullscreen");
+  await expect(notice).toHaveText(
+    /^Some binds \(for example with Ctrl, Alt or Escape\) may not work reliably in a windowed tab\. For the best results, use Fullscreen \(Video → Display Mode\)\./,
+  );
   // (above the slots, seen before binding: the user's)
   const [box, table] = [await notice.boundingBox(), await page.locator("#settings .bindings").boundingBox()];
   expect(box && table && box.y + box.height <= table.y).toBe(true);
   await notice.getByRole("button", { name: "Switch to Fullscreen" }).click();
   await expect.poll(async () => page.evaluate(() => document.fullscreenElement !== null), { timeout: 5_000 }).toBe(true);
-  await expect(notice).toHaveCount(0);
-});
-
-test("no Fullscreen notice without such a bind", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("carball.settings.v1", JSON.stringify({ bindings: { rearCamera: { keyboard: { kind: "key", code: "KeyR" } } } }));
-  });
-  await controls(page);
-  await expect(page.locator(".bindings")).toBeVisible();
-  await expect(page.locator("#settings .fullscreen-notice")).toHaveCount(0);
+  // (still there in Fullscreen: one fixed line)
+  await expect(notice).toBeVisible();
 });
 
 test("the wheel binds by a turn, and fires its action in play; PrintScreen binds by its keyup alone (RV-1096, RV-1100)", async ({ page }) => {

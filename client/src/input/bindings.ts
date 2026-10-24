@@ -223,20 +223,6 @@ const AXIS_NAMES: Record<number, readonly [string, string]> = {
   3: ["Right stick up", "Right stick down"],
 };
 
-/** "KeyW" -> "W", "ShiftLeft" -> "Left Shift", "Digit1" -> "1", "ArrowUp" -> "Up arrow". */
-/** The keys a browser can still take from a page in a normal tab, whatever it cancels (Ctrl+W, Alt's menus, Escape):
- *  the page's alone only in full screen with the keyboard locked (DisplayMode, RV-1091) */
-const BROWSER_HELD_KEYS = ["ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight", "Escape"];
-
-/** The bound keys a normal tab can lose to the browser: their inputs, each once (the Controls screen's Fullscreen notice) */
-export function browserHeldBinds(bindings: Bindings): KeyboardInput[] {
-  const codes = new Set<string>();
-  for (const b of Object.values<Binding>(bindings)) {
-    if (b.keyboard?.kind === "key" && BROWSER_HELD_KEYS.includes(b.keyboard.code)) codes.add(b.keyboard.code);
-  }
-  return BROWSER_HELD_KEYS.filter((c) => codes.has(c)).map((code) => ({ kind: "key", code }));
-}
-
 /** Whether any action is bound to the key `code` (KeyboardEvent.code) */
 export function keyBound(bindings: Bindings, code: string): boolean {
   return Object.values(bindings).some((b: Binding) => b.keyboard?.kind === "key" && b.keyboard.code === code);
@@ -296,6 +282,8 @@ export function setKeyboardLayout(map: ReadonlyMap<string, string> | null): void
 /** The punctuation keys a layout renames (its letters too; its digits as their keycaps print them) */
 const LAYOUT_KEYS = /^(Key[A-Z]|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Backquote|Comma|Period|Slash|IntlBackslash)$/;
 
+/** "KeyW" -> "W", "ShiftLeft" -> "Left Shift", "Digit1" -> "1", "ArrowUp" -> "Up arrow"; a layout's own letters and
+ *  punctuation where the browser tells them (RV-1101). */
 export function keyName(code: string): string {
   const typed = LAYOUT_KEYS.test(code) ? layout?.get(code) : undefined;
   if (typed !== undefined && typed !== "") return typed.toUpperCase();

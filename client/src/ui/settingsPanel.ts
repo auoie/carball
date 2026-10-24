@@ -1,9 +1,9 @@
 // Settings menu (from the pause menu or the main menu): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
 import { browserNotice, currentBrowserLimits } from "./browserNotice";
-import { fullscreenAvailable, keyboardLockAvailable } from "./displayMode";
+import { fullscreenAvailable } from "./displayMode";
 import type { CameraSettings } from "../camera/carballCamera";
-import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, browserHeldBinds, inputName, onPadStyle } from "../input/bindings";
+import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
 import { checkbox, cycler, cyclerControl, slider } from "./controls";
 import { VIDEO_TEXT, type VideoState, withRenderDetail, withVideoChange } from "../settings/video";
@@ -423,20 +423,21 @@ export class SettingsPanel {
     return el("div", {}, [...this.#fullscreenNotice(), hint, ...unmapped, ...notice, table, reset]);
   }
 
-  /** Binds a normal tab can lose to the browser (Ctrl, Alt, the OS key: Ctrl+W, Alt's menus) named, with the way to keep
-   *  them, at the screen's top, in its flow (never over a slot): only Windowed, where the browser locks the keyboard in
-   *  full screen (a browser that can't has its own notice instead), and only with such a bind (the user's request) */
+  /** The binds a normal tab can lose to the browser (Ctrl+W, Alt's menus, Escape) and the way to keep them, at the
+   *  screen's top, in its flow (never over a slot): one fixed line, in every browser with full screen (the user's
+   *  wording, 2026-10-24) */
   #fullscreenNotice(): HTMLElement[] {
-    const held = browserHeldBinds(this.#settings.bindings);
-    if (this.#settings.options.fullscreen || !fullscreenAvailable() || !keyboardLockAvailable() || held.length === 0) return [];
-    const names = held.map((input) => inputName(input)).join(", ");
+    if (!fullscreenAvailable()) return [];
     const button = el("button", { textContent: "Switch to Fullscreen" });
     button.addEventListener("click", () => {
       this.#update({ ...this.#settings, options: { ...this.#settings.options, fullscreen: true } });
     });
     return [
       el("div", { className: "fullscreen-notice" }, [
-        el("p", { textContent: `Some of your binds (${names}) work fully only in Fullscreen: Video → Display Mode → Fullscreen.` }),
+        el("p", {
+          textContent:
+            "Some binds (for example with Ctrl, Alt or Escape) may not work reliably in a windowed tab. For the best results, use Fullscreen (Video → Display Mode).",
+        }),
         button,
       ]),
     ];
