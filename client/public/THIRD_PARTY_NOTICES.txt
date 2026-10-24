@@ -2,7 +2,9 @@ Third-party notices
 
 This site's game (its engine compiled to WebAssembly, and the page's scripts) includes the software below, each under its
 own license, reproduced here as its notice asks. The fonts' licenses (SIL Open Font License 1.1) are beside them, in
-"fonts/orbitron/Open Font License.markdown" and fonts/rajdhani/OFL.txt.
+"fonts/orbitron/Open Font License.markdown" and fonts/rajdhani/OFL.txt. The local host's module (the offline match's
+server, compiled from Rust) has its own beside them too: its Rust crates' in THIRD_PARTY_NOTICES-rust.txt, and the Rust
+standard library's (with the crates it is built with) in THIRD_PARTY_NOTICES-rust-std.html.
 
 ====================================================================================================
 RocketSim (the physics engine's base)

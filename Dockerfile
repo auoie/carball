@@ -105,6 +105,25 @@ RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registr
        cargo build --release --locked --manifest-path server/Cargo.toml \
     && mkdir /out && cp /target/release/carball-server /out/
 
+# The notices of the Rust in the local host's module, the one Rust build that ships: its crates' (cargo-about's, its version
+# pinned: server/about.toml, the target's crates as Cargo.lock has them, a crate under a licence it doesn't accept failing
+# here) and the standard library's (the toolchain's own, the Rust image's above). Both are committed in client/public; the
+# checks fail on any difference (scripts/gen_notices.sh writes them again, from the rust-notices-files stage)
+FROM rust AS cargo-about
+ARG JOBS
+RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registry \
+    CARGO_BUILD_JOBS="$JOBS" cargo install cargo-about --version 0.9.2 --features cli --locked --root /opt/cargo-about
+FROM cargo-about AS rust-notices
+WORKDIR /src
+COPY server/ server/
+RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registry \
+    mkdir /out && cd server \
+    && /opt/cargo-about/bin/cargo-about generate --locked --fail --no-default-features --features host \
+       -o /out/THIRD_PARTY_NOTICES-rust.txt about.hbs \
+    && cp /usr/local/rustup/toolchains/*/share/doc/rust/COPYRIGHT-library.html /out/THIRD_PARTY_NOTICES-rust-std.html
+FROM scratch AS rust-notices-files
+COPY --from=rust-notices /out/ /
+
 # The accounts service's release binary: static, no cgo (the image has no C library to match), the paths trimmed, no
 # build id; the modules go.sum pins, checked against the checksum database; the image's Go, never a downloaded one
 FROM golang AS api-build
@@ -132,18 +151,23 @@ COPY --from=host /out/ engine/build-wasm-host/
 WORKDIR /src/client
 RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts
 
-# The checks (scripts/build_images.sh builds this first): the engine native = WebAssembly (above); the names guard (no game's,
+# The checks (scripts/build_images.sh builds this first): the engine native = WebAssembly (above); the Rust notices as
+# committed (above); the names guard (no game's,
 # maker's or mode names, RV-384/423) over each image's files and its stage of this file (what ships of it: its
 # instructions, in the image's history; the build stages never ship), and no build paths in either binary (the home,
 # registry, target and prebuilt libraries' directories here, unremapped: RV-380, RV-414; the remapped /src and /cargo
 # paths of panic messages are the ones the old builds had too)
 FROM client AS checks
 COPY --from=engine-check /engine-identical /tmp/engine-identical
+COPY --from=rust-notices /out/ /tmp/rust-notices/
 COPY --from=server /out/carball-server /game/carball-server
 COPY out/arena/collision_meshes/ /game/collision_meshes/
 COPY --from=api-build /out/carball-api /api/carball-api
 COPY Dockerfile /tmp/Dockerfile
-RUN awk '/^FROM .* AS game$/ { p = 1 } /^FROM .* AS api$/ { p = 0 } p' /tmp/Dockerfile > /game/Dockerfile \
+RUN for f in THIRD_PARTY_NOTICES-rust.txt THIRD_PARTY_NOTICES-rust-std.html; do \
+         cmp -s "/tmp/rust-notices/$f" "public/$f" || { echo "client/public/$f isn't this build's: scripts/gen_notices.sh"; exit 1; }; \
+       done \
+    && awk '/^FROM .* AS game$/ { p = 1 } /^FROM .* AS api$/ { p = 0 } p' /tmp/Dockerfile > /game/Dockerfile \
     && awk '/^FROM .* AS api$/ { p = 1 } p' /tmp/Dockerfile > /api/Dockerfile \
     && grep -q '^ENTRYPOINT \["/app/carball-server"\]' /game/Dockerfile && grep -q '^ENTRYPOINT \["/app/carball-api"\]' /api/Dockerfile \
     && SHIPPED_GAME_DIR=/game node_modules/.bin/vitest run src/render/shippedNames.test.ts \

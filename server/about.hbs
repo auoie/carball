@@ -1,0 +1,14 @@
+Third-party notices: the Rust crates
+
+The local host's module (the offline match's server, carball_host.wasm) is compiled from the Rust crates below, each
+under its own license, reproduced here as its notice asks (cargo-about's listing, from server/Cargo.lock:
+scripts/gen_notices.sh). The Rust standard library's own notices, and those of the crates it is built with, are in
+THIRD_PARTY_NOTICES-rust-std.html.
+{{#each licenses}}
+
+====================================================================================================
+{{{name}}}: {{#each used_by}}{{{crate.name}}} {{{crate.version}}}{{#unless @last}}, {{/unless}}{{/each}}
+====================================================================================================
+
+{{{text}}}
+{{/each}}

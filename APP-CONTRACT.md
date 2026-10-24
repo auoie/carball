@@ -91,9 +91,11 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   'none'`; no eval; WebAssembly compiled, `'wasm-unsafe-eval'`: the engine, the bots' match host and onnxruntime; workers
   from this origin: a match against bots runs in one, onnxruntime on one thread, so no cross-origin isolation is needed).
   Redirects are relative (a directory's trailing slash), so nothing names the container's port behind the tunnel. The
-  third-party notices are at `/THIRD_PARTY_NOTICES.txt` (the bots' section included) and
-  `/THIRD_PARTY_NOTICES-onnxruntime.txt`; each bot's licence at `/bots/<bot>/LICENSE.txt` (or the file its bot.json
-  names, `licenceFile`).
+  third-party notices are at `/THIRD_PARTY_NOTICES.txt` (the bots' section included),
+  `/THIRD_PARTY_NOTICES-onnxruntime.txt`, and the local host's Rust's: `/THIRD_PARTY_NOTICES-rust.txt` (its crates,
+  cargo-about's) and `/THIRD_PARTY_NOTICES-rust-std.html` (the standard library's, the toolchain's own), which the image
+  build makes again and checks against the committed copies; each bot's licence at `/bots/<bot>/LICENSE.txt` (or the
+  file its bot.json names, `licenceFile`).
 - **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and all of `/etc/nginx` are root's,
   read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`; both baked in at build for the
   default `GAME_SERVER_URL`, so a container started without the entrypoint still has them) at start, and its pid and

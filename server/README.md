@@ -56,6 +56,7 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | Path | |
 |---|---|
 | `src/engine.rs` | safe wrapper around the engine's C API |
+| `about.toml`, `about.hbs` | the local host module's crates' notices (cargo-about, in the image build: `client/public/THIRD_PARTY_NOTICES-rust.txt`, committed; `scripts/gen_notices.sh` after a dependency change); a crate under a licence `about.toml` doesn't accept fails the build |
 | `src/engine_ffi.rs` | the C API's bindings, bindgen's, committed: after a change to `rlengine.h`, `scripts/gen_bindings.sh` (needs libclang); `tests/engine_bindings.rs` fails on any difference (skipped, said, without libclang) |
 | `src/protocol.rs` | messages; byte vectors shared with the client (`protocol/vectors.json`) |
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |

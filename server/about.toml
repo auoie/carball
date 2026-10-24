@@ -1,0 +1,11 @@
+# cargo-about's settings (the Dockerfile's rust-notices stage, scripts/gen_notices.sh): the notices of the crates in the
+# local host's module, the one Rust build that ships (client/public/THIRD_PARTY_NOTICES-rust.txt; the game server's
+# binary isn't distributed). Its target's crates alone, no build or dev dependencies; the licences below alone, a crate
+# under any other failing the build (a new licence accepted here once read). MIT first: a crate offering it is shown
+# under it
+accepted = ["MIT", "Apache-2.0", "Unicode-3.0"]
+targets = ["wasm32-unknown-emscripten"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# (this crate itself, `publish = false`: ours, not a third party's)
+private = { ignore = true }
