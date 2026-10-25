@@ -37,7 +37,8 @@ async function findMatch(page: Page, regions: readonly string[], playlists: read
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
   const boxes = menu.locator(".main-menu-region");
   await expect(boxes).toHaveCount(2);
-  for (const box of await boxes.all()) await expect(box.locator(".main-menu-ping")).toHaveText(/^\d+ ms$/, { timeout: 15_000 });
+  // (its ping, and its players in matches once the live counts are read: mainMenu.ts regionText)
+  for (const box of await boxes.all()) await expect(box.locator(".main-menu-ping")).toHaveText(/^\d+ ms( · \d+ in matches)?$/, { timeout: 15_000 });
   const region = (id: string) => menu.locator(`.main-menu-region[data-region="${id}"]`);
   for (const id of regions) {
     if ((await region(id).getAttribute("aria-checked")) !== "true") await region(id).click();

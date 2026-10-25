@@ -125,15 +125,27 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, nameError(err))
 		return
 	}
-	if !s.renames.Allow(ss.AccountID, s.Now()) {
+	// (an admin's lock: its seconds left, its end on the page's clock as a ban's, RV-1001; said before the day's limit is
+	// charged, so a locked player's tries never use it up, RV-1173; the rename checks it again)
+	now := s.Now()
+	refuseLocked := func(until time.Time) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "rename-locked", "seconds": secondsUntil(until, now)})
+	}
+	if until, locked, err := s.Store.RenameLockedUntil(r.Context(), ss.AccountID, now); err != nil {
+		s.log(r).Error("reading a rename lock", "err", err)
+		writeError(w, http.StatusInternalServerError, "server")
+		return
+	} else if locked {
+		refuseLocked(until)
+		return
+	}
+	if !s.renames.Allow(ss.AccountID, now) {
 		writeError(w, http.StatusTooManyRequests, "busy")
 		return
 	}
-	now := s.Now()
 	var locked store.RenameLockedError
 	if err := s.Store.Rename(r.Context(), ss.AccountID, name, now); errors.As(err, &locked) {
-		// (an admin's lock: its seconds left, its end on the page's clock as a ban's, RV-1001)
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "rename-locked", "seconds": secondsUntil(locked.Until, now)})
+		refuseLocked(locked.Until)
 		return
 	} else if err != nil {
 		s.log(r).Error("renaming", "err", err)

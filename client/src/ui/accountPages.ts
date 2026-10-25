@@ -18,6 +18,8 @@ export const ACCOUNT_TEXT = {
   signUpTitle: "Create Account",
   signUpBody: (provider: Provider): string => `Signed in with ${PROVIDER_NAMES[provider]}. Choose the name other players see.`,
   name: "Name",
+  /** The name field's hint (ours, NAME_RULES') */
+  nameHint: "4–25 characters: letters, numbers and underscores",
   create: "Create Account",
   cancel: "Cancel",
   checking: "Waiting for the check…",
@@ -42,15 +44,34 @@ export const ACCOUNT_TEXT = {
 const PROVIDER_NAMES: Readonly<Record<Provider, string>> = { google: "Google", steam: "Steam" };
 
 /** A display name's longest (the API's 32 bytes: the field counts characters, the API says if a name is too long) */
-const NAME_MAX_BYTES = 32;
+/** The name hints made (each its own id) */
+let hints = 0;
+
+/** A name's rules (the API's: api/internal/names, Twitch's): 4 to 25 characters, letters, digits and underscores */
+export const NAME_RULES = { min: 4, max: 25, characters: /^[A-Za-z0-9_]*$/ } as const;
+
+/** What's wrong with a name before it's sent, as the API would say it (its surrounding spaces off, as the API takes
+ *  them; the word filter the API's alone), or null */
+export function nameProblem(asked: string): ApiError | null {
+  const name = asked.trim();
+  if (name === "") return "name-empty";
+  if (!NAME_RULES.characters.test(name)) return "name-invalid";
+  if (name.length < NAME_RULES.min) return "name-too-short";
+  if (name.length > NAME_RULES.max) return "name-too-long";
+  return null;
+}
 
 /** A refusal in our words */
 export function accountErrorText(code: ApiError, seconds: number | null = null): string {
   switch (code) {
     case "name-empty":
       return "Enter a name.";
+    case "name-too-short":
+      return `That name is too short: ${String(NAME_RULES.min)} characters at least.`;
     case "name-too-long":
-      return "That name is too long.";
+      return `That name is too long: ${String(NAME_RULES.max)} characters at most.`;
+    case "name-invalid":
+      return "Use only letters, numbers and underscores.";
     case "name-not-allowed":
       return "That name isn't allowed.";
     case "rename-locked":
@@ -178,7 +199,13 @@ export class AccountPages {
           status.textContent = T.checkNotLoaded;
         });
     };
+    this.#checkName(name, status);
     const create = this.#button(T.create, () => {
+      const problem = nameProblem(name.value);
+      if (problem) {
+        status.textContent = accountErrorText(problem);
+        return;
+      }
       if (token === null) {
         status.textContent = T.checking;
         if (notLoaded) check();
@@ -203,7 +230,15 @@ export class AccountPages {
         });
     });
     create.classList.add("main-menu-find");
-    this.#draw(T.signUpTitle, [this.#line(T.signUpBody(signup.provider)), this.#label(T.name, name), widget, status, create, this.#backButton(T.cancel)]);
+    this.#draw(T.signUpTitle, [
+      this.#line(T.signUpBody(signup.provider)),
+      this.#label(T.name, name),
+      this.#hint(name),
+      widget,
+      status,
+      create,
+      this.#backButton(T.cancel),
+    ]);
     if (signup.turnstileSiteKey !== "") check();
     name.focus({ preventScroll: true });
   }
@@ -220,8 +255,14 @@ export class AccountPages {
         this.showSignIn(ACCOUNT_TEXT.sessionEnded);
       }
     };
-    const name = this.#input(account.name, NAME_MAX_BYTES); // (as the sign-up's: RX29C)
+    const name = this.#input(account.name, NAME_RULES.max); // (as the sign-up's: RX29C)
+    this.#checkName(name, status);
     const save = this.#button(T.save, () => {
+      const problem = nameProblem(name.value);
+      if (problem) {
+        status.textContent = accountErrorText(problem);
+        return;
+      }
       this.#api
         .rename(name.value)
         .then((renamed) => {
@@ -278,6 +319,7 @@ export class AccountPages {
     const rename = document.createElement("div");
     rename.className = "account-rename";
     rename.append(this.#label(T.rename, name), save);
+    const renameHint = this.#hint(name);
     const ratings = this.#line(
       PLAYLISTS.map((p) => {
         const r = account.ratings.find((x) => x.playlist === p.teamSize);
@@ -293,6 +335,7 @@ export class AccountPages {
       ratings,
       ...provisional,
       rename,
+      renameHint,
       status,
       signOut,
       everywhere,
@@ -352,6 +395,22 @@ export class AccountPages {
     input.autocomplete = "off";
     input.spellcheck = false;
     return input;
+  }
+
+  /** The name field's hint under it, read with it (aria-describedby) */
+  #hint(input: HTMLInputElement): HTMLDivElement {
+    const hint = this.#line(ACCOUNT_TEXT.nameHint, "account-hint");
+    hint.id = `account-name-hint-${String(++hints)}`;
+    input.setAttribute("aria-describedby", hint.id);
+    return hint;
+  }
+
+  /** A name's problem said as it's typed (the API's rules: nameProblem), before it's sent; none, the line cleared */
+  #checkName(input: HTMLInputElement, status: HTMLElement): void {
+    input.addEventListener("input", () => {
+      const problem = nameProblem(input.value);
+      status.textContent = problem && problem !== "name-empty" ? accountErrorText(problem) : "";
+    });
   }
 
   #label(text: string, input: HTMLInputElement): HTMLLabelElement {

@@ -22,10 +22,10 @@ export const test = base.extend({
 });
 
 /** The context's browser signed in to a new account of its own (the stack's POST /api/e2e/sign-in, from a page on its
- *  origin as the page's writes go: an account as a sign-up makes one, `label` and a few random letters its name), or to
+ *  origin as the page's writes go: an account as a sign-up makes one, `label` and a few random letters its name, spaces as underscores: the name rules'), or to
  *  `subject`'s account if it has one already (a returning sign-in); its id and the name asked */
 export async function signIn(context: BrowserContext, label: string, subject = `e2e-${randomUUID()}`): Promise<{ account: string; name: string }> {
-  const name = `${label} ${randomBytes(3).toString("hex")}`;
+  const name = `${label.replaceAll(" ", "_")}_${randomBytes(3).toString("hex")}`;
   const page = await context.newPage();
   await page.goto("/healthz");
   const answer = await page.evaluate(

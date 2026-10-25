@@ -31,6 +31,7 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--reason", "x"},
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "--lock", "-1h"},
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "extra"},
+		{"unlock-renames", "--account", "nope", "--by", "Mod", "--reason", "x"}, {"unlock-renames", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod"},
 	} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 1 || strings.Contains(errs.String(), "DATABASE_URL") {
@@ -42,6 +43,7 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 		{"ratings", "--top"}, {"ratings", "--top", "10", "--playlist", "2v2"}, {"ratings", "--playlist", "3v3", "--top"},
 		{"queue-bans"}, {"names", "0F0E0D0C-0B0A-4908-8706-050403020100"}, {"names", "--recent"}, {"names", "--recent", "5"},
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "--lock", "720h"},
+		{"unlock-renames", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x"},
 	} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
@@ -51,7 +53,7 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 	for command, want := range map[string]string{
 		"stats": "usage: carball-api stats", "matches": "-recent", "account": "usage: carball-api account ID",
 		"ratings": "-playlist", "queue-bans": "usage: carball-api queue-bans", "names": "usage: carball-api names ACCOUNT | --recent [N]",
-		"rename": "-lock",
+		"rename": "-lock", "unlock-renames": "usage: carball-api unlock-renames --account ID --reason TEXT --by NAME",
 	} {
 		var out bytes.Buffer
 		if code := run([]string{command, "-h"}, &out, &out); code != 0 || !strings.Contains(out.String(), want) {
@@ -327,7 +329,7 @@ func TestReports(t *testing.T) {
 	}
 }
 
-// The admin's rename and the renames' history: an account renamed Player-NNNN with who and why, its renames locked;
+// The admin's rename and the renames' history: an account renamed Player_NNNN with who and why, its renames locked;
 // names ACCOUNT its history newest first, names --recent everyone's
 func TestRenameAndNames(t *testing.T) {
 	owner, app := testdb.New(t)
@@ -362,20 +364,31 @@ func TestRenameAndNames(t *testing.T) {
 		return out.String()
 	}
 	said := command("rename", "--account", strings.ToUpper(id), "--by", "Mod", "--reason", "an offensive name", "--lock", "720h")
-	if !strings.Contains(said, `"Ruder Name" -> "Player-`) || !strings.Contains(said, "renames locked until") {
+	if !strings.Contains(said, `"Ruder Name" -> "Player_`) || !strings.Contains(said, "renames locked until") {
 		t.Fatalf("rename said:\n%s", said)
 	}
 	var locked store.RenameLockedError
 	if err := db.Rename(ctx, id, "Again", now.Add(time.Hour)); !errors.As(err, &locked) {
 		t.Fatalf("the player's rename after the lock: %v", err)
 	}
+	// (the lock lifted, recorded; again: nothing to lift)
+	if said := command("unlock-renames", "--account", id, "--by", "Mod", "--reason", "a mistake"); !strings.Contains(said, "its renames unlocked") {
+		t.Fatalf("unlock-renames said:\n%s", said)
+	}
+	if said := command("unlock-renames", "--account", id, "--by", "Mod", "--reason", "again"); !strings.Contains(said, "weren't locked") {
+		t.Fatalf("unlock-renames again said:\n%s", said)
+	}
+	if history := command("names", id); !strings.Contains(history, `"renames unlocked: a mistake"`) {
+		t.Fatalf("the unlock not in the history:\n%s", history)
+	}
 	history := command("names", id)
 	lines := strings.Split(strings.TrimSpace(history), "\n")
-	if len(lines) != 3 || !strings.Contains(lines[1], `"Ruder Name" -> "Player-`) || !strings.Contains(lines[1], `"Mod"`) ||
+	lines = append(lines[:1], lines[2:]...) // (the unlock's line, newest, aside)
+	if len(lines) != 3 || !strings.Contains(lines[1], `"Ruder Name" -> "Player_`) || !strings.Contains(lines[1], `"Mod"`) ||
 		!strings.Contains(lines[1], `"an offensive name"`) || !strings.Contains(lines[2], `"Rude Name" -> "Ruder Name"`) || !strings.Contains(lines[2], " - ") {
 		t.Fatalf("names %s:\n%s", id, history)
 	}
-	if recent := command("names", "--recent", "1"); strings.Count(strings.TrimSpace(recent), "\n") != 1 || !strings.Contains(recent, "Player-") {
+	if recent := command("names", "--recent", "1"); strings.Count(strings.TrimSpace(recent), "\n") != 1 || !strings.Contains(recent, "Player_") {
 		t.Fatalf("names --recent 1:\n%s", recent)
 	}
 	var out, errs bytes.Buffer

@@ -51,7 +51,8 @@ async function findMatch(page: Page, playlist: string): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
   const region = (id: string) => menu.locator(`.main-menu-region[data-region="${id}"]`);
-  for (const id of [A, B]) await expect(region(id).locator(".main-menu-ping")).toHaveText(/^\d+ ms$/, { timeout: 15_000 });
+  // (its ping, and its players in matches once the live counts are read: mainMenu.ts regionText)
+  for (const id of [A, B]) await expect(region(id).locator(".main-menu-ping")).toHaveText(/^\d+ ms( · \d+ in matches)?$/, { timeout: 15_000 });
   if ((await region(A).getAttribute("aria-checked")) !== "true") await region(A).click();
   if ((await region(B).getAttribute("aria-checked")) !== "true") await region(B).click();
   await region(B).click();
@@ -118,8 +119,8 @@ test("signs up through the page's sign-up screen, searches signed in, signs out 
   const account = menu.locator(".main-menu-account-view");
   await expect(account.locator(".main-menu-heading")).toHaveText("Create Account", { timeout: 15_000 });
   const input = account.locator(".account-input");
-  await expect(input).toHaveValue("Made Up");
-  const name = `Flows ${randomBytes(3).toString("hex")}`;
+  await expect(input).toHaveValue("Made_Up");
+  const name = `Flows_${randomBytes(3).toString("hex")}`;
   await input.fill(name);
   await account.getByRole("button", { name: "Create Account" }).click();
   await expect(account.locator(".account-name")).toHaveText(name);

@@ -63,7 +63,7 @@ async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
       return fake.name === null ? json(route, 401, { error: "signed-out" }) : json(route, 200, account());
     }
     if (path === "/api/signup" && r.method() === "GET")
-      return json(route, 200, { provider: "steam", suggestion: "Made Up", turnstileSiteKey: fake.turnstile ? "0x-made-up" : "", nameMaxBytes: 32 });
+      return json(route, 200, { provider: "steam", suggestion: "Made_Up", turnstileSiteKey: fake.turnstile ? "0x-made-up" : "", nameMaxBytes: 32 });
     if (path === "/api/signup" && fake.turnstile && fake.turnstile.refuse > 0) {
       fake.turnstile.refuse -= 1;
       return json(route, 400, { error: "turnstile" });
@@ -115,8 +115,20 @@ test("the deployment's page: Find Match asks to sign in, Steam's sign-in comes b
   expect(new URL(page.url()).searchParams.has("signup")).toBe(false);
   await expect(account).toContainText("Signed in with Steam. Choose the name other players see.");
   const name = account.locator(".account-input");
-  await expect(name).toHaveValue("Made Up");
+  await expect(name).toHaveValue("Made_Up");
+  await expect(account.locator(".account-hint")).toHaveText("4–25 characters: letters, numbers and underscores");
+  await expect(name).toHaveAttribute("aria-describedby", /account-name-hint-/);
+  // (a name the rules refuse: said as it's typed, and Create Account sends nothing)
+  const said = account.locator(".account-status");
+  await name.fill("Ziggy Stardust");
+  await expect(said).toHaveText("Use only letters, numbers and underscores.");
+  await name.fill("Zig");
+  await expect(said).toHaveText("That name is too short: 4 characters at least.");
+  await account.getByRole("button", { name: "Create Account" }).click();
+  await expect(said).toHaveText("That name is too short: 4 characters at least.");
+  expect(fake.writes).toEqual([]);
   await name.fill("Ziggy");
+  await expect(said).toHaveText("");
   await account.getByRole("button", { name: "Create Account" }).click();
   await expect(account.locator(".account-name")).toHaveText("Ziggy");
   await expect(account).toContainText("Signed in with Steam");
@@ -247,10 +259,10 @@ test("the sign-up's check: its script not loading said so and tried again by Cre
   await expect(status).toHaveText("Waiting for the check…");
   await pass("made-up-2");
   await create.click();
-  await expect(account.locator(".account-name")).toHaveText("Made Up");
+  await expect(account.locator(".account-name")).toHaveText("Made_Up");
   expect(fake.writes.map((w) => w.body)).toEqual([
-    JSON.stringify({ name: "Made Up", turnstile: "made-up-1" }),
-    JSON.stringify({ name: "Made Up", turnstile: "made-up-2" }),
+    JSON.stringify({ name: "Made_Up", turnstile: "made-up-1" }),
+    JSON.stringify({ name: "Made_Up", turnstile: "made-up-2" }),
   ]);
   // (the account's page drawn: the widget removed with the sign-up)
   expect(await page.evaluate(() => (window as unknown as { carballTurnstile: { removes: number } }).carballTurnstile.removes)).toBe(1);

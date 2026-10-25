@@ -61,7 +61,9 @@ export type ApiError =
   | "signed-out"
   | "no-signup"
   | "name-empty"
+  | "name-too-short"
   | "name-too-long"
+  | "name-invalid"
   | "name-not-allowed"
   | "rename-locked"
   | "turnstile"
@@ -96,7 +98,9 @@ const CODES: readonly ApiError[] = [
   "signed-out",
   "no-signup",
   "name-empty",
+  "name-too-short",
   "name-too-long",
+  "name-invalid",
   "name-not-allowed",
   "rename-locked",
   "turnstile",

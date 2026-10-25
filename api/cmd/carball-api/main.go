@@ -79,8 +79,11 @@ func commands() []command {
 			"$'steam:7656119000000001 ')", unban},
 		{"bans", "", "the bans in force", bans},
 		{"rename", "--account ID --reason TEXT --by NAME [--lock DURATION]", "an account's name set to a neutral " +
-			"Player-NNNN (random digits), the change kept with by and reason in its renames (names ACCOUNT); --lock: the " +
-			"player's own renames refused that long (the page says so), kept across restarts", adminRename},
+			"Player_NNNN (random digits, never its name now), the change kept with by and reason in its renames (names " +
+			"ACCOUNT); --lock: the player's own renames refused that long (the page says so), kept across restarts; a " +
+			"lock it has already that ends later is kept (unlock-renames shortens one)", adminRename},
+		{"unlock-renames", "--account ID --reason TEXT --by NAME", "an account's rename lock lifted, recorded in its " +
+			"renames (its name unchanged, \"renames unlocked\" with the reason)", unlockRenames},
 		{"names", "ACCOUNT | --recent [N]", "an account's renames (kept a year), newest first, or the N latest of every " +
 			"account (50 by default): when, the account, old and new name, by whom (- the player's own) and why", nameHistory},
 		{"stats", "", "the live app at a glance: accounts (new today, in the last 7 days, in all), ranked matches today and in " +
@@ -878,8 +881,7 @@ func adminRename(args []string, out io.Writer) error {
 	if *lock > 0 {
 		until = now.Add(*lock)
 	}
-	name := names.Neutral()
-	old, err := db.AdminRename(context.Background(), strings.ToLower(*account), name, *by, *reason, until, now)
+	old, name, err := db.AdminRename(context.Background(), strings.ToLower(*account), names.Neutral, *by, *reason, until, now)
 	if errors.Is(err, store.ErrNoAccount) {
 		return fmt.Errorf("no account %s", *account)
 	}
@@ -888,7 +890,42 @@ func adminRename(args []string, out io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(out, "account %s renamed %q -> %q (by %q: %q)\n", strings.ToLower(*account), old, name, *by, *reason)
 	if !until.IsZero() {
-		_, _ = fmt.Fprintf(out, "its renames locked until %s\n", until.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "its renames locked until %s at least (a later lock it had kept)\n", until.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+// unlockRenames: an account's rename lock lifted by an admin, recorded with who and why
+func unlockRenames(args []string, out io.Writer) error {
+	fs := flagsFor("unlock-renames")
+	account := fs.String("account", "", "the account's id (as accounts lists it)")
+	reason := fs.String("reason", "", "why (kept with the unlock)")
+	by := fs.String("by", "", "who unlocks (kept with the unlock)")
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
+		return err
+	}
+	if !accountID.MatchString(*account) {
+		return errors.New("--account ID (an account's id, as accounts lists it) is required")
+	}
+	if *reason == "" || *by == "" {
+		return errors.New("--reason and --by are required")
+	}
+	db, err := openStore(false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	id := strings.ToLower(*account)
+	was, err := db.UnlockRenames(context.Background(), id, *by, *reason, time.Now())
+	switch {
+	case errors.Is(err, store.ErrNoAccount):
+		return fmt.Errorf("no account %s", *account)
+	case err != nil:
+		return err
+	case was == nil:
+		_, _ = fmt.Fprintf(out, "account %s: its renames weren't locked (nothing recorded)\n", id)
+	default:
+		_, _ = fmt.Fprintf(out, "account %s: its renames unlocked (the lock would have ended %s)\n", id, was.UTC().Format(time.RFC3339))
 	}
 	return nil
 }

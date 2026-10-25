@@ -5,7 +5,7 @@ as AC1; APP-CONTRACT.md "carball-api" is how it's deployed). Go, Postgres.
 
 ```
 cmd/carball-api/       the server and the admin's commands (serve, migrate, accounts, ban, unban, bans, rename,
-                       healthcheck, ticket-key; the read-only reports stats, matches, account, ratings, queue-bans,
+                       unlock-renames, healthcheck, ticket-key; the read-only reports stats, matches, account, ratings, queue-bans,
                        names in reports.go;
                        `carball-api help` lists them, `carball-api COMMAND -h` one's flags)
 internal/config/       settings from the environment, secrets from *_FILE
@@ -14,7 +14,7 @@ internal/google/       Google's OpenID Connect (go-oidc, x/oauth2): PKCE, the no
 internal/steam/        Steam's OpenID 2.0: the assertion checked rule by rule, then check_authentication
 internal/turnstile/    Cloudflare Turnstile's siteverify
 internal/ratelimit/    per address (an IPv6 /64) and per account, in memory
-internal/names/        display names: the game server's rules, NFKC, 32 bytes
+internal/names/        display names: Twitch's rules (4-25 letters, digits, underscores), the word filter
 internal/store/        Postgres (pgx), the migrations (goose, embedded: append-only from the first real deploy on, a
                        change a new numbered file, never an edit of one a database may have run; until then, with no
                        database anywhere, 00001 and 00002 were edited in place). An index on a big table gets a

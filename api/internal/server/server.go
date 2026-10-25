@@ -77,6 +77,7 @@ type Store interface {
 	DeleteSessions(ctx context.Context, accountID string) error
 	Account(ctx context.Context, id string) (store.Account, error)
 	Rename(ctx context.Context, id, name string, now time.Time) error
+	RenameLockedUntil(ctx context.Context, id string, now time.Time) (time.Time, bool, error)
 	DeleteAccount(ctx context.Context, id string, hmacOf func(store.Identity) []byte, now time.Time) error
 	RatingsOf(ctx context.Context, accountID string) (map[int]store.Rating, error)
 	QueueBanOf(ctx context.Context, accountID string) (store.QueueBan, bool, error)

@@ -522,23 +522,66 @@ func (s *Store) Rename(ctx context.Context, id, name string, now time.Time) erro
 	})
 }
 
-// AdminRename is an admin's rename at now (`by` and `reason` kept with it), the account's renames locked until
-// `lockUntil` (zero: its lock as it was); the old name
-func (s *Store) AdminRename(ctx context.Context, id, name, by, reason string, lockUntil, now time.Time) (string, error) {
-	var old string
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+// AdminRename is an admin's rename at now to a name `draw` gives (drawn again while it's the account's name now, so the
+// change and its by and reason are always recorded: RV-1176), the account's renames locked until `lockUntil` if that's
+// later than a lock it has (zero: its lock as it was; a lock is only shortened by UnlockRenames, RV-1174); the old name
+// and the new
+func (s *Store) AdminRename(ctx context.Context, id string, draw func() string, by, reason string, lockUntil, now time.Time) (old, name string, err error) {
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		if old, _, err = nameForUpdate(ctx, tx, id); err != nil {
 			return err
 		}
+		for range 100 {
+			if name = draw(); name != old {
+				break
+			}
+		}
+		if name == old {
+			return errors.New("no name drawn but the account's own")
+		}
 		if !lockUntil.IsZero() {
-			if _, err := tx.Exec(ctx, `UPDATE accounts SET renames_locked_until = $2 WHERE id = $1`, id, lockUntil); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE accounts SET renames_locked_until = GREATEST(renames_locked_until, $2) WHERE id = $1`, id, lockUntil); err != nil {
 				return err
 			}
 		}
 		return rename(ctx, tx, id, old, name, &by, &reason, now)
 	})
-	return old, err
+	return old, name, err
+}
+
+// UnlockRenames lifts an admin's lock on an account's renames at now, recorded in its name changes (its name kept, by
+// and why: "renames unlocked: " and the reason); when the lock would have ended (nil: there was none, nothing recorded)
+func (s *Store) UnlockRenames(ctx context.Context, id, by, reason string, now time.Time) (*time.Time, error) {
+	var was *time.Time
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		name, locked, err := nameForUpdate(ctx, tx, id)
+		if err != nil || locked == nil {
+			return err
+		}
+		was = locked
+		if _, err := tx.Exec(ctx, `UPDATE accounts SET renames_locked_until = NULL WHERE id = $1`, id); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO name_changes (account_id, old_name, new_name, changed_at, changed_by, reason)
+			VALUES ($1, $2, $2, $3, $4, $5)`, id, name, now, by, "renames unlocked: "+reason)
+		return err
+	})
+	return was, err
+}
+
+// RenameLockedUntil is the end of an admin's lock on an account's renames (ok false: none, or it has ended by now): the
+// rename's check before its limit is charged (a locked player's tries never use it up, RV-1173; Rename checks again)
+func (s *Store) RenameLockedUntil(ctx context.Context, id string, now time.Time) (time.Time, bool, error) {
+	var until *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT renames_locked_until FROM accounts WHERE id = $1`, id).Scan(&until)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, ErrNoAccount
+	}
+	if err != nil || until == nil || !until.After(now) {
+		return time.Time{}, false, err
+	}
+	return *until, true, nil
 }
 
 // nameForUpdate: an account's name and its renames' lock (nil: none), its row held till the transaction ends
@@ -841,7 +884,7 @@ func cutColon(s string) (string, string, bool) {
 const NameChangesKept = 365 * 24 * time.Hour
 
 // purges are Purge's statements, each by its time ($1: `at`'s of now and the deletions' cut), each on its index
-// (migrations 00003, 00004)
+// (migrations 00003, 00004, 00005)
 var purges = []struct {
 	sql string
 	at  func(now, deletionsBefore time.Time) time.Time
@@ -853,12 +896,14 @@ var purges = []struct {
 	{`DELETE FROM steam_nonces WHERE expires_at <= $1`, atNow},
 	{`DELETE FROM deletions WHERE deleted_at <= $1`, func(_, deletionsBefore time.Time) time.Time { return deletionsBefore }},
 	{`DELETE FROM name_changes WHERE changed_at <= $1`, func(now, _ time.Time) time.Time { return now.Add(-NameChangesKept) }},
+	{`UPDATE accounts SET renames_locked_until = NULL WHERE renames_locked_until <= $1`, atNow},
 }
 
 func atNow(now, _ time.Time) time.Time { return now }
 
 // Purge removes what has run out by now: sessions past their end, flows, sign-ups and Steam nonces past theirs, the
-// delete/re-create rule's records from before deletionsBefore (their 30 days over), renames older than NameChangesKept
+// delete/re-create rule's records from before deletionsBefore (their 30 days over), renames older than NameChangesKept,
+// renames' locks ended
 func (s *Store) Purge(ctx context.Context, now, deletionsBefore time.Time) error {
 	for _, q := range purges {
 		if _, err := s.pool.Exec(ctx, q.sql, q.at(now, deletionsBefore)); err != nil {

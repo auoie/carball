@@ -18,24 +18,27 @@ func TestNameModeration(t *testing.T) {
 	if v := decode(t, resp); resp.StatusCode != http.StatusBadRequest || v["error"] != "name-not-allowed" {
 		t.Fatalf("a sign-up's refused name: %d %v", resp.StatusCode, v)
 	}
-	id := e.signUp(b, "Fine Name")["id"].(string)
+	id := e.signUp(b, "Fine_Name")["id"].(string)
 
 	ctx := context.Background()
 	now := e.clock.Now()
-	if _, err := e.db.AdminRename(ctx, id, "Player-1234", "Mod", "made up", now.Add(48*time.Hour), now); err != nil {
+	if _, _, err := e.db.AdminRename(ctx, id, func() string { return "Player_1234" }, "Mod", "made up", now.Add(48*time.Hour), now); err != nil {
 		t.Fatal(err)
 	}
-	resp = e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": "Back Again"})
-	v := decode(t, resp)
-	if resp.StatusCode != http.StatusForbidden || v["error"] != "rename-locked" || v["seconds"] != float64(48*3600) {
-		t.Fatalf("a rename while locked: %d %v", resp.StatusCode, v)
+	// (every try while locked told the time left, the day's 5 renames never used up by them: RV-1173)
+	for try := range 6 {
+		resp = e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": "Back_Again"})
+		v := decode(t, resp)
+		if resp.StatusCode != http.StatusForbidden || v["error"] != "rename-locked" || v["seconds"] != float64(48*3600) {
+			t.Fatalf("try %d while locked: %d %v", try+1, resp.StatusCode, v)
+		}
 	}
 	e.clock.Add(48 * time.Hour)
-	if resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": "Back Again"}); resp.StatusCode != http.StatusOK {
+	if resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": "Back_Again"}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("a rename after the lock: %d %v", resp.StatusCode, decode(t, resp))
 	}
 	history, err := e.db.NameChanges(ctx, id)
-	if err != nil || len(history) != 2 || history[0].New != "Back Again" || history[0].By != "" || history[1].By != "Mod" {
+	if err != nil || len(history) != 2 || history[0].New != "Back_Again" || history[0].By != "" || history[1].By != "Mod" {
 		t.Fatalf("the history: %+v, %v", history, err)
 	}
 }

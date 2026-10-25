@@ -2713,6 +2713,12 @@ body {
   color: #ffb36b;
 }
 
+/* (a name field's rules under it, ours) */
+.account-hint {
+  font: 13px/1.3 var(--hud-small);
+  color: rgba(255, 255, 255, 0.6);
+}
+
 .account-name {
   font: 22px var(--hud-header);
   color: #fff;

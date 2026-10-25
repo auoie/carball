@@ -104,7 +104,7 @@ func setup(t *testing.T, limits *server.Limits) *env {
 		e.steam.mu.Lock()
 		defer e.steam.mu.Unlock()
 		if r.Method == http.MethodGet { // (GetPlayerSummaries)
-			_, _ = io.WriteString(w, `{"response":{"players":[{"steamid":"`+steamID+`","personaname":"Made-Up Persona"}]}}`)
+			_, _ = io.WriteString(w, `{"response":{"players":[{"steamid":"`+steamID+`","personaname":"Made Up Persona"}]}}`)
 			return
 		}
 		e.steam.called++
@@ -300,12 +300,12 @@ func TestGoogleSignUpThenSignIn(t *testing.T) {
 		t.Fatalf("a new identity: %v, want the sign-up", q)
 	}
 	info := decode(t, e.get(b, "/api/signup"))
-	if !regexp.MustCompile(`^Player [1-9]\d{3}$`).MatchString(info["suggestion"].(string)) || info["provider"] != "google" ||
+	if !regexp.MustCompile(`^Player_[1-9]\d{3}$`).MatchString(info["suggestion"].(string)) || info["provider"] != "google" ||
 		info["turnstileSiteKey"] != "site-key" {
 		t.Errorf("the sign-up's info: %v", info)
 	}
-	account := e.signUp(b, "  Made  Up  ")
-	if account["name"] != "Made Up" || fmt.Sprint(account["providers"]) != "[google]" {
+	account := e.signUp(b, "  Made_Up  ")
+	if account["name"] != "Made_Up" || fmt.Sprint(account["providers"]) != "[google]" {
 		t.Errorf("the account: %v", account)
 	}
 	me := decode(t, e.get(b, "/api/me"))
@@ -338,10 +338,10 @@ func TestSteamSignUp(t *testing.T) {
 	if q := e.page(e.get(b, e.steamAssertion(login, "n1"))); !q.Has("signup") {
 		t.Fatalf("callback: %v", q)
 	}
-	if info := decode(t, e.get(b, "/api/signup")); info["suggestion"] != "Made-Up Persona" || info["provider"] != "steam" {
+	if info := decode(t, e.get(b, "/api/signup")); info["suggestion"] != "Made_Up_Persona" || info["provider"] != "steam" {
 		t.Errorf("the sign-up's info: %v", info)
 	}
-	if account := e.signUp(b, "Made-Up Persona"); fmt.Sprint(account["providers"]) != "[steam]" {
+	if account := e.signUp(b, "Made_Up_Persona"); fmt.Sprint(account["providers"]) != "[steam]" {
 		t.Errorf("the account: %v", account)
 	}
 }
@@ -523,8 +523,8 @@ func TestSignUpRefusals(t *testing.T) {
 			t.Errorf("%v: %d %v, want %d %s", body, resp.StatusCode, v, status, code)
 		}
 	}
-	refused(map[string]string{"name": strings.Repeat("n", 33), "turnstile": "good"}, http.StatusBadRequest, "name-too-long")
-	refused(map[string]string{"name": "\u200B\u3164", "turnstile": "good"}, http.StatusBadRequest, "name-empty")
+	refused(map[string]string{"name": strings.Repeat("n", 26), "turnstile": "good"}, http.StatusBadRequest, "name-too-long")
+	refused(map[string]string{"name": "\u200B\u3164", "turnstile": "good"}, http.StatusBadRequest, "name-invalid")
 	refused(map[string]string{"name": "Fine", "turnstile": "bad"}, http.StatusForbidden, "turnstile")
 	refused(map[string]string{"name": "Fine", "turnstile": "good", "extra": "x"}, http.StatusBadRequest, "bad-request")
 	e.clock.Add(server.SignupTTL + time.Second)
@@ -596,14 +596,14 @@ func TestLogsSayWhoNeverCredentials(t *testing.T) {
 	if !strings.Contains(logs, `route="GET /api/auth/google/callback"`) || !strings.Contains(logs, "ip=198.51.100.23") {
 		t.Fatalf("no request logged with its client's address: %s", logs)
 	}
-	id, _ := e.signUp(b, "Logged Name")["id"].(string)
+	id, _ := e.signUp(b, "Logged_Name")["id"].(string)
 	rejoin, _ := decode(t, e.write(b, http.MethodPost, "/api/ticket?rejoin=00000000000000a1", nil))["ticket"].(string)
 	e.get(b, "/api/me")
 	searchID := strings.Repeat("cd", 16)
 	e.get(e.browser(), "/api/search/"+searchID+"?after=0")
 	logs = e.logs.String()
 	if !strings.Contains(logs, `msg="signed up: account made"`) || !strings.Contains(logs, `route="GET /api/me" status=200`) ||
-		!strings.Contains(logs, "account="+id+` name="Logged Name"`) {
+		!strings.Contains(logs, "account="+id+" name=Logged_Name") {
 		t.Errorf("the sign-up and a signed-in request not named by their account:\n%s", logs)
 	}
 	if !strings.Contains(logs, `route="GET /api/search/{id}" status=401 error=signed-out`) || strings.Contains(logs, searchID) {
@@ -825,7 +825,7 @@ func TestSessionsEnd(t *testing.T) {
 	b := e.browser()
 	u, _ := url.Parse(e.srv.URL)
 	e.googleSignIn(b, "sub-o")
-	e.signUp(b, "Out")
+	e.signUp(b, "Outer")
 	with := func(token string) int {
 		c := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second}
 		return e.get(c, "/api/me", "Cookie", "__Host-cb_session="+token).StatusCode
@@ -912,15 +912,19 @@ func TestRenameChecksTheName(t *testing.T) {
 	b := e.browser()
 	e.googleSignIn(b, "sub-r2")
 	e.signUp(b, "Before")
-	for body, code := range map[string]string{"\u200B\u202E": "name-empty", strings.Repeat("n", 33): "name-too-long", "Sh1t Lord": "name-not-allowed"} {
+	for body, code := range map[string]string{"\u200B\u202E": "name-invalid", "A\u202Eb_name": "name-invalid", "Zoë_Name": "name-invalid",
+		"Two Words": "name-invalid", "Zig": "name-too-short", strings.Repeat("n", 26): "name-too-long", "Sh1t_Lord": "name-not-allowed"} {
 		resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": body})
 		if v := decode(t, resp); resp.StatusCode != http.StatusBadRequest || v["error"] != code {
 			t.Errorf("rename to %q: %d %v", body, resp.StatusCode, v)
 		}
 	}
-	resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": "A\u202Eb"})
-	if v := decode(t, resp); resp.StatusCode != http.StatusOK || v["name"] != "Ab" {
-		t.Errorf("rename with a bidi control: %d %v", resp.StatusCode, v)
+	// (the bounds: 4 and 25 characters taken, the surrounding spaces off)
+	for asked, want := range map[string]string{"Zigg": "Zigg", strings.Repeat("n", 25): strings.Repeat("n", 25), " Padded_Name ": "Padded_Name"} {
+		resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": asked})
+		if v := decode(t, resp); resp.StatusCode != http.StatusOK || v["name"] != want {
+			t.Errorf("rename to %q: %d %v", asked, resp.StatusCode, v)
+		}
 	}
 }
 
@@ -1097,7 +1101,7 @@ func (e *env) player(sub string) (b *http.Client, id, encoded string) {
 	e.t.Helper()
 	b = e.browser()
 	e.googleSignIn(b, sub)
-	account := e.signUp(b, "P "+sub)
+	account := e.signUp(b, "P_"+strings.ReplaceAll(sub, "-", "_"))
 	id = account["id"].(string)
 	return b, id, e.seat(id, testMatch, 0)
 }

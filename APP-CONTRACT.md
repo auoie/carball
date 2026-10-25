@@ -322,8 +322,9 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   by default, the same table),
   `… ban --account ID --reason TEXT --by NAME [--for 72h | --until 2026-12-01]` (or `--identity steam:<SteamID64>`;
   every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`, `… rename --account ID
-  --reason TEXT --by NAME [--lock 720h]` (the name set to a neutral `Player-NNNN`, kept with who and why; `--lock`: the
-  player's own renames refused that long), `… names ACCOUNT` and `… names --recent [N]` (renames, kept a year, newest
+  --reason TEXT --by NAME [--lock 720h]` (the name set to a neutral `Player_NNNN`, kept with who and why; `--lock`: the
+  player's own renames refused that long, a later lock kept), `… unlock-renames --account ID --reason TEXT --by NAME`
+  (the lock lifted, recorded), `… names ACCOUNT` and `… names --recent [N]` (renames, kept a year, newest
   first: notes/accounts.md §5); `… help` lists the commands,
   `… COMMAND -h` one's flags. The live app's reports, read-only from what the service keeps (times in UTC): `… stats`
   (accounts new today, in the week and in all; ranked matches today and in the week by playlist; the bans and leave bans

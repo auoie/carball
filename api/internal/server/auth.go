@@ -390,10 +390,12 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 
 func nameError(err error) string {
 	switch {
+	case errors.Is(err, names.ErrTooShort):
+		return "name-too-short"
 	case errors.Is(err, names.ErrTooLong):
 		return "name-too-long"
 	case errors.Is(err, names.ErrNotAllowed):
 		return "name-not-allowed"
 	}
-	return "name-empty"
+	return "name-invalid"
 }

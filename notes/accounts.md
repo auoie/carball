@@ -290,10 +290,14 @@ With no ranked gate, it rests on:
 
 **Display names cross to other players** (AC-14; question 3).
 - Free choice under the name rules; **not unique**.
-- Validated by the API: the existing name rules, plus:
-  - no control, bidi or zero-width characters;
-  - NFKC;
-  - a length cap.
+- **Twitch's rules** (the user's, 2026-10-25), validated by the API (`api/internal/names`) and by the page as it's typed
+  (`nameProblem`, the same rules, before it's sent): **4 to 25 characters, letters (both cases), digits and underscores
+  alone**, the surrounding spaces taken off. Refusals: 400 `name-too-short`, `name-too-long`, `name-invalid` (another
+  character: a space, a hyphen, an accent, another script; never transliterated), `name-not-allowed` (the filter). The
+  name field's hint: "4–25 characters: letters, numbers and underscores". Both cases, as Twitch's display names: easier
+  to read ("ZiggyStardust"), and names aren't unique, so folding them to lower case buys nothing. Names in use from
+  before stay as they are (the rules are a new sign-up's and a rename's); the game server takes any name a ticket
+  carries (`verified_name`, a superset), so tickets are unchanged.
 - Renames are rate-limited (5 a day, the service's memory).
 - **Name moderation** (the user's, 2026-10-25):
   - **A word filter on a new name** (sign-up, rename; names already in use unaffected): `api/internal/names/filter.go`,
@@ -302,18 +306,24 @@ With no ranked gate, it rests on:
     out case, separators and spaces and reading leetspeak (1 as i, @ as a): a gamer tag runs words together
     ("xXFuckXx") and spells them apart ("f u c k"), which whole words would miss. The Scunthorpe cost (a harmless word
     holding a bad one) is kept low by the false positives, and small for a name: the player picks another. A run of
-    three digits or more is a number, not leetspeak ("Player 4553" isn't "asse"). The library reads ASCII alone: a name
-    is folded to it first (accents off; another script's lookalike isn't caught). Refused: 400 `name-not-allowed`, the
+    three digits or more is a number, not leetspeak ("Player_4553" isn't "asse"); underscores count as separators
+    ("f_u_c_k"). Names are ASCII (Twitch's rules above), the library's alphabet. Refused: 400 `name-not-allowed`, the
     page's "That name isn't allowed."; a Steam persona the filter refuses isn't suggested (a guest-style name instead).
     The API runs the library on our server, never distributed, so it ships no notice for it.
   - **Every rename kept a year** (`name_changes`, migration 00004; the sweep deletes older ones; deleted with the
     account): the old and new name and when, an admin's with who and why. `carball-api names ACCOUNT` (newest first) and
     `names --recent [N]` (50 by default) read it.
   - **An admin's rename:** `carball-api rename --account ID --reason TEXT --by NAME [--lock DURATION]` sets a neutral
-    `Player-NNNN`; `--lock` refuses the player's own renames until then (403 `rename-locked` with its seconds left, the
-    page "Your name can't be changed for N days."), kept on the account (`renames_locked_until`) across restarts.
-- The suggestion at account creation: the Steam persona for a Steam sign-in (untrusted input like any other name); for
-  Google, a guest-style name (e.g. "Player 4821"), never the person's real name, which we never ask Google for anyway.
+    `Player_NNNN` (drawn again while it's the account's name, so a moderation row is always written: RV-1176); `--lock`
+    refuses the player's own renames until then (403 `rename-locked` with its seconds left, the page "Your name can't be
+    changed for N days."), kept on the account (`renames_locked_until`) across restarts. A lock is only extended (the
+    later end wins: a shorter `--lock` changes nothing); `carball-api unlock-renames --account ID --reason TEXT --by NAME`
+    lifts one, recorded in the history (the name unchanged, "renames unlocked: " and the reason) (RV-1174). The lock is
+    read before the 5-a-day limit is charged, so a locked player's tries never use it up and always say the time left
+    (RV-1173). The sweep clears a lock once it has ended (migration 00005's partial index; RV-1175).
+- The suggestion at account creation: the Steam persona for a Steam sign-in (untrusted input like any other name), only
+  if it's a name under the rules once its surrounding spaces are off and the others are underscores; else, and for
+  Google, a guest-style name (e.g. "Player_4821"), never the person's real name, which we never ask Google for anyway.
 
 **Online and offline.**
 - No migration: nothing is deployed, so there are no players, ratings or keys to carry over.

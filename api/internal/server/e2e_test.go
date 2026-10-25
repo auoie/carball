@@ -17,20 +17,20 @@ func TestE2ESignIn(t *testing.T) {
 	e := setup(t, nil)
 	b := e.browser()
 	// (outside --dev: a 404, as the release build's, RV-1043)
-	if resp := e.write(b, http.MethodPost, server.E2ERoute, map[string]string{"subject": "e2e-0", "name": "Not Dev"}); resp.StatusCode != http.StatusNotFound {
+	if resp := e.write(b, http.MethodPost, server.E2ERoute, map[string]string{"subject": "e2e-0", "name": "Not_Dev"}); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("without --dev: %d, want 404", resp.StatusCode)
 	}
 	if resp := e.write(b, http.MethodPost, server.E2ESignUpRoute, map[string]string{"subject": "e2e-0"}); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("the sign-up without --dev: %d, want 404", resp.StatusCode)
 	}
 	e.s.Dev = true
-	resp := e.write(b, http.MethodPost, server.E2ERoute, map[string]string{"subject": "e2e-1", "name": "Made-Up Racer"})
+	resp := e.write(b, http.MethodPost, server.E2ERoute, map[string]string{"subject": "e2e-1", "name": "Made_Up_Racer"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("sign-in: %d %s", resp.StatusCode, resp.Body)
 	}
 	account, _ := decode(t, resp)["account"].(string)
 	me := decode(t, e.get(b, "/api/me"))
-	if me["id"] != account || me["name"] != "Made-Up Racer" {
+	if me["id"] != account || me["name"] != "Made_Up_Racer" {
 		t.Fatalf("/api/me %v, want the account %q named as asked", me, account)
 	}
 	other := e.browser()
@@ -38,7 +38,7 @@ func TestE2ESignIn(t *testing.T) {
 	if again.StatusCode != http.StatusOK || decode(t, again)["account"] != account {
 		t.Fatalf("the same subject again: %d %s, want its account %q", again.StatusCode, again.Body, account)
 	}
-	if name := decode(t, e.get(other, "/api/me"))["name"]; name != "Made-Up Racer" {
+	if name := decode(t, e.get(other, "/api/me"))["name"]; name != "Made_Up_Racer" {
 		t.Errorf("a returning sign-in renamed the account: %v", name)
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, e.srv.URL+server.E2ERoute, bytes.NewReader([]byte(`{"subject":"e2e-2","name":"Unguarded"}`)))
@@ -60,11 +60,11 @@ func TestE2ESignUp(t *testing.T) {
 	if resp := e.write(b, http.MethodPost, server.E2ESignUpRoute, map[string]string{"subject": "e2e-3", "suggestion": "Made Up"}); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("sign-up: %d %s", resp.StatusCode, resp.Body)
 	}
-	if info := decode(t, e.get(b, "/api/signup")); info["suggestion"] != "Made Up" {
+	if info := decode(t, e.get(b, "/api/signup")); info["suggestion"] != "Made_Up" {
 		t.Fatalf("the sign-up's info: %v", info)
 	}
-	created := e.signUp(b, "Made-Up Finisher")
-	if e.meStatus(b) != http.StatusOK || created["name"] != "Made-Up Finisher" {
+	created := e.signUp(b, "Made_Up_Finisher")
+	if e.meStatus(b) != http.StatusOK || created["name"] != "Made_Up_Finisher" {
 		t.Fatalf("the sign-up finished: %v, /api/me %d", created, e.meStatus(b))
 	}
 }

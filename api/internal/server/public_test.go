@@ -126,16 +126,16 @@ func TestPublicLeaderboard(t *testing.T) {
 	if one.Playlist != "1v1" || len(one.Players) != 2 {
 		t.Fatalf("1v1: %+v", one)
 	}
-	if p := one.Players[0]; p.Rank != 1 || p.Name != "P ann" || p.Rating != 1700 || p.Games != 30 {
+	if p := one.Players[0]; p.Rank != 1 || p.Name != "P_ann" || p.Rating != 1700 || p.Games != 30 {
 		t.Fatalf("first: %+v", p)
 	}
-	if p := one.Players[1]; p.Rank != 2 || p.Name != "P cat" || p.Rating != 1650 || p.Games != 10 {
+	if p := one.Players[1]; p.Rank != 2 || p.Name != "P_cat" || p.Rating != 1650 || p.Games != 10 {
 		t.Fatalf("second: %+v", p)
 	}
 	if body := string(e.get(b, "/api/leaderboard?playlist=1v1").Body); strings.Contains(body, ann) || strings.Contains(body, bob) || strings.Contains(body, cat) {
 		t.Fatalf("an account id in the board: %s", body)
 	}
-	if two := e.board(b, "2v2"); len(two.Players) != 1 || two.Players[0].Name != "P cat" {
+	if two := e.board(b, "2v2"); len(two.Players) != 1 || two.Players[0].Name != "P_cat" {
 		t.Fatalf("2v2: %+v", two)
 	}
 	if three := e.board(b, "3v3"); len(three.Players) != 0 {
@@ -143,11 +143,11 @@ func TestPublicLeaderboard(t *testing.T) {
 	}
 	// (a rating changed: the board kept till BoardKept, then read again)
 	e.exec(`UPDATE ratings SET rating = 1800 WHERE account_id = $1 AND playlist = 1`, cat)
-	if kept := e.board(b, "1v1"); kept.Players[0].Name != "P ann" {
+	if kept := e.board(b, "1v1"); kept.Players[0].Name != "P_ann" {
 		t.Fatalf("within BoardKept: %+v", kept)
 	}
 	e.clock.Add(server.BoardKept)
-	if again := e.board(b, "1v1"); again.Players[0].Name != "P cat" || again.Players[0].Rating != 1800 {
+	if again := e.board(b, "1v1"); again.Players[0].Name != "P_cat" || again.Players[0].Rating != 1800 {
 		t.Fatalf("after BoardKept: %+v", again)
 	}
 	// (a ban in force on an account's sign-in: off the board at its next read; one that ended, on it: RV-1155)
@@ -156,7 +156,7 @@ func TestPublicLeaderboard(t *testing.T) {
 	e.exec(`INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
 		SELECT provider, subject, 'made up', $2::timestamptz, 'test', $2 FROM identities WHERE account_id = $1`, ann, now)
 	e.clock.Add(server.BoardKept)
-	if banned := e.board(b, "1v1"); len(banned.Players) != 1 || banned.Players[0].Name != "P ann" {
+	if banned := e.board(b, "1v1"); len(banned.Players) != 1 || banned.Players[0].Name != "P_ann" {
 		t.Fatalf("with cat banned: %+v", banned)
 	}
 	if two := e.board(b, "2v2"); len(two.Players) != 0 {

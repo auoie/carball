@@ -146,6 +146,9 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 			- CASE WHEN g % 500 = 0 THEN interval '40 days' ELSE interval '0' END FROM generate_series(1, 5000) g`,
 		`INSERT INTO queue_bans (account_id, step, until, last_leave, match_id, previous_step) SELECT id, 1,
 			created_at + CASE WHEN substr(id::text, 25)::int % 500 = 0 THEN interval '1 year' ELSE interval '1 hour' END, created_at, 'm', 0 FROM accounts`,
+		// (one account in a hundred with a rename lock, one in ten of those ended)
+		`UPDATE accounts SET renames_locked_until = $1::timestamptz + CASE WHEN substr(id::text, 25)::int % 1000 = 0
+			THEN interval '-1 day' ELSE interval '30 days' END WHERE substr(id::text, 25)::int % 100 = 0`,
 		// (renames over the last 366 days: a day's past the year, as between two daily sweeps)
 		`INSERT INTO name_changes (account_id, old_name, new_name, changed_at) SELECT id, 'Old', 'New',
 			$1::timestamptz - (substr(id::text, 25)::int % 367) * interval '1 day' FROM accounts`,
@@ -173,7 +176,7 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 		return strings.Join(lines, "\n")
 	}
 	indexes := []string{"sessions_expires", "sessions_previous_until", "auth_flows_expires", "pending_signups_expires", "steam_nonces_expires",
-		"deletions_deleted", "name_changes_changed"}
+		"deletions_deleted", "name_changes_changed", "accounts_renames_locked"}
 	for i, q := range purges {
 		p := plan(q.sql, q.at(now, now.Add(-30*24*time.Hour)))
 		t.Logf("%s\n%s", q.sql, p)
