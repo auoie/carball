@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS } from "../input/bindings";
 import { DEFAULT_CAMERA_SETTINGS } from "../camera/carballCamera";
-import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, resolveSettings, saveSettings, tidyName } from "./settings";
+import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, resolveSettings, saveSettings } from "./settings";
 import { DEFAULT_SLOTS } from "../game/quickChat";
 
 class MemoryStorage {
@@ -154,26 +154,12 @@ describe("chat settings (CHAT-5, 18)", () => {
     slots[0] = "Group3Message5"; // ("No way!": in the match pool)
     slots[16] = "Group5Message3"; // ("That was fun!": post game, its pool)
     slots[20] = "Group1Message1"; // (not a pre-game preset: back to its default)
+    // (an old save's name ignored: the field's gone)
     const chat = parseSettings({ chat: { name: " Merc ", quickChatFilter: "team", blockNonTactical: true, slots } }).chat;
-    expect(chat).toMatchObject({ name: "Merc", quickChatFilter: "team", blockNonTactical: true });
+    expect(chat).toMatchObject({ quickChatFilter: "team", blockNonTactical: true });
+    expect(chat).not.toHaveProperty("name");
     expect([chat.slots[0], chat.slots[16], chat.slots[20]]).toEqual(["Group3Message5", "Group5Message3", DEFAULT_SLOTS[20]]);
     expect(parseSettings({ chat: { quickChatFilter: "loud", slots: "x" } }).chat).toEqual(DEFAULT_SETTINGS.chat);
-  });
-
-  it("a name: control characters out, trimmed, 32 bytes of whole characters at most", () => {
-    expect(tidyName("  Ziggy\u0007 ")).toBe("Ziggy");
-    expect(new TextEncoder().encode(tidyName("é".repeat(40))).byteLength).toBe(32);
-    expect(tidyName(`${"a".repeat(30)}👍🏽`)).toBe("a".repeat(30)); // (the emoji whole or not at all)
-    expect(tidyName(12)).toBe("");
-  });
-
-  it("a name loses its hidden characters: direction controls, zero-width ones, the BOM, fillers (RV-249)", () => {
-    expect(tidyName("\u202Eziggy")).toBe("ziggy");
-    expect(tidyName("\u2066Bo\u2069")).toBe("Bo");
-    expect(tidyName("\u200B")).toBe("");
-    expect(tidyName("\uFEFF")).toBe("");
-    expect(tidyName("\u3164")).toBe("");
-    expect(tidyName("a\u2028b")).toBe("ab");
   });
 
   it("saved bindings from before quick chat: its keys 1-4 though freeplay's use 1 and 2 (never active together)", () => {
@@ -222,7 +208,9 @@ describe("chat settings (CHAT-5, 18)", () => {
       ballCamIndicator: true,
       ballArrow: true,
     });
-    expect(parsed.gameplay).toEqual({ statDisplayLevel: "all", flipResetIndicator: "on" });
+    expect(parsed.gameplay).toEqual({ statDisplayLevel: "all", flipResetIndicator: "on", freePlayGoals: true });
+    expect(parseSettings({ gameplay: { freePlayGoals: false } }).gameplay.freePlayGoals).toBe(false);
+    expect(parseSettings({ gameplay: { freePlayGoals: "no" } }).gameplay.freePlayGoals).toBe(true);
     // (Stat Graphs: None by default, the game's ten options kept, anything else None)
     expect(DEFAULT_SETTINGS.interface.statGraphs).toBe("none");
     expect(parseSettings({ interface: { statGraphs: "networkLong" } }).interface.statGraphs).toBe("networkLong");

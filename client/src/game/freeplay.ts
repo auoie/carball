@@ -189,6 +189,8 @@ export class Freeplay {
   #pathPoints: { readonly pos: Vec3; readonly speed: number }[] | null = null;
   #touchTick: number | null = null;
   #goalScoring = true;
+  /** The signed-in account's name (the free-play replay's scorer); null: "Player" */
+  accountName: string | null = null;
   /** Select Shot asked for since the page last took it */
   #selectRequested = false;
   /** The reset's first-time warning during or after a shot (§2.7: RoundResetBody), asked by the page: `retry` once
@@ -313,9 +315,8 @@ export class Freeplay {
       flipReset: { visual: flipVisual(this.settings().gameplay.flipResetIndicator), audio: flipAudio(this.settings().gameplay.flipResetIndicator) },
     });
     // (SkipInstructions, as online; the scorer is the player, no clock)
-    const name = this.settings().chat.name;
     const goal: ReplayGoal = {
-      scorer: { name: name === "" ? "Player" : name, team: this.#team },
+      scorer: { name: this.accountName ?? "Player", team: this.#team },
       assister: null,
       time: this.#goalTime === null ? null : replayTime(this.#goalTime),
       speed: this.#goalSpeed === null ? null : replaySpeed(this.#goalSpeed, this.settings().interface.metric),
@@ -652,8 +653,8 @@ export class Freeplay {
       this.#editing = null;
       this.#editorPoints = null;
       this.editorCamera = null;
-      // (free play's goals and boost again)
-      this.#setGoalScoring(true);
+      // (free play's goals, as set, and boost again)
+      this.#setGoalScoring(this.settings().gameplay.freePlayGoals);
       this.#world.setUnlimitedBoost(this.#unlimitedBoost);
       this.restart();
       return;
@@ -686,7 +687,7 @@ export class Freeplay {
     this.#training = null;
     this.#pathPoints = null;
     this.#disabledGoal.show(null);
-    this.#setGoalScoring(true);
+    this.#setGoalScoring(this.settings().gameplay.freePlayGoals);
     this.#world.setUnlimitedBoost(this.#unlimitedBoost);
   }
 
@@ -827,10 +828,14 @@ export class Freeplay {
   }
 
   /** Goals score only for the ticks an entry would count (before each step): into the target goal (the ball in its
-   *  half), the striker's once touched, any into the goalie's own (CTR-8, CTR-9) */
+   *  half), the striker's once touched, any into the goalie's own (CTR-8, CTR-9); free play's as its setting (the editor's
+   *  never) */
   #updateGoalScoring(): void {
     const run = this.#training;
-    if (!run) return;
+    if (!run) {
+      if (!this.#editing) this.#setGoalScoring(this.settings().gameplay.freePlayGoals);
+      return;
+    }
     const goal = run.state === "active" ? run.scoringGoal() : null;
     this.#setGoalScoring(goal !== null && this.#world.ball().pos.y * goal > 0);
   }

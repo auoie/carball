@@ -4,7 +4,7 @@ import { DEFAULT_COLUMNS, SCOREBOARD_COLUMNS } from "../game/matchStats";
 import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/carballCamera";
 import { ACTIONS, type Action, type Binding, type Bindings, DEFAULT_BINDINGS, type GamepadInput, type KeyboardInput, exclusiveGroups } from "../input/bindings";
 import { DEFAULT_SLOTS, POOLS } from "../game/quickChat";
-import { type ChatFilter, MAX_NAME_BYTES } from "../net/protocol";
+import type { ChatFilter } from "../net/protocol";
 import { TRAINING_DEFAULTS, TRAINING_LIMITS, type TrainingNumbers, type TrainingSettings } from "../training/settings";
 
 /** The game's Controls menu (ProfileGamepadSave_TA). The engine applies everything but the deadzone. */
@@ -50,18 +50,17 @@ export interface AudioSettings {
   readonly ambience: number; // the arena's soundscape
 }
 
-/** Chat: the player's name, the quick-chat filters (ProfileGameplaySave_TA QuickChatFilter, bFilterNonTacticalQuickChat:
- *  CHAT-18) and the 24 quick-chat slots (ProfileQuickChatSave_TA: CHAT-5) */
+/** Chat: the quick-chat filters (ProfileGameplaySave_TA QuickChatFilter, bFilterNonTacticalQuickChat: CHAT-18) and the
+ *  24 quick-chat slots (ProfileQuickChatSave_TA: CHAT-5). (No name: an online player's is their account's; a save's old
+ *  chat.name is ignored) */
 export interface ChatSettings {
-  /** Empty: the server names the player */
-  readonly name: string;
   readonly quickChatFilter: ChatFilter;
   readonly blockNonTactical: boolean;
   /** Preset keys: slots 0-15 (rows 1-4) from the match pool, 16-19 post game, 20-23 pre game */
   readonly slots: readonly string[];
 }
 
-export const DEFAULT_CHAT_SETTINGS: ChatSettings = { name: "", quickChatFilter: "everyone", blockNonTactical: false, slots: DEFAULT_SLOTS };
+export const DEFAULT_CHAT_SETTINGS: ChatSettings = { quickChatFilter: "everyone", blockNonTactical: false, slots: DEFAULT_SLOTS };
 
 /** The pool a quick-chat slot takes its preset from */
 export function slotPool(slot: number): readonly string[] {
@@ -69,15 +68,17 @@ export function slotPool(slot: number): readonly string[] {
 }
 
 /** The Gameplay tab's lists (MENU-9): Game Stat Display Level (StatEventDisplayLevel: the stat popups and feed) and
- *  Flip Reset Indicator (its sound, its look: our flip ring with them) */
+ *  Flip Reset Indicator (its sound, its look: our flip ring with them); and ours, free play's goals (off: the ball stays
+ *  in play in the net, no explosion, no reset) */
 export type StatDisplayLevel = "none" | "primary" | "all";
 export type FlipResetIndicator = "off" | "audio" | "visual" | "on";
 export interface GameplaySettings {
   readonly statDisplayLevel: StatDisplayLevel;
   readonly flipResetIndicator: FlipResetIndicator;
+  readonly freePlayGoals: boolean;
 }
 
-export const DEFAULT_GAMEPLAY_SETTINGS: GameplaySettings = { statDisplayLevel: "primary", flipResetIndicator: "on" };
+export const DEFAULT_GAMEPLAY_SETTINGS: GameplaySettings = { statDisplayLevel: "primary", flipResetIndicator: "on", freePlayGoals: true };
 
 /** (saved before the list: the old flip indicator's checkbox, off, is Off) */
 function readGameplay(v: unknown, oldOptions: Record<string, unknown>): GameplaySettings {
@@ -88,6 +89,7 @@ function readGameplay(v: unknown, oldOptions: Record<string, unknown>): Gameplay
   return {
     statDisplayLevel: level === "none" || level === "primary" || level === "all" ? level : DEFAULT_GAMEPLAY_SETTINGS.statDisplayLevel,
     flipResetIndicator: flip === "off" || flip === "audio" || flip === "visual" || flip === "on" ? flip : old,
+    freePlayGoals: typeof src["freePlayGoals"] === "boolean" ? src["freePlayGoals"] : DEFAULT_GAMEPLAY_SETTINGS.freePlayGoals,
   };
 }
 
@@ -399,39 +401,11 @@ function readBindings(v: unknown): Bindings {
   return out;
 }
 
-/** Characters a name may not have (the server drops them too, RV-249): controls, format characters (the bidi controls,
- *  zero-width ones, the BOM), line and paragraph separators, invisible fillers, the replacement character */
-const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u2800\u3164\uFFA0\uFFF9-\uFFFD]/gu;
-/** (the invisible combining marks: the grapheme joiner, Khmer's inherent vowels, the variation selectors; by code point,
- *  not in a character class) */
-const hiddenMark = (c: string): boolean => {
-  const code = c.codePointAt(0) ?? 0;
-  return code === 0x034f || code === 0x17b4 || code === 0x17b5 || (code >= 0x180b && code <= 0x180f) || (code >= 0xfe00 && code <= 0xfe0f);
-};
-
-/** A name as the wire takes it: hidden characters out, trimmed, MAX_NAME_BYTES of UTF-8 at most (whole characters) */
-export function tidyName(v: unknown): string {
-  if (typeof v !== "string") return "";
-  const name = v
-    .replace(HIDDEN, "")
-    .replace(/./gsu, (c) => (hiddenMark(c) ? "" : c))
-    .trim();
-  const encoder = new TextEncoder();
-  if (encoder.encode(name).byteLength <= MAX_NAME_BYTES) return name;
-  let kept = "";
-  for (const { segment } of new Intl.Segmenter().segment(name)) {
-    if (encoder.encode(kept + segment).byteLength > MAX_NAME_BYTES) break;
-    kept += segment;
-  }
-  return kept.trim();
-}
-
 function readChat(v: unknown): ChatSettings {
   const src = isRecord(v) ? v : {};
   const filter = src["quickChatFilter"];
   const slots = Array.isArray(src["slots"]) ? (src["slots"] as unknown[]) : [];
   return {
-    name: tidyName(src["name"]),
     quickChatFilter: filter === "everyone" || filter === "team" || filter === "friends" || filter === "off" ? filter : DEFAULT_CHAT_SETTINGS.quickChatFilter,
     blockNonTactical: typeof src["blockNonTactical"] === "boolean" ? src["blockNonTactical"] : DEFAULT_CHAT_SETTINGS.blockNonTactical,
     slots: DEFAULT_SLOTS.map((fallback, i) => {

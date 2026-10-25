@@ -32,7 +32,6 @@ import {
   type Settings,
   saveSettings,
   slotPool,
-  tidyName,
   INTERFACE_LIMITS,
   type InterfaceSettings,
   type GameplaySettings,
@@ -49,6 +48,7 @@ const GAMEPLAY_TEXT = {
   statLevels: { none: "No Stats", primary: "Main Stats Only", all: "All Stats" },
   flipResetIndicator: "Flip Reset Indicator",
   flipModes: { off: "Off", audio: "Audio Only", visual: "Visuals Only", on: "On" },
+  freePlayGoals: "Free play goals", // (ours)
 } as const;
 
 /** The Interface tab's text (verbatim, the game's settings labels: MENU-6) */
@@ -726,7 +726,11 @@ export class SettingsPanel {
       this.#update({ ...this.#settings, gameplay: { ...this.#settings.gameplay, ...next } });
     };
     const T = GAMEPLAY_TEXT;
-    const select = <K extends keyof GameplaySettings>(key: K, label: string, options: Readonly<Record<GameplaySettings[K], string>>): HTMLElement =>
+    const select = <K extends "statDisplayLevel" | "flipResetIndicator">(
+      key: K,
+      label: string,
+      options: Readonly<Record<GameplaySettings[K], string>>,
+    ): HTMLElement =>
       cycler({
         label,
         options: Object.entries(options) as [GameplaySettings[K], string][],
@@ -739,6 +743,14 @@ export class SettingsPanel {
     // (the game's creation order: free play's unlimited boost first, the goal replay's skip last: HT-5, RV-281)
     box.append(
       this.#checkboxes(["unlimitedBoost"]),
+      checkbox({
+        label: T.freePlayGoals,
+        checked: gameplay.freePlayGoals,
+        data: { setting: "freePlayGoals" },
+        onChange: (checked) => {
+          apply({ freePlayGoals: checked });
+        },
+      }),
       select("statDisplayLevel", T.statDisplayLevel, T.statLevels),
       select("flipResetIndicator", T.flipResetIndicator, T.flipModes),
       this.#checkboxes(["autoSkipReplay"]),
@@ -844,7 +856,7 @@ export class SettingsPanel {
     return box;
   }
 
-  /** Chat (online): the player's name, the quick-chat filters, the 24 quick-chat slots by category */
+  /** Chat (online): the quick-chat filters, the 24 quick-chat slots by category */
   #chatTab(): HTMLElement {
     const T = CHAT_SETTINGS_TEXT;
     const chat = this.#settings.chat;
@@ -852,12 +864,6 @@ export class SettingsPanel {
       this.#update({ ...this.#settings, chat: { ...this.#settings.chat, ...next } });
     };
     const box = el("div", { className: "sliders chat-settings" });
-    const name = el("input", { type: "text", value: chat.name, placeholder: "Player", maxLength: 32 });
-    name.dataset["setting"] = "name";
-    name.addEventListener("change", () => {
-      apply({ name: tidyName(name.value) });
-    });
-    box.append(el("label", { className: "option control-row" }, [el("span", { textContent: "Name (when you next join)" }), name]));
     box.append(
       cycler({
         label: T.quickChat,
@@ -1121,7 +1127,7 @@ export function pageDefaults(tab: Tab, s: Settings): Settings {
     case "scoreboard":
       return { ...s, scoreboard: d.scoreboard };
     case "chat":
-      return { ...s, chat: { ...d.chat, name: s.chat.name } };
+      return { ...s, chat: d.chat };
     case "video":
       // (back to the automatic default: the panel's resolve applies it)
       return { ...s, video: d.video, options: options(["bloom", "depthOfField", "fullscreen"]) };

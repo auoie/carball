@@ -867,6 +867,7 @@ async function main(): Promise<void> {
     let accountUnknown = false;
     const setAccount = (a: Account | null): void => {
       account = a;
+      freeplay.accountName = a?.name ?? null;
       mainMenu?.setAccountEntry(accountsOn ? (a?.name ?? ACCOUNT_TEXT.entrySignedOut) : null);
       mainMenu?.setRatings(a?.ratings ?? null);
       mainMenu?.setQueueBan(a?.queueBanUntil ?? null);

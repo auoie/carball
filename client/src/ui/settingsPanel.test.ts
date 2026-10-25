@@ -13,7 +13,7 @@ describe("a settings page reset to its defaults (the pad's X Default)", () => {
     options: { ...DEFAULT_SETTINGS.options, cameraShake: true, muted: true, bloom: false, unlimitedBoost: false, airPitchSafety: false },
     audio: { ...DEFAULT_SETTINGS.audio, master: 0.3 },
     interface: { ...DEFAULT_SETTINGS.interface, nameplateMode: "hidden" as never, scale: 1.2 },
-    chat: { ...DEFAULT_SETTINGS.chat, name: "Me", quickChatFilter: "off" },
+    chat: { ...DEFAULT_SETTINGS.chat, quickChatFilter: "off" },
   };
 
   it("all of the page's own settings, its checkboxes and lists too, the others as they were", () => {
@@ -43,8 +43,8 @@ describe("a settings page reset to its defaults (the pad's X Default)", () => {
     expect([controller.controller, controller.options.airPitchSafety]).toEqual([DEFAULT_SETTINGS.controller, DEFAULT_SETTINGS.options.airPitchSafety]);
   });
 
-  it("the chat's filters and slots, the player's name kept", () => {
+  it("the chat's filters and slots", () => {
     const chat = pageDefaults("chat", changed);
-    expect(chat.chat).toEqual({ ...DEFAULT_SETTINGS.chat, name: "Me" });
+    expect(chat.chat).toEqual(DEFAULT_SETTINGS.chat);
   });
 });

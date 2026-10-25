@@ -197,22 +197,6 @@ test("free play's ball commands from their keys: 4 launches the ball, 1 takes po
   expect(errors).toEqual([]);
 });
 
-test("the settings' name field takes Space and Backspace like any text field (RV-482)", async ({ page }) => {
-  await page.goto("/?render=off");
-  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await page
-    .locator("#main-menu")
-    .getByRole("button", { name: /^settings$/i })
-    .click();
-  await page.locator(".settings-tab", { hasText: "Chat" }).click();
-  const name = page.locator('[data-setting="name"]');
-  await name.click();
-  await name.press("Control+A");
-  await page.keyboard.type("Car ball");
-  await page.keyboard.press("Backspace");
-  await expect(name).toHaveValue("Car bal");
-});
-
 test("controls can be rebound and are remembered", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
@@ -402,6 +386,33 @@ test("free play's goal in the garage's colour: an orange car's explosion orange,
   await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#replay-info .replay-scorer")).toHaveClass(/\bteam-1\b/);
   await expect.poll(colours, { timeout: 15_000 }).toEqual([0, 2]);
+  expect(errors).toEqual([]);
+});
+
+test("free play goals off (Gameplay): the ball stays in play in the net, no explosion, no replay, no reset", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.addInitScript(() => {
+    localStorage.setItem("carball.settings.v1", JSON.stringify({ gameplay: { freePlayGoals: false } }));
+  });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
+  const ball = async (): Promise<{ pos: { y: number } }> =>
+    page.evaluate(() => (window as unknown as { carballFreeplay: { ball: () => { pos: { y: number } } } }).carballFreeplay.ball());
+  await page.evaluate(() => {
+    (window as unknown as { carballFreeplay: Hook }).carballFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+  });
+  await page.waitForTimeout(3_000);
+  expect(
+    await page.evaluate(() => [...(window as unknown as { carballFreeplay: { goalColours: () => readonly number[] } }).carballFreeplay.goalColours()]),
+  ).toEqual([0, 0]);
+  await expect(page.locator("#replay-banner")).toBeHidden();
+  expect((await ball()).pos.y).toBeGreaterThan(5120);
+  // (the setting as saved, unchecked on the Gameplay tab)
+  await openSettings(page);
+  await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
+  await expect(page.locator('[data-setting="freePlayGoals"]')).not.toBeChecked();
   expect(errors).toEqual([]);
 });
 
