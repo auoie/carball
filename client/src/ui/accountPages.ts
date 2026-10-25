@@ -50,10 +50,11 @@ let hints = 0;
 /** A name's rules (the API's: api/internal/names, Twitch's): 4 to 25 characters, letters, digits and underscores */
 export const NAME_RULES = { min: 4, max: 25, characters: /^[A-Za-z0-9_]*$/ } as const;
 
-/** What's wrong with a name before it's sent, as the API would say it (its surrounding spaces off, as the API takes
- *  them; the word filter the API's alone), or null */
+/** What's wrong with a name before it's sent, as the API would say it (its surrounding ASCII whitespace off, the API's
+ *  Spaces: never trim()'s wider set, so an invisible U+FEFF passes neither, RV-1178; the word filter the API's alone),
+ *  or null */
 export function nameProblem(asked: string): ApiError | null {
-  const name = asked.trim();
+  const name = asked.replace(/^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g, "");
   if (name === "") return "name-empty";
   if (!NAME_RULES.characters.test(name)) return "name-invalid";
   if (name.length < NAME_RULES.min) return "name-too-short";

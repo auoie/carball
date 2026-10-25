@@ -33,10 +33,15 @@ var (
 // characters is a name's alphabet: letters, digits, underscores
 var characters = regexp.MustCompile(`^[A-Za-z0-9_]*$`)
 
-// Clean returns the name as other players will see it (the asked one, its surrounding spaces off), or why it can't be
+// Spaces are what's trimmed off a name's ends: ASCII whitespace alone, the page's the same (accountPages.ts
+// nameProblem), so neither takes a name the other refuses (an invisible U+FEFF or U+0085 is another character: RV-1178;
+// testdata/cases.json, both suites')
+const Spaces = " \t\n\v\f\r"
+
+// Clean returns the name as other players will see it (the asked one, its surrounding Spaces off), or why it can't be
 // one: another character first (ErrInvalid), then its length, then the word filter
 func Clean(asked string) (string, error) {
-	name := strings.TrimSpace(asked)
+	name := strings.Trim(asked, Spaces)
 	switch {
 	case !characters.MatchString(name):
 		return "", ErrInvalid
@@ -50,11 +55,11 @@ func Clean(asked string) (string, error) {
 	return name, nil
 }
 
-// Suggest is a sign-up's suggested name: the provider's (a Steam persona: untrusted) if it's a name as it is, its
-// surrounding spaces off and the others underscores, never transliterated; else a guest-style one ("Player_4821"),
-// never anything naming the person
+// Suggest is a sign-up's suggested name: the provider's (a Steam persona: untrusted) if it's a name once its words (split
+// at any whitespace, a run of it one) are joined by underscores, never transliterated (RV-1179); else a guest-style one
+// ("Player_4821"), never anything naming the person
 func Suggest(provided string) string {
-	if name, err := Clean(strings.ReplaceAll(strings.TrimSpace(provided), " ", "_")); err == nil {
+	if name, err := Clean(strings.Join(strings.Fields(provided), "_")); err == nil {
 		return name
 	}
 	return guest()

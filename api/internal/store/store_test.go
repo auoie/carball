@@ -654,7 +654,7 @@ func TestNameChanges(t *testing.T) {
 	// (the name drawn again while it's the account's own: a change always recorded, RV-1176)
 	draws := []string{"Second", "Second", "Player_1234"}
 	draw := func() string { d := draws[0]; draws = draws[1:]; return d }
-	old, name, err := s.AdminRename(ctx, id, draw, "Mod", "an offensive name", t0.Add(30*24*time.Hour), t0.Add(3*time.Minute))
+	old, name, _, err := s.AdminRename(ctx, id, draw, "Mod", "an offensive name", t0.Add(30*24*time.Hour), t0.Add(3*time.Minute))
 	if err != nil || old != "Second" || name != "Player_1234" {
 		t.Fatalf("AdminRename: %q -> %q, %v", old, name, err)
 	}
@@ -665,9 +665,11 @@ func TestNameChanges(t *testing.T) {
 	if err := s.Rename(ctx, other, "Another", t0.Add(5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	// (an admin's rename with a shorter lock, or none, keeps the lock as it was: a lock only extended, RV-1174)
-	if _, _, err := s.AdminRename(ctx, id, func() string { return "Player_5678" }, "Mod", "again", t0.Add(time.Hour), t0.Add(6*time.Minute)); err != nil {
-		t.Fatal(err)
+	// (an admin's rename with a shorter lock, or none, keeps the lock as it was: a lock only extended, RV-1174; the end it
+	// says the lock's as it is, RV-1180)
+	if _, _, locked, err := s.AdminRename(ctx, id, func() string { return "Player_5678" }, "Mod", "again", t0.Add(time.Hour), t0.Add(6*time.Minute)); err != nil ||
+		!locked.Equal(t0.Add(30*24*time.Hour)) {
+		t.Fatalf("a shorter lock: %v, %v", locked, err)
 	}
 	if until, ok, err := s.RenameLockedUntil(ctx, id, t0.Add(7*time.Minute)); err != nil || !ok || !until.Equal(t0.Add(30*24*time.Hour)) {
 		t.Fatalf("the lock after a shorter one: %v %v %v", until, ok, err)
@@ -729,7 +731,7 @@ func TestRenameLocksLiftedAndSwept(t *testing.T) {
 	if was, err := s.UnlockRenames(ctx, id, "Mod", "nothing to lift", t0); err != nil || was != nil {
 		t.Fatalf("no lock to lift: %v, %v", was, err)
 	}
-	if _, _, err := s.AdminRename(ctx, id, func() string { return "Player_1111" }, "Mod", "a name", t0.Add(30*24*time.Hour), t0); err != nil {
+	if _, _, _, err := s.AdminRename(ctx, id, func() string { return "Player_1111" }, "Mod", "a name", t0.Add(30*24*time.Hour), t0); err != nil {
 		t.Fatal(err)
 	}
 	was, err := s.UnlockRenames(ctx, id, "Mod", "a mistake", t0.Add(time.Minute))
@@ -745,7 +747,7 @@ func TestRenameLocksLiftedAndSwept(t *testing.T) {
 		t.Fatalf("the history: %+v, %v", history, err)
 	}
 	// (a lock that's ended: cleared by the sweep after its end, not before)
-	if _, _, err := s.AdminRename(ctx, id, func() string { return "Player_2222" }, "Mod", "again", t0.Add(time.Hour), t0.Add(3*time.Minute)); err != nil {
+	if _, _, _, err := s.AdminRename(ctx, id, func() string { return "Player_2222" }, "Mod", "again", t0.Add(time.Hour), t0.Add(3*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Purge(ctx, t0.Add(30*time.Minute), t0); err != nil {
@@ -753,6 +755,13 @@ func TestRenameLocksLiftedAndSwept(t *testing.T) {
 	}
 	if _, ok, _ := s.RenameLockedUntil(ctx, id, t0.Add(30*time.Minute)); !ok {
 		t.Fatal("a lock in force cleared by the sweep")
+	}
+	// (ended, the sweep not yet past it: not in force, nothing to lift, nothing recorded: RV-1180)
+	if was, err := s.UnlockRenames(ctx, id, "Mod", "ended", t0.Add(90*time.Minute)); err != nil || was != nil {
+		t.Fatalf("an ended lock lifted: %v, %v", was, err)
+	}
+	if history, _ := s.NameChanges(ctx, id); len(history) != 4 {
+		t.Fatalf("an ended lock's unlock recorded: %+v", history)
 	}
 	if err := s.Purge(ctx, t0.Add(2*time.Hour), t0); err != nil {
 		t.Fatal(err)

@@ -881,7 +881,7 @@ func adminRename(args []string, out io.Writer) error {
 	if *lock > 0 {
 		until = now.Add(*lock)
 	}
-	old, name, err := db.AdminRename(context.Background(), strings.ToLower(*account), names.Neutral, *by, *reason, until, now)
+	old, name, locked, err := db.AdminRename(context.Background(), strings.ToLower(*account), names.Neutral, *by, *reason, until, now)
 	if errors.Is(err, store.ErrNoAccount) {
 		return fmt.Errorf("no account %s", *account)
 	}
@@ -889,8 +889,8 @@ func adminRename(args []string, out io.Writer) error {
 		return err
 	}
 	_, _ = fmt.Fprintf(out, "account %s renamed %q -> %q (by %q: %q)\n", strings.ToLower(*account), old, name, *by, *reason)
-	if !until.IsZero() {
-		_, _ = fmt.Fprintf(out, "its renames locked until %s at least (a later lock it had kept)\n", until.UTC().Format(time.RFC3339))
+	if !locked.IsZero() {
+		_, _ = fmt.Fprintf(out, "its renames locked until %s\n", locked.UTC().Format(time.RFC3339))
 	}
 	return nil
 }

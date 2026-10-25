@@ -524,9 +524,9 @@ func (s *Store) Rename(ctx context.Context, id, name string, now time.Time) erro
 
 // AdminRename is an admin's rename at now to a name `draw` gives (drawn again while it's the account's name now, so the
 // change and its by and reason are always recorded: RV-1176), the account's renames locked until `lockUntil` if that's
-// later than a lock it has (zero: its lock as it was; a lock is only shortened by UnlockRenames, RV-1174); the old name
-// and the new
-func (s *Store) AdminRename(ctx context.Context, id string, draw func() string, by, reason string, lockUntil, now time.Time) (old, name string, err error) {
+// later than a lock it has (zero: its lock as it was; a lock is only shortened by UnlockRenames, RV-1174); the old name,
+// the new, and the lock's end as it is now (the later of the two; zero: no lockUntil asked, RV-1180)
+func (s *Store) AdminRename(ctx context.Context, id string, draw func() string, by, reason string, lockUntil, now time.Time) (old, name string, locked time.Time, err error) {
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		if old, _, err = nameForUpdate(ctx, tx, id); err != nil {
@@ -541,22 +541,24 @@ func (s *Store) AdminRename(ctx context.Context, id string, draw func() string, 
 			return errors.New("no name drawn but the account's own")
 		}
 		if !lockUntil.IsZero() {
-			if _, err := tx.Exec(ctx, `UPDATE accounts SET renames_locked_until = GREATEST(renames_locked_until, $2) WHERE id = $1`, id, lockUntil); err != nil {
+			if err := tx.QueryRow(ctx, `UPDATE accounts SET renames_locked_until = GREATEST(renames_locked_until, $2) WHERE id = $1
+				RETURNING renames_locked_until`, id, lockUntil).Scan(&locked); err != nil {
 				return err
 			}
 		}
 		return rename(ctx, tx, id, old, name, &by, &reason, now)
 	})
-	return old, name, err
+	return old, name, locked, err
 }
 
 // UnlockRenames lifts an admin's lock on an account's renames at now, recorded in its name changes (its name kept, by
-// and why: "renames unlocked: " and the reason); when the lock would have ended (nil: there was none, nothing recorded)
+// and why: "renames unlocked: " and the reason); when the lock would have ended (nil: none in force, nothing recorded:
+// one that has ended, the sweep not yet past it, is none, RV-1180)
 func (s *Store) UnlockRenames(ctx context.Context, id, by, reason string, now time.Time) (*time.Time, error) {
 	var was *time.Time
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		name, locked, err := nameForUpdate(ctx, tx, id)
-		if err != nil || locked == nil {
+		if err != nil || locked == nil || !locked.After(now) {
 			return err
 		}
 		was = locked

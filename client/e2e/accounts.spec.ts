@@ -63,7 +63,7 @@ async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
       return fake.name === null ? json(route, 401, { error: "signed-out" }) : json(route, 200, account());
     }
     if (path === "/api/signup" && r.method() === "GET")
-      return json(route, 200, { provider: "steam", suggestion: "Made_Up", turnstileSiteKey: fake.turnstile ? "0x-made-up" : "", nameMaxBytes: 32 });
+      return json(route, 200, { provider: "steam", suggestion: "Made_Up", turnstileSiteKey: fake.turnstile ? "0x-made-up" : "", nameMaxBytes: 25 });
     if (path === "/api/signup" && fake.turnstile && fake.turnstile.refuse > 0) {
       fake.turnstile.refuse -= 1;
       return json(route, 400, { error: "turnstile" });

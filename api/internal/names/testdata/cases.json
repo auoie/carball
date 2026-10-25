@@ -1,0 +1,91 @@
+{
+ "note": "Names the API (api/internal/names Clean) and the page (client/src/ui/accountPages.ts nameProblem) judge alike: their surrounding ASCII whitespace off, then letters, digits and underscores, then 4 to 25 (RV-1178). Neutral words only: the word filter is the API's alone.",
+ "cases": [
+  {
+   "in": "Zigg",
+   "want": "ok",
+   "name": "Zigg"
+  },
+  {
+   "in": "aaaaaaaaaaaaaaaaaaaaaaaaa",
+   "want": "ok",
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "in": "Ziggy_Stardust",
+   "want": "ok",
+   "name": "Ziggy_Stardust"
+  },
+  {
+   "in": " Ziggy ",
+   "want": "ok",
+   "name": "Ziggy"
+  },
+  {
+   "in": "\tZiggy\r\n",
+   "want": "ok",
+   "name": "Ziggy"
+  },
+  {
+   "in": "\u000bZiggy\f",
+   "want": "ok",
+   "name": "Ziggy"
+  },
+  {
+   "in": "Zig",
+   "want": "too-short"
+  },
+  {
+   "in": " Zig ",
+   "want": "too-short"
+  },
+  {
+   "in": "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "want": "too-long"
+  },
+  {
+   "in": "Ziggy Stardust",
+   "want": "invalid"
+  },
+  {
+   "in": "Ziggy-Stardust",
+   "want": "invalid"
+  },
+  {
+   "in": "Zo\u00eb_Name",
+   "want": "invalid"
+  },
+  {
+   "in": "Ziggy\ufeff",
+   "want": "invalid"
+  },
+  {
+   "in": "\ufeffZiggy",
+   "want": "invalid"
+  },
+  {
+   "in": "\u0085Ziggy",
+   "want": "invalid"
+  },
+  {
+   "in": "Ziggy\u0085",
+   "want": "invalid"
+  },
+  {
+   "in": "\u00a0Ziggy",
+   "want": "invalid"
+  },
+  {
+   "in": "Ziggy\u2003",
+   "want": "invalid"
+  },
+  {
+   "in": "Zig\u200bgy",
+   "want": "invalid"
+  },
+  {
+   "in": "\uff3aiggy",
+   "want": "invalid"
+  }
+ ]
+}

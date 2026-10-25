@@ -22,7 +22,7 @@ func TestNameModeration(t *testing.T) {
 
 	ctx := context.Background()
 	now := e.clock.Now()
-	if _, _, err := e.db.AdminRename(ctx, id, func() string { return "Player_1234" }, "Mod", "made up", now.Add(48*time.Hour), now); err != nil {
+	if _, _, _, err := e.db.AdminRename(ctx, id, func() string { return "Player_1234" }, "Mod", "made up", now.Add(48*time.Hour), now); err != nil {
 		t.Fatal(err)
 	}
 	// (every try while locked told the time left, the day's 5 renames never used up by them: RV-1173)
