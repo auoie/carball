@@ -939,6 +939,11 @@ export class Freeplay {
     return [...this.#effects.goals];
   }
 
+  /** For the browser tests: whether the ball's goal-line effect (its darkening and shake in a goal) is on */
+  debugGoalLineOn(): boolean {
+    return this.#ballView.goalLineState.on;
+  }
+
   /** For screenshots and tests: live particles */
   debugParticles(): number {
     return this.#effects.particles.count;
@@ -1051,6 +1056,8 @@ export class Freeplay {
     const ball = this.#ball.position(alpha, this.#pos);
     // (the ball's trail in the last touch's team colour, its points quicker in the goal's slow motion: VT-10, VT-17)
     this.#ballView.trailTeam = freeplayTouchTeam(this.#world, this.#team);
+    // (free play's goals off: the ball plain in a net, no goal line's darkening or shake; training's and the editor's kept)
+    this.#ballView.goalLineEffect = this.#training !== null || this.#editing !== null || this.settings().gameplay.freePlayGoals;
     this.#ballView.fade(this.#world.ballExploded(), frameSeconds, realSeconds > 0 ? frameSeconds / realSeconds : 1); // (a goal explodes it until the reset: it dissolves)
     this.#effects.update(frameSeconds);
     const own = this.#car.current;

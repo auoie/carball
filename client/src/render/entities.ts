@@ -357,6 +357,8 @@ export class BallView {
   readonly #sphere: Mesh;
   /** Since the ball's FX actor was made (a spawn, a reset, a replay's ball: s) */
   #sinceSpawn = 0;
+  /** The goal line's effect shown at all (off: free play's goals off, the ball plain in a net) */
+  goalLineEffect = true;
   /** The goal line's effect on the ball (VT-31): the mouth's plane where the ball is crossing it (Three's frame), the
    *  goals' nearness, the FX time, on unless dissolving */
   readonly #goalLine = {
@@ -513,7 +515,7 @@ export class BallView {
     this.#ball.visible = alpha > 0;
     this.#marker.visible = !exploded;
     // (the goal line's effect: not under the dissolve, VT-31)
-    this.#goalLine.on.value = !exploded && this.#opacity >= 1 ? 1 : 0;
+    this.#goalLine.on.value = this.goalLineEffect && !exploded && this.#opacity >= 1 ? 1 : 0;
     // (popping on 1 s after the FX actor's made, the beam's first particle a second later; gone at once on the explosion)
     this.#ring.visible = !exploded && this.#sinceSpawn >= BALL_FX.attach;
     this.#sphere.visible = this.#ring.visible;

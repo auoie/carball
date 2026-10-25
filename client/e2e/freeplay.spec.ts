@@ -389,7 +389,7 @@ test("free play's goal in the garage's colour: an orange car's explosion orange,
   expect(errors).toEqual([]);
 });
 
-test("free play goals off (Gameplay): the ball stays in play in the net, no explosion, no replay, no reset", async ({ page }) => {
+test("free play goals off (Gameplay): the ball stays in play in the net, looks as it does anywhere, no explosion, no replay, no reset", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
@@ -409,6 +409,8 @@ test("free play goals off (Gameplay): the ball stays in play in the net, no expl
   ).toEqual([0, 0]);
   await expect(page.locator("#replay-banner")).toBeHidden();
   expect((await ball()).pos.y).toBeGreaterThan(5120);
+  // (no goal line's darkening or shake on it there)
+  expect(await page.evaluate(() => (window as unknown as { carballFreeplay: { goalLineOn: () => boolean } }).carballFreeplay.goalLineOn())).toBe(false);
   // (the setting as saved, unchecked on the Gameplay tab)
   await openSettings(page);
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();

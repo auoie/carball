@@ -97,6 +97,17 @@ describe("the goal line's effect on the ball (VT-31)", () => {
     view.fade(true, 1 / 60);
     expect(view.goalLineState.on).toBe(false);
   });
+
+  it("off altogether when switched off (free play's goals off), on again with it", () => {
+    const view = new BallView();
+    view.spawn();
+    view.goalLineEffect = false;
+    view.fade(false, 1 / 60);
+    expect(view.goalLineState.on).toBe(false);
+    view.goalLineEffect = true;
+    view.fade(false, 1 / 60);
+    expect(view.goalLineState.on).toBe(true);
+  });
 });
 
 describe("the ball's look on a goal and at a kickoff (VT-15; VT-30's fade-in removed by the user)", () => {

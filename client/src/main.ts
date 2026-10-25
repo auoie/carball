@@ -1182,6 +1182,7 @@ async function main(): Promise<void> {
       },
       particles: () => freeplay.debugParticles(),
       goalColours: () => freeplay.debugGoalColours(),
+      goalLineOn: () => freeplay.debugGoalLineOn(),
       pads: () => freeplay.debugPads(),
       // (custom training with a pack given as JSON, and its state: the browser tests')
       startTraining: (json: unknown) => {
