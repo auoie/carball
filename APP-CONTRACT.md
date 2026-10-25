@@ -20,7 +20,9 @@ endpoint is the host's 127.0.0.1:8081 (`HEALTH_PORT`; the server refuses to star
 reach the host's loopback services. UDP 4433 and 127.0.0.1:8081 must be free on the host, and the host's firewall opens
 4433/udp on both families. (Docker's default bridge would put IPv6 clients behind its userland proxy, every one of them
 the bridge's address: RV-406's reason, gone with host networking.) Deploy check: `dig A` and `dig AAAA` of the game
-server's name both answer, and a page reaches it over IPv6.
+server's name both answer, and a page reaches it over IPv6. Known client issue, left as is: Firefox on a machine without
+working IPv6 doesn't fall back to the A record (Mozilla bug 2084553), so it can't reach a game server (notes/matchmaking.md,
+"Known issue: Firefox without working IPv6").
 
 **Renamed in 48388aa** (a deployment set up before it: check its files, RV-422). The mode variable `RL_MODE` is now
 `SERVER_MODE`, and the old name is ignored: `RL_MODE=direct` starts the queue. The binary `/app/rl-server` is

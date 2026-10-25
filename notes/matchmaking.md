@@ -310,6 +310,30 @@ Design (ours; the game's PsyNet matchmaker is unknowable: MM-3 sends regions wit
 - **Protocol:** intents 4 and 5 and the `Pong` control are additions, not a version change: pages already loaded never send
   them, and servers from before refuse them harmlessly (deploy the servers first).
 
+### Known issue: Firefox without working IPv6 (left as is, the user's decision of 2026-10-24)
+
+- **Symptom:** in Firefox 158 on a machine with no working IPv6 (no IPv6 default route), every region's ping fails, so a
+  search ends with "no ticked region answered"; the network panel shows the WebTransport session as NS_ERROR_NET_RESET. An
+  online match's connection (the same URLs) would fail the same way. Chrome works on the same machine.
+- **Cause:** Firefox's own bug, [Mozilla bug 2084553](https://bugzilla.mozilla.org/show_bug.cgi?id=2084553) (open):
+  HTTP/3 started to an origin's IPv6 address that fails isn't retried over IPv4 (Firefox excludes HTTP/3 for the origin
+  instead), and the WebTransport then goes out as a plain HTTP/1.1 request. A game server's name has A and AAAA records
+  (APP-CONTRACT.md) and nothing listens on TCP 4433, so the session resets. (The bug's own case, an origin that also
+  serves a page over TCP, crashes Firefox.) Chrome falls back to the A record.
+- **Reproduced and confirmed** (2026-10-24, the system's Firefox 158.0.1, headless over geckodriver, against the live
+  servers): with automation's default prefs every ping answers, since geckodriver turns off the connectivity service,
+  the captive-portal check, offline management and more (Playwright's Firefox passed as well). With
+  `remote.prefs.recommended=false` and `network.connectivity-service.enabled`, `network.captive-portal-service.enabled`
+  and `network.manage-offline-status` at their defaults, every session to the live servers fails in 3-26 ms
+  ("WebTransport connection rejected"); adding `network.dns.disableIPv6=true` makes every one answer again. The user
+  confirmed the same pref fixes their Firefox (a throwaway profile).
+- **A player's workarounds:** Chrome (or another Chromium browser); working IPv6; or `network.dns.disableIPv6` set to
+  true in Firefox's about:config.
+- **Set aside:** dropping the game servers' AAAA records (a DNS change; IPv6-only clients behind DNS64/NAT64 would still
+  reach them), and an IPv4-only fallback name per server that the page retries a reset session on (each server's
+  certificate covering it, a config field, the ping's and the match's connection retrying). The user's call: "this is
+  literally just a bug", Firefox's to fix.
+
 ## v1 queue checklist (user scope 2026-10-14: ship v1; simple queue, no rating or ranks)
 Only what the v1 queue needs, distilled from the rows below. **V** = cleared to ship verbatim (user decisions); **K** =
 by key / our own wording. Dropped for v1: ranks/MMR, backfill and join-in-progress, bots, parties, regions, leave
