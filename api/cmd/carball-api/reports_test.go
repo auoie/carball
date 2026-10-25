@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,7 +26,11 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 		{"stats", "extra"}, {"matches"}, {"matches", "5"}, {"matches", "--recent", "0"}, {"matches", "--recent", "x"},
 		{"account"}, {"account", "nope"}, {"account", "0f0e0d0c-0b0a-4908-8706-050403020100", "more"},
 		{"ratings"}, {"ratings", "--top", "x"}, {"ratings", "--top", "--playlist", "4v4"}, {"queue-bans", "extra"},
-		{"matches", "--nope"},
+		{"matches", "--nope"}, {"names"}, {"names", "nope"}, {"names", "--recent", "0"}, {"names", "--recent", "x"},
+		{"rename", "--account", "nope", "--by", "Mod", "--reason", "x"}, {"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod"},
+		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--reason", "x"},
+		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "--lock", "-1h"},
+		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "extra"},
 	} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 1 || strings.Contains(errs.String(), "DATABASE_URL") {
@@ -35,7 +40,8 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 	for _, args := range [][]string{
 		{"stats"}, {"matches", "--recent"}, {"matches", "--recent", "5"}, {"account", "0F0E0D0C-0B0A-4908-8706-050403020100"},
 		{"ratings", "--top"}, {"ratings", "--top", "10", "--playlist", "2v2"}, {"ratings", "--playlist", "3v3", "--top"},
-		{"queue-bans"},
+		{"queue-bans"}, {"names", "0F0E0D0C-0B0A-4908-8706-050403020100"}, {"names", "--recent"}, {"names", "--recent", "5"},
+		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "--lock", "720h"},
 	} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
@@ -44,7 +50,8 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 	}
 	for command, want := range map[string]string{
 		"stats": "usage: carball-api stats", "matches": "-recent", "account": "usage: carball-api account ID",
-		"ratings": "-playlist", "queue-bans": "usage: carball-api queue-bans",
+		"ratings": "-playlist", "queue-bans": "usage: carball-api queue-bans", "names": "usage: carball-api names ACCOUNT | --recent [N]",
+		"rename": "-lock",
 	} {
 		var out bytes.Buffer
 		if code := run([]string{command, "-h"}, &out, &out); code != 0 || !strings.Contains(out.String(), want) {
@@ -317,5 +324,63 @@ func TestReports(t *testing.T) {
 	qb := report("queue-bans")
 	if !strings.Contains(qb, ids["Di"]) || lineWith(qb, ids["Di"]) == "" || strings.Contains(qb, ids["Ada"]) {
 		t.Errorf("queue-bans:\n%s", qb)
+	}
+}
+
+// The admin's rename and the renames' history: an account renamed Player-NNNN with who and why, its renames locked;
+// names ACCOUNT its history newest first, names --recent everyone's
+func TestRenameAndNames(t *testing.T) {
+	owner, app := testdb.New(t)
+	ctx := context.Background()
+	if err := store.Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(ctx, app, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	p := store.Pending{TokenHash: []byte("pz"), Provider: store.Google, Subject: "sub-z", Suggestion: "Z", ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreatePending(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	id, err := db.CreateAccount(ctx, p, "Rude Name", []byte("hz"), now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Rename(ctx, id, "Ruder Name", now); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DATABASE_URL", app)
+	command := func(args ...string) string {
+		t.Helper()
+		var out, errs bytes.Buffer
+		if code := run(args, &out, &errs); code != 0 {
+			t.Fatalf("%v: exit %d, %s", args, code, errs.String())
+		}
+		return out.String()
+	}
+	said := command("rename", "--account", strings.ToUpper(id), "--by", "Mod", "--reason", "an offensive name", "--lock", "720h")
+	if !strings.Contains(said, `"Ruder Name" -> "Player-`) || !strings.Contains(said, "renames locked until") {
+		t.Fatalf("rename said:\n%s", said)
+	}
+	var locked store.RenameLockedError
+	if err := db.Rename(ctx, id, "Again", now.Add(time.Hour)); !errors.As(err, &locked) {
+		t.Fatalf("the player's rename after the lock: %v", err)
+	}
+	history := command("names", id)
+	lines := strings.Split(strings.TrimSpace(history), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[1], `"Ruder Name" -> "Player-`) || !strings.Contains(lines[1], `"Mod"`) ||
+		!strings.Contains(lines[1], `"an offensive name"`) || !strings.Contains(lines[2], `"Rude Name" -> "Ruder Name"`) || !strings.Contains(lines[2], " - ") {
+		t.Fatalf("names %s:\n%s", id, history)
+	}
+	if recent := command("names", "--recent", "1"); strings.Count(strings.TrimSpace(recent), "\n") != 1 || !strings.Contains(recent, "Player-") {
+		t.Fatalf("names --recent 1:\n%s", recent)
+	}
+	var out, errs bytes.Buffer
+	if code := run([]string{"rename", "--account", "00000000-0000-4000-8000-000000000000", "--by", "Mod", "--reason", "x"}, &out, &errs); code != 1 ||
+		!strings.Contains(errs.String(), "no account") {
+		t.Fatalf("a rename of no account: exit %d, %s", code, errs.String())
 	}
 }

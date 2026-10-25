@@ -912,7 +912,7 @@ func TestRenameChecksTheName(t *testing.T) {
 	b := e.browser()
 	e.googleSignIn(b, "sub-r2")
 	e.signUp(b, "Before")
-	for body, code := range map[string]string{"\u200B\u202E": "name-empty", strings.Repeat("n", 33): "name-too-long"} {
+	for body, code := range map[string]string{"\u200B\u202E": "name-empty", strings.Repeat("n", 33): "name-too-long", "Sh1t Lord": "name-not-allowed"} {
 		resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": body})
 		if v := decode(t, resp); resp.StatusCode != http.StatusBadRequest || v["error"] != code {
 			t.Errorf("rename to %q: %d %v", body, resp.StatusCode, v)

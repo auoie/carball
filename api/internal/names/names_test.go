@@ -61,3 +61,45 @@ func TestSuggest(t *testing.T) {
 		}
 	}
 }
+
+// The word filter (filter.go): a new name holding a profanity refused (ErrNotAllowed), its usual disguises too (case,
+// leetspeak, separators, run together, accents); words that only hold one (Scunthorpe), numbers ("4553" isn't "asse")
+// and our false positives let through
+func TestCleanWordFilter(t *testing.T) {
+	for _, bad := range []string{"fuck", "F u C k", "xXFuckXx", "FUCKYOU", "f.u.c.k", "sh1t lord", "@$$hole", "a55hole",
+		"B1tch", "Wh0r3", "dickhead", "c u n t", "Fück", "Ｆｕｃｋ", "Nazi Boy"} {
+		if got, err := Clean(bad); !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("Clean(%q) = %q, %v: want ErrNotAllowed", bad, got, err)
+		}
+	}
+	for _, fine := range []string{"Scunthorpe", "Cassandra", "Assassin", "Classic Bass", "Dickens", "Hancock", "Matsushita",
+		"Cockpit Ace", "Pussycat", "Cumulus", "Grasshopper", "Analyst", "Therapist", "Arsenal Fan", "Sussex", "Penistone",
+		"Player 4553", "Player4553", "Ace 5555", "Sniper2000", "xX Sn1per Xx", "Raccoon", "Shiitake", "Ziggy"} {
+		if got, err := Clean(fine); err != nil || got != fine {
+			t.Errorf("Clean(%q) = %q, %v: want it as given", fine, got, err)
+		}
+	}
+	// (the filter's form: ASCII, accents off, any other character a separator; a number of three digits or more out)
+	for in, want := range map[string]string{"Fück": "Fuck", "Ziggy🙂Star": "Ziggy Star", "Player4553": "Player ", "B1tch": "B1tch", "A55": "A55"} {
+		if got := filterForm(in); got != want {
+			t.Errorf("filterForm(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A sign-up's suggestion the filter refuses is a guest-style name instead; an admin's rename's name is Player-NNNN
+func TestSuggestFilteredAndNeutral(t *testing.T) {
+	if got := Suggest("Shit Lord"); !strings.HasPrefix(got, "Player ") {
+		t.Errorf("Suggest of a refused name: %q", got)
+	}
+	if got := Suggest("Ziggy"); got != "Ziggy" {
+		t.Errorf("Suggest(Ziggy) = %q", got)
+	}
+	for range 20 {
+		if got := Neutral(); len(got) != len("Player-1234") || !strings.HasPrefix(got, "Player-") {
+			t.Fatalf("Neutral() = %q", got)
+		} else if _, err := Clean(got); err != nil {
+			t.Fatalf("Neutral() %q isn't a name: %v", got, err)
+		}
+	}
+}

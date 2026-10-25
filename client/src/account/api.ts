@@ -58,7 +58,19 @@ export interface Signup {
 
 /** The API's refusal codes the page words (api/internal/server: writeError) */
 export type ApiError =
-  "signed-out" | "no-signup" | "name-empty" | "name-too-long" | "turnstile" | "banned" | "blocked" | "taken" | "busy" | "unavailable" | "server";
+  | "signed-out"
+  | "no-signup"
+  | "name-empty"
+  | "name-too-long"
+  | "name-not-allowed"
+  | "rename-locked"
+  | "turnstile"
+  | "banned"
+  | "blocked"
+  | "taken"
+  | "busy"
+  | "unavailable"
+  | "server";
 
 /** How long the page waits for each accounts call, and for config.json (ms), before it says they can't be reached: one
  *  that hangs isn't a button that does nothing (RX31) */
@@ -66,7 +78,11 @@ export const REQUEST_TIMEOUT_MS = 10_000;
 
 /** A call the API refused, or couldn't answer */
 export class AccountError extends Error {
-  constructor(readonly code: ApiError) {
+  /** `seconds`: a refusal's time left (rename-locked's, the admin's lock), when it says one */
+  constructor(
+    readonly code: ApiError,
+    readonly seconds: number | null = null,
+  ) {
     super(code);
     this.name = "AccountError";
   }
@@ -76,7 +92,20 @@ export class AccountError extends Error {
 const WRITE_HEADER = "X-Carball";
 
 const PROVIDERS: readonly Provider[] = ["google", "steam"];
-const CODES: readonly ApiError[] = ["signed-out", "no-signup", "name-empty", "name-too-long", "turnstile", "banned", "blocked", "taken", "busy", "unavailable"];
+const CODES: readonly ApiError[] = [
+  "signed-out",
+  "no-signup",
+  "name-empty",
+  "name-too-long",
+  "name-not-allowed",
+  "rename-locked",
+  "turnstile",
+  "banned",
+  "blocked",
+  "taken",
+  "busy",
+  "unavailable",
+];
 
 /** Where a sign-in starts: a page load (the API sets its flow's cookie and sends the browser to the provider) */
 export function signInUrl(provider: Provider): string {
@@ -170,13 +199,15 @@ export class AccountsApi {
   async #ok(response: Response): Promise<unknown> {
     if (response.ok) return response.status === 204 ? null : ((await response.json()) as unknown);
     let code: ApiError = response.status === 503 || response.status === 502 || response.status === 504 ? "unavailable" : "server";
+    let seconds: number | null = null;
     try {
-      const said = ((await response.json()) as { error?: unknown }).error;
-      code = CODES.find((c) => c === said) ?? code;
+      const said = (await response.json()) as { error?: unknown; seconds?: unknown };
+      code = CODES.find((c) => c === said.error) ?? code;
+      if (typeof said.seconds === "number" && Number.isFinite(said.seconds) && said.seconds >= 0) seconds = said.seconds;
     } catch {
       // (not the API's JSON: a proxy's page)
     }
-    throw new AccountError(code);
+    throw new AccountError(code, seconds);
   }
 }
 

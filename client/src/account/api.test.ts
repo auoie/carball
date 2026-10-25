@@ -119,6 +119,17 @@ describe("the accounts service's calls", () => {
     await expect(a.leaderboard(1)).rejects.toEqual(new AccountError("unavailable"));
   });
 
+  it("reads a refused rename: a name the filter refuses, an admin's lock with its seconds left", async () => {
+    const { api: a } = api(
+      reply(400, { error: "name-not-allowed" }),
+      reply(403, { error: "rename-locked", seconds: 172800 }),
+      reply(403, { error: "rename-locked" }),
+    );
+    await expect(a.rename("Bad")).rejects.toEqual(new AccountError("name-not-allowed"));
+    await expect(a.rename("Again")).rejects.toMatchObject({ code: "rename-locked", seconds: 172800 });
+    await expect(a.rename("Again")).rejects.toMatchObject({ code: "rename-locked", seconds: null });
+  });
+
   it("names the API's refusals by its codes; anything else server, a gateway's or no answer unavailable", async () => {
     const code = async (r: Response | Error): Promise<string> => {
       const call = vi.fn<typeof fetch>(() => (r instanceof Error ? Promise.reject(r) : Promise.resolve(r)));

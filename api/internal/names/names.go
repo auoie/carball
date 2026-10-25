@@ -21,6 +21,8 @@ const MaxBytes = 32
 var (
 	ErrEmpty   = errors.New("the name is empty")
 	ErrTooLong = fmt.Errorf("the name is longer than %d bytes", MaxBytes)
+	// ErrNotAllowed is a name the word filter refuses (filter.go)
+	ErrNotAllowed = errors.New("the name isn't allowed")
 )
 
 // Clean returns the name as other players will see it, or why it can't be one
@@ -32,25 +34,40 @@ func Clean(asked string) (string, error) {
 	if len(name) > MaxBytes {
 		return "", ErrTooLong
 	}
+	if !allowed(name) {
+		return "", ErrNotAllowed
+	}
 	return name, nil
 }
 
 // Suggest is a sign-up's suggested name: the provider's (a Steam persona: untrusted, tidied and cut to the limit at a
-// character's boundary), else a guest-style one ("Player 4821"), never anything naming the person
+// character's boundary) if the word filter takes it, else a guest-style one ("Player 4821"), never anything naming the
+// person
 func Suggest(provided string) string {
 	name := tidy(provided)
 	for len(name) > MaxBytes {
 		_, size := utf8.DecodeLastRuneInString(name)
 		name = strings.TrimRightFunc(name[:len(name)-size], unicode.IsSpace)
 	}
-	if name != "" {
+	if name != "" && allowed(name) {
 		return name
 	}
+	return fmt.Sprintf("Player %d", fourDigits())
+}
+
+// Neutral is an admin's rename's name: "Player-NNNN", random digits (another account may have it too: names aren't
+// unique)
+func Neutral() string {
+	return fmt.Sprintf("Player-%d", fourDigits())
+}
+
+// fourDigits: a random number from 1000 to 9999
+func fourDigits() int64 {
 	n, err := rand.Int(rand.Reader, big.NewInt(9000))
 	if err != nil {
 		panic(err) // (crypto/rand doesn't fail on a supported system)
 	}
-	return fmt.Sprintf("Player %d", 1000+n.Int64())
+	return 1000 + n.Int64()
 }
 
 // tidy: decomposed (NFKD: a precomposed letter's accent counts as a mark); hidden characters dropped; every run of

@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"io/fs"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -146,6 +146,9 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 			- CASE WHEN g % 500 = 0 THEN interval '40 days' ELSE interval '0' END FROM generate_series(1, 5000) g`,
 		`INSERT INTO queue_bans (account_id, step, until, last_leave, match_id, previous_step) SELECT id, 1,
 			created_at + CASE WHEN substr(id::text, 25)::int % 500 = 0 THEN interval '1 year' ELSE interval '1 hour' END, created_at, 'm', 0 FROM accounts`,
+		// (renames over the last 366 days: a day's past the year, as between two daily sweeps)
+		`INSERT INTO name_changes (account_id, old_name, new_name, changed_at) SELECT id, 'Old', 'New',
+			$1::timestamptz - (substr(id::text, 25)::int % 367) * interval '1 day' FROM accounts`,
 		`INSERT INTO bans (provider, subject, reason, until, banned_by, created_at) SELECT 'steam', 'sub-' || g, 'made up',
 			CASE WHEN g % 500 = 0 THEN NULL ELSE $1::timestamptz - interval '1 day' END, 'test', $1 FROM generate_series(1, 5000) g`,
 		`ANALYZE`,
@@ -169,13 +172,10 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 		}
 		return strings.Join(lines, "\n")
 	}
-	indexes := []string{"sessions_expires", "sessions_previous_until", "auth_flows_expires", "pending_signups_expires", "steam_nonces_expires", "deletions_deleted"}
+	indexes := []string{"sessions_expires", "sessions_previous_until", "auth_flows_expires", "pending_signups_expires", "steam_nonces_expires",
+		"deletions_deleted", "name_changes_changed"}
 	for i, q := range purges {
-		at := now
-		if q.deletions {
-			at = now.Add(-30 * 24 * time.Hour)
-		}
-		p := plan(q.sql, at)
+		p := plan(q.sql, q.at(now, now.Add(-30*24*time.Hour)))
 		t.Logf("%s\n%s", q.sql, p)
 		if !strings.Contains(p, indexes[i]) {
 			t.Errorf("%s: not on %s:\n%s", q.sql, indexes[i], p)
@@ -203,18 +203,35 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 }
 
 // The provisional line is in three places (BoardDeviation, which ranked's test ties to ranked.Provisional; the board's
-// SQL; the index's predicate in 00003_indexes.sql): the SQL and the migration each say it, so changing the constant
-// alone fails here, never a board that silently drops the settled between the old line and the new (RV-1164)
+// SQL; ratings_board's predicate): the SQL's number and the index's as the migrated database has it (pg_get_expr: the
+// last migration's, whichever redefined it) are each BoardDeviation, read as numbers (1100 or 110.5 isn't 110), so
+// changing one alone fails here, never a board that silently drops the settled between the old line and the new
+// (RV-1164, RV-1171)
 func TestBoardLineInItsSQLAndIndex(t *testing.T) {
-	line := "deviation < " + strconv.FormatFloat(BoardDeviation, 'f', -1, 64)
-	if !strings.Contains(boardHead, "r."+line) {
-		t.Errorf("the board's query doesn't say %q:\n%s", line, boardHead)
+	owner, _ := testdb.New(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
+		t.Fatal(err)
 	}
-	migration, err := fs.ReadFile(migrations, "migrations/00003_indexes.sql")
+	conn, err := pgx.Connect(ctx, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(migration), "ON ratings (playlist, rating DESC, account_id) WHERE "+line+";") {
-		t.Errorf("ratings_board's predicate isn't %q", line)
+	defer func() { _ = conn.Close(ctx) }()
+	var predicate string
+	if err := conn.QueryRow(ctx, `SELECT pg_get_expr(indpred, indrelid) FROM pg_index WHERE indexrelid = 'ratings_board'::regclass`).Scan(&predicate); err != nil {
+		t.Fatal(err)
 	}
+	line := regexp.MustCompile(`deviation\s*<\s*\(?([0-9]+(?:\.[0-9]+)?)\)?(?:[^0-9.]|$)`)
+	for name, text := range map[string]string{"the board's query": boardHead, "ratings_board's predicate": predicate} {
+		m := line.FindAllStringSubmatch(text, -1)
+		if len(m) != 1 {
+			t.Errorf("%s: %d deviation lines in %q", name, len(m), text)
+			continue
+		}
+		if v, err := strconv.ParseFloat(m[0][1], 64); err != nil || v != BoardDeviation {
+			t.Errorf("%s's line %q, BoardDeviation %v", name, m[0][1], BoardDeviation)
+		}
+	}
+	t.Logf("ratings_board's predicate: %s", predicate)
 }

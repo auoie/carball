@@ -45,12 +45,16 @@ const PROVIDER_NAMES: Readonly<Record<Provider, string>> = { google: "Google", s
 const NAME_MAX_BYTES = 32;
 
 /** A refusal in our words */
-export function accountErrorText(code: ApiError): string {
+export function accountErrorText(code: ApiError, seconds: number | null = null): string {
   switch (code) {
     case "name-empty":
       return "Enter a name.";
     case "name-too-long":
       return "That name is too long.";
+    case "name-not-allowed":
+      return "That name isn't allowed.";
+    case "rename-locked":
+      return seconds === null ? "Your name can't be changed for now." : `Your name can't be changed for ${lockLeftText(seconds)}.`;
     case "turnstile":
       return "The check didn't pass. Try again.";
     case "taken":
@@ -70,6 +74,15 @@ export function accountErrorText(code: ApiError): string {
     case "server":
       return "Something went wrong. Try again.";
   }
+}
+
+/** A lock's time left in words (ours): whole days from two days, else whole hours from two hours, else minutes; each
+ *  rounded up */
+export function lockLeftText(seconds: number): string {
+  const count = (n: number, unit: string): string => `${String(n)} ${unit}${n === 1 ? "" : "s"}`;
+  if (seconds >= 2 * 86_400) return count(Math.ceil(seconds / 86_400), "day");
+  if (seconds >= 2 * 3_600) return count(Math.ceil(seconds / 3_600), "hour");
+  return count(Math.max(1, Math.ceil(seconds / 60)), "minute");
 }
 
 /** A sign-in's return in our words (`/?signin=…`): its modal's title and line */
@@ -200,7 +213,7 @@ export class AccountPages {
     const T = ACCOUNT_TEXT;
     const status = this.#line("", "account-status");
     const fail = (e: unknown): void => {
-      status.textContent = accountErrorText(e instanceof AccountError ? e.code : "server");
+      status.textContent = e instanceof AccountError ? accountErrorText(e.code, e.seconds) : accountErrorText("server");
       // (the session gone: the sign-in's page, not the account's controls, RX29C)
       if (e instanceof AccountError && e.code === "signed-out") {
         this.#actions.changed(null);

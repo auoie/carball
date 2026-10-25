@@ -4,8 +4,9 @@ Carball's accounts service: sign-in with Google or Steam, sessions, accounts (no
 as AC1; APP-CONTRACT.md "carball-api" is how it's deployed). Go, Postgres.
 
 ```
-cmd/carball-api/       the server and the admin's commands (serve, migrate, accounts, ban, unban, bans, healthcheck,
-                       ticket-key; the read-only reports stats, matches, account, ratings, queue-bans in reports.go;
+cmd/carball-api/       the server and the admin's commands (serve, migrate, accounts, ban, unban, bans, rename,
+                       healthcheck, ticket-key; the read-only reports stats, matches, account, ratings, queue-bans,
+                       names in reports.go;
                        `carball-api help` lists them, `carball-api COMMAND -h` one's flags)
 internal/config/       settings from the environment, secrets from *_FILE
 internal/server/       the HTTP side under /api/: sign-in flows, sign-up, sessions, the account page's calls
@@ -18,7 +19,9 @@ internal/store/        Postgres (pgx), the migrations (goose, embedded: append-o
                        change a new numbered file, never an edit of one a database may have run; until then, with no
                        database anywhere, 00001 and 00002 were edited in place). An index on a big table gets a
                        file of its own: `-- +goose NO TRANSACTION`, `CREATE INDEX CONCURRENTLY`, a `lock_timeout`
-                       (00003_indexes.sql is plain CREATE INDEX in one transaction: small tables then, RV-1165)
+                       (00003_indexes.sql is plain CREATE INDEX in one transaction: small tables then, RV-1165). A
+                       CONCURRENTLY build that fails leaves an INVALID index behind: drop it before running the
+                       migration again (`IF NOT EXISTS` would keep the broken one, RV-1172)
 internal/testdb/       the tests' throwaway Postgres; internal/testoidc/: the tests' stand-in OIDC provider
 ```
 

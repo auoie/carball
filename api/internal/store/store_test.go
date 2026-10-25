@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -627,5 +628,85 @@ func TestQueueBans(t *testing.T) {
 	}
 	if got, _, _ := s.QueueBanOf(ctx, a); got.Match != "m1" {
 		t.Errorf("changed by a refused spend: %+v", got)
+	}
+}
+
+// Renames kept (name moderation): the player's own recorded with the old name (the same name not), an admin's with who
+// and why and its lock, which refuses the player's renames until it ends (RenameLockedError); an account's history and
+// the latest of all newest first; a year kept by the sweep; deleted with the account
+func TestNameChanges(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+	id, err := s.CreateAccount(ctx, pending(t, s, "google", "sub-names", t0), "First", []byte("hmac-names"), t0, t0.Add(-30*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateAccount(ctx, pending(t, s, "google", "sub-other", t0), "Other", []byte("hmac-other"), t0, t0.Add(-30*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename(ctx, id, "Second", t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename(ctx, id, "Second", t0.Add(2*time.Minute)); err != nil { // (the same name: nothing recorded)
+		t.Fatal(err)
+	}
+	old, err := s.AdminRename(ctx, id, "Player-1234", "Mod", "an offensive name", t0.Add(30*24*time.Hour), t0.Add(3*time.Minute))
+	if err != nil || old != "Second" {
+		t.Fatalf("AdminRename: %q, %v", old, err)
+	}
+	var locked store.RenameLockedError
+	if err := s.Rename(ctx, id, "Third", t0.Add(4*time.Minute)); !errors.As(err, &locked) || !locked.Until.Equal(t0.Add(30*24*time.Hour)) {
+		t.Fatalf("a rename while locked: %v", err)
+	}
+	if err := s.Rename(ctx, other, "Another", t0.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// (an admin's rename without a lock keeps the lock as it was)
+	if _, err := s.AdminRename(ctx, id, "Player-5678", "Mod", "again", time.Time{}, t0.Add(6*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename(ctx, id, "Third", t0.Add(7*time.Minute)); !errors.As(err, &locked) {
+		t.Fatalf("the lock lost: %v", err)
+	}
+	// (the lock ended: the player's rename goes through)
+	if err := s.Rename(ctx, id, "Third", t0.Add(31*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rename(ctx, "00000000-0000-4000-8000-000000000000", "Nobody", t0); !errors.Is(err, store.ErrNoAccount) {
+		t.Fatalf("a rename of no account: %v", err)
+	}
+	history, err := s.NameChanges(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type change struct{ old, new, by, why string }
+	var got []change
+	for _, c := range history {
+		if c.Account != id || c.Name != "Third" {
+			t.Fatalf("a change's account: %+v", c)
+		}
+		got = append(got, change{c.Old, c.New, c.By, c.Reason})
+	}
+	want := []change{{"Player-5678", "Third", "", ""}, {"Player-1234", "Player-5678", "Mod", "again"}, {"Second", "Player-1234", "Mod", "an offensive name"}, {"First", "Second", "", ""}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("history %+v, want %+v", got, want)
+	}
+	recent, err := s.RecentNameChanges(ctx, 2)
+	if err != nil || len(recent) != 2 || recent[0].New != "Third" || recent[1].New != "Player-5678" {
+		t.Fatalf("recent: %+v, %v", recent, err)
+	}
+	// (a year on: the oldest gone, the rest kept till theirs)
+	if err := s.Purge(ctx, t0.Add(store.NameChangesKept+4*time.Minute), t0); err != nil {
+		t.Fatal(err)
+	}
+	if history, _ := s.NameChanges(ctx, id); len(history) != 2 {
+		t.Fatalf("after a year: %+v", history)
+	}
+	if err := s.DeleteAccount(ctx, id, func(store.Identity) []byte { return []byte("h") }, t0.Add(32*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.RecentNameChanges(ctx, 100); len(all) != 1 || all[0].Account != other {
+		t.Fatalf("after the account's deletion: %+v", all)
 	}
 }

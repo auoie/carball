@@ -3,6 +3,7 @@ package matchmaker
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -136,5 +137,23 @@ func TestUnlistedServerWarnedOnce(t *testing.T) {
 	m.Restarted("anything:1", t0)
 	if logs.Len() != 0 {
 		t.Fatalf("development warned:\n%s", logs.String())
+	}
+}
+
+// Unlisted names warned of at most unlistedNamed times, then one line for the rest, the record of them bounded however
+// many a leaked game-server token's restarts name (RV-1168)
+func TestUnlistedServersWarnedBounded(t *testing.T) {
+	var logs bytes.Buffer
+	m := New(func(Player, ticket.Seat, time.Time) (string, error) { return "", nil }, func() time.Time { return t0 },
+		slog.New(slog.NewTextHandler(&logs, nil)))
+	m.AllowServers([]string{"eu:4433"})
+	for i := range 20000 {
+		m.Restarted(fmt.Sprintf("fake-%d:4433", i), t0)
+	}
+	if n := strings.Count(logs.String(), "level=WARN"); n != unlistedNamed+1 || len(m.unlisted) != unlistedNamed {
+		t.Fatalf("%d warnings, %d names kept", n, len(m.unlisted))
+	}
+	if !strings.Contains(logs.String(), "not named any more") {
+		t.Fatal("no line for the rest")
 	}
 }

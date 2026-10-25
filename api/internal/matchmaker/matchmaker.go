@@ -188,9 +188,14 @@ type Matchmaker struct {
 	// the game servers matched at (their names lower-case: GAME_SERVERS'); nil, any (development). A server a page
 	// pinged or ticked that isn't one is dropped before matching: never matched at, so never counted (RV-1157)
 	servers map[string]bool
-	// the unlisted game servers warned of (each once): RV-1162
-	unlisted map[string]bool
+	// the unlisted game servers warned of (each once: RV-1162), at most unlistedNamed of them, then one line for the rest
+	// (a leaked game-server token's restarts can't grow it without end: RV-1168)
+	unlisted     map[string]bool
+	unlistedMore bool
 }
+
+// unlistedNamed is how many unlisted game servers are warned of by name
+const unlistedNamed = 32
 
 // hold is a rejoin let through: until when its account's searches wait for its Back, its match, and its ticket's one-time
 // id (only that rejoin's refusal lets it go, not an earlier rejoin's of the same match: RV-1086)
@@ -674,11 +679,17 @@ func (m *Matchmaker) Restarted(server string, at time.Time) {
 	// (a game server whose own name (PUBLIC_HOST:port, its pongs') isn't on GAME_SERVERS' list (its URL's host:port):
 	// never matched at, every search naming it dropped; said once, at its start, RV-1162)
 	if key := strings.ToLower(server); m.servers != nil && !m.servers[key] && !m.unlisted[key] {
-		if m.unlisted == nil {
-			m.unlisted = map[string]bool{}
+		switch {
+		case len(m.unlisted) < unlistedNamed:
+			if m.unlisted == nil {
+				m.unlisted = map[string]bool{}
+			}
+			m.unlisted[key] = true
+			m.log.Warn("a game server not on GAME_SERVERS started: no match is made there (its PUBLIC_HOST:port must be its URL's host:port)", "server", server)
+		case !m.unlistedMore:
+			m.unlistedMore = true
+			m.log.Warn("more game servers not on GAME_SERVERS started: not named any more", "named", unlistedNamed)
 		}
-		m.unlisted[key] = true
-		m.log.Warn("a game server not on GAME_SERVERS started: no match is made there (its PUBLIC_HOST:port must be its URL's host:port)", "server", server)
 	}
 	for id, mt := range m.matches {
 		if mt.server == server && !mt.assigned.After(at) {

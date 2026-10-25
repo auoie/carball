@@ -42,6 +42,7 @@ import (
 
 	"carball/api/internal/config"
 	"carball/api/internal/google"
+	"carball/api/internal/names"
 	"carball/api/internal/server"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
@@ -77,6 +78,11 @@ func commands() []command {
 			"without its checks lifted as given: one bans shows quoted is typed as the shell's $'...', e.g. --identity " +
 			"$'steam:7656119000000001 ')", unban},
 		{"bans", "", "the bans in force", bans},
+		{"rename", "--account ID --reason TEXT --by NAME [--lock DURATION]", "an account's name set to a neutral " +
+			"Player-NNNN (random digits), the change kept with by and reason in its renames (names ACCOUNT); --lock: the " +
+			"player's own renames refused that long (the page says so), kept across restarts", adminRename},
+		{"names", "ACCOUNT | --recent [N]", "an account's renames (kept a year), newest first, or the N latest of every " +
+			"account (50 by default): when, the account, old and new name, by whom (- the player's own) and why", nameHistory},
 		{"stats", "", "the live app at a glance: accounts (new today, in the last 7 days, in all), ranked matches today and in " +
 			"the week by playlist, the bans and leave bans in force", stats},
 		{"matches", "--recent [N]", "the latest ranked results (20 by default), newest first: their time, playlist, each " +
@@ -839,5 +845,50 @@ func ticketKey(args []string, out io.Writer) error {
 	}
 	fmt.Println(seed)
 	fmt.Fprintln(os.Stderr, public)
+	return nil
+}
+
+// adminRename: an account's name set to a neutral one by an admin (kept with who and why), its own renames locked for
+// --lock if given
+func adminRename(args []string, out io.Writer) error {
+	fs := flagsFor("rename")
+	account := fs.String("account", "", "the account's id (as accounts lists it)")
+	reason := fs.String("reason", "", "why (kept with the rename)")
+	by := fs.String("by", "", "who renames (kept with the rename)")
+	lock := fs.Duration("lock", 0, "the player's own renames refused this long (e.g. 720h); none: its lock as it was")
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
+		return err
+	}
+	if !accountID.MatchString(*account) {
+		return errors.New("--account ID (an account's id, as accounts lists it) is required")
+	}
+	if *reason == "" || *by == "" {
+		return errors.New("--reason and --by are required")
+	}
+	if *lock < 0 {
+		return errors.New("--lock: a length, e.g. 720h")
+	}
+	db, err := openStore(false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	now := time.Now()
+	var until time.Time
+	if *lock > 0 {
+		until = now.Add(*lock)
+	}
+	name := names.Neutral()
+	old, err := db.AdminRename(context.Background(), strings.ToLower(*account), name, *by, *reason, until, now)
+	if errors.Is(err, store.ErrNoAccount) {
+		return fmt.Errorf("no account %s", *account)
+	}
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "account %s renamed %q -> %q (by %q: %q)\n", strings.ToLower(*account), old, name, *by, *reason)
+	if !until.IsZero() {
+		_, _ = fmt.Fprintf(out, "its renames locked until %s\n", until.UTC().Format(time.RFC3339))
+	}
 	return nil
 }

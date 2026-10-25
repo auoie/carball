@@ -1,3 +1,5 @@
+github.com/TwiN/go-away v1.8.1 h1:zbbr0ISBkDSbnUFHrnRUhbCR/7+9ONMWtIi1BiQWX8Y=
+github.com/TwiN/go-away v1.8.1/go.mod h1:nSQEvd/FYBNmnC27RGJdPi91LXYMG8SrRc1o1w+VmKY=
 github.com/coreos/go-oidc/v3 v3.21.0 h1:wZo4Q9Pum8dYEj0eMUPrqR+kvuGkeUplbLpNCkBqoWM=
 github.com/coreos/go-oidc/v3 v3.21.0/go.mod h1:DYCf24+ncYi+XkIH97GY1+dqoRlbaSI26KVTCI9SrY4=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

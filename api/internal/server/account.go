@@ -129,7 +129,13 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "busy")
 		return
 	}
-	if err := s.Store.Rename(r.Context(), ss.AccountID, name); err != nil {
+	now := s.Now()
+	var locked store.RenameLockedError
+	if err := s.Store.Rename(r.Context(), ss.AccountID, name, now); errors.As(err, &locked) {
+		// (an admin's lock: its seconds left, its end on the page's clock as a ban's, RV-1001)
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "rename-locked", "seconds": secondsUntil(locked.Until, now)})
+		return
+	} else if err != nil {
 		s.log(r).Error("renaming", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return

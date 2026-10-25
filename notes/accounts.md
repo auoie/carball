@@ -294,7 +294,24 @@ With no ranked gate, it rests on:
   - no control, bidi or zero-width characters;
   - NFKC;
   - a length cap.
-- Renames are rate-limited.
+- Renames are rate-limited (5 a day, the service's memory).
+- **Name moderation** (the user's, 2026-10-25):
+  - **A word filter on a new name** (sign-up, rename; names already in use unaffected): `api/internal/names/filter.go`,
+    [TwiN/go-away](https://github.com/TwiN/go-away) v1.8.1 (MIT, © 2022-2023 TwiN; maintained; its dictionary of
+    profanities and false positives, a dozen of ours added). It matches within the name, not whole words, after taking
+    out case, separators and spaces and reading leetspeak (1 as i, @ as a): a gamer tag runs words together
+    ("xXFuckXx") and spells them apart ("f u c k"), which whole words would miss. The Scunthorpe cost (a harmless word
+    holding a bad one) is kept low by the false positives, and small for a name: the player picks another. A run of
+    three digits or more is a number, not leetspeak ("Player 4553" isn't "asse"). The library reads ASCII alone: a name
+    is folded to it first (accents off; another script's lookalike isn't caught). Refused: 400 `name-not-allowed`, the
+    page's "That name isn't allowed."; a Steam persona the filter refuses isn't suggested (a guest-style name instead).
+    The API runs the library on our server, never distributed, so it ships no notice for it.
+  - **Every rename kept a year** (`name_changes`, migration 00004; the sweep deletes older ones; deleted with the
+    account): the old and new name and when, an admin's with who and why. `carball-api names ACCOUNT` (newest first) and
+    `names --recent [N]` (50 by default) read it.
+  - **An admin's rename:** `carball-api rename --account ID --reason TEXT --by NAME [--lock DURATION]` sets a neutral
+    `Player-NNNN`; `--lock` refuses the player's own renames until then (403 `rename-locked` with its seconds left, the
+    page "Your name can't be changed for N days."), kept on the account (`renames_locked_until`) across restarts.
 - The suggestion at account creation: the Steam persona for a Steam sign-in (untrusted input like any other name); for
   Google, a guest-style name (e.g. "Player 4821"), never the person's real name, which we never ask Google for anyway.
 

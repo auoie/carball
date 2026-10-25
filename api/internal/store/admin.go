@@ -158,3 +158,34 @@ func (s *Store) QueueBans(ctx context.Context, now time.Time) ([]QueueBanned, er
 		return q, err
 	})
 }
+
+// NameChange is one rename: the account (its name now), the old and new names, when, and an admin's by and reason
+// (empty: the player's own)
+type NameChange struct {
+	Account, Name, Old, New string
+	At                      time.Time
+	By, Reason              string
+}
+
+// NameChanges are an account's renames kept (NameChangesKept), newest first
+func (s *Store) NameChanges(ctx context.Context, account string) ([]NameChange, error) {
+	return nameChanges(ctx, s.pool, `WHERE c.account_id = $1 ORDER BY c.changed_at DESC`, account)
+}
+
+// RecentNameChanges are the latest n renames of every account, newest first
+func (s *Store) RecentNameChanges(ctx context.Context, n int) ([]NameChange, error) {
+	return nameChanges(ctx, s.pool, `ORDER BY c.changed_at DESC LIMIT $1`, n)
+}
+
+func nameChanges(ctx context.Context, q querier, where string, args ...any) ([]NameChange, error) {
+	rows, err := q.Query(ctx, `SELECT c.account_id::text, a.name, c.old_name, c.new_name, c.changed_at,
+		coalesce(c.changed_by, ''), coalesce(c.reason, '') FROM name_changes c JOIN accounts a ON a.id = c.account_id `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (NameChange, error) {
+		var c NameChange
+		err := row.Scan(&c.Account, &c.Name, &c.Old, &c.New, &c.At, &c.By, &c.Reason)
+		return c, err
+	})
+}

@@ -389,8 +389,11 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func nameError(err error) string {
-	if errors.Is(err, names.ErrTooLong) {
+	switch {
+	case errors.Is(err, names.ErrTooLong):
 		return "name-too-long"
+	case errors.Is(err, names.ErrNotAllowed):
+		return "name-not-allowed"
 	}
 	return "name-empty"
 }

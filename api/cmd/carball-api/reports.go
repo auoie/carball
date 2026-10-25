@@ -327,3 +327,47 @@ func queueBans(args []string, out io.Writer) error {
 	}
 	return table(out, []string{"ACCOUNT", "NAME", "STEP", "UNTIL (UTC)", "LAST LEAVE (UTC)"}, rows)
 }
+
+// nameHistory: an account's renames, or the latest of every account's
+func nameHistory(args []string, out io.Writer) error {
+	fs := flagsFor("names")
+	recent := fs.Bool("recent", false, "the latest renames of every account instead: N of them after it (50 by default, 1000 at most)")
+	rest, err := parseArgs(fs, args, out, 0, 1)
+	if err != nil {
+		return err
+	}
+	var read func(*store.Store) ([]store.NameChange, error)
+	switch {
+	case *recent:
+		n, err := countOf(rest, 50, "names --recent [N]")
+		if err != nil {
+			return err
+		}
+		read = func(db *store.Store) ([]store.NameChange, error) {
+			return db.RecentNameChanges(context.Background(), n)
+		}
+	case len(rest) == 1 && accountID.MatchString(rest[0]):
+		id := strings.ToLower(rest[0])
+		read = func(db *store.Store) ([]store.NameChange, error) { return db.NameChanges(context.Background(), id) }
+	default:
+		return errors.New("names ACCOUNT (an account's id) or names --recent [N] (carball-api names -h)")
+	}
+	db, err := openStore(true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	changes, err := read(db)
+	if err != nil {
+		return err
+	}
+	rows := make([][]string, len(changes))
+	for i, c := range changes {
+		by, why := "-", "-"
+		if c.By != "" {
+			by, why = strconv.Quote(c.By), strconv.Quote(c.Reason)
+		}
+		rows[i] = []string{c.At.UTC().Format(stamp), c.Account, strconv.Quote(c.Old) + " -> " + strconv.Quote(c.New), by, why}
+	}
+	return table(out, []string{"WHEN", "ACCOUNT", "OLD -> NEW", "BY", "WHY"}, rows)
+}
