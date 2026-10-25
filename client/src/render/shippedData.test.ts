@@ -135,10 +135,10 @@ function shippedImports(): string[] {
 }
 /** What ships as text (scanned as the modules are), and what as binary (each kind pinned or allowed by name) */
 const TEXT = /\.(json|css|js|mjs|html|txt|markdown|glsl|svg|csv|map|webmanifest)$/;
-type Kind = "text" | "cmf" | "wasm" | "font" | "onnx" | "glb" | "unknown";
+type Kind = "text" | "cmf" | "wasm" | "font" | "onnx" | "glb" | "icon" | "unknown";
 /** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm);
  *  font: the HUD's bundled fonts (pinned: FONTS); glb: the cars' models (client/cars' alone, checked by
- *  src/render/carGlb.test.ts) */
+ *  src/render/carGlb.test.ts); icon: the page's two icon PNGs by name (public/: rendered from public/favicon.svg, ours) */
 const kind = (path: string): Kind =>
   TEXT.test(path)
     ? "text"
@@ -152,7 +152,9 @@ const kind = (path: string): Kind =>
             ? "onnx"
             : path.endsWith(".glb")
               ? "glb"
-              : "unknown";
+              : /[/\\](favicon-32|apple-touch-icon)\.png$/.test(path)
+                ? "icon"
+                : "unknown";
 /** The fonts that ship (style.css, public/fonts/; the user's pick, 2026-10-14), by their path under public/ and their
  *  content: the files as they were taken, SIL OFL each, its licence beside it (LICENCES). Orbitron's is the font
  *  project's own static Medium as published (github.com/theleagueof/orbitron, 2011-05-25: the user's decision, RV-489),
@@ -250,8 +252,8 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
   for (const path of files(DIST, () => true)) {
     const k = kind(path);
     if (k === "cmf" || k === "wasm" || k === "unknown") out.push({ kind: k, base64: readFileSync(path).toString("base64"), where: path.slice(ROOT.length) });
-    else if (k === "onnx" || k === "glb")
-      continue; // (the bots' policies, the cars' models: each checked on its own)
+    else if (k === "onnx" || k === "glb" || k === "icon")
+      continue; // (the bots' policies, the cars' models: each checked on its own; the page's icons, ours)
     else {
       for (const m of readFileSync(path, "utf8").matchAll(/data:application\/octet-stream;base64,([A-Za-z0-9+/=]+)/g)) {
         const base64 = m[1] ?? "";
