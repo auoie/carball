@@ -2541,6 +2541,106 @@ body {
   color: #fff;
 }
 
+/* The live counts (ours): the top page's line under its buttons, and a playlist's two short lines on its box */
+.main-menu-live {
+  padding: 2px;
+  font: 15px/1.3 var(--hud-small);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.main-menu-live[hidden],
+.main-menu-live-count[hidden] {
+  display: none;
+}
+
+.main-menu-live-count {
+  display: block;
+  font: 12px/14px var(--hud-small);
+  white-space: pre-line;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* The leaderboard (ours): a tab a playlist, its state line, the table scrolling (a row the pad's focus, as a pack's) */
+.main-menu-column.main-menu-board-view {
+  width: min(560px, 84vw);
+}
+
+.main-menu-board-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.main-menu-board-tabs .main-menu-button {
+  flex: 1;
+  text-align: center;
+}
+
+.main-menu-board-tabs [aria-selected="true"] {
+  border-color: #43afff;
+  background: rgba(20, 60, 110, 0.9);
+}
+
+.main-menu-board-state {
+  padding: 6px 2px;
+  font: 15px/1.4 var(--hud-small);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.main-menu-board-state[hidden] {
+  display: none;
+}
+
+.main-menu-board-rows {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.main-menu-board {
+  width: 100%;
+  border-collapse: collapse;
+  font: calc(18px * var(--hud-header-scale, 1))/24px var(--hud-header);
+  color: #fff;
+}
+
+.main-menu-board th {
+  position: sticky;
+  top: 0;
+  padding: 2px 8px;
+  font: 13px/18px var(--hud-small);
+  text-align: left;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(10, 14, 22, 0.95);
+}
+
+.main-menu-board td {
+  padding: 3px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 14, 22, 0.6);
+}
+
+/* (the rank, rating and games right-aligned, figures over figures; the name takes the rest) */
+.main-menu-board th:not(:nth-child(2)),
+.main-menu-board td:not(:nth-child(2)) {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.main-menu-board td:nth-child(2) {
+  overflow-wrap: anywhere;
+}
+
+.main-menu-board-row:focus {
+  outline: none;
+}
+
+.main-menu-board-row:focus td,
+.main-menu-board-row.pad-focus td {
+  background: rgba(20, 60, 110, 0.9);
+}
+
 /* Custom training's packs (ours): one a row, its name and its shots and difficulty, the list scrolling */
 .main-menu-column.main-menu-training-view {
   width: min(560px, 84vw);

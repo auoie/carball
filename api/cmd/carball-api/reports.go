@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -296,18 +295,9 @@ func ratingsBoard(args []string, out io.Writer) error {
 	return table(out, []string{"RANK", "NAME", "RATING", "GAMES", "ACCOUNT"}, leaderboard(all, n, time.Now()))
 }
 
-// leaderboard: the top n by the rating as shown (provisional ones marked), ties by games then name
+// leaderboard: the top n by the rating as shown (provisional ones marked), ties by games then name (ranked.OrderBoard)
 func leaderboard(all []store.Rated, n int, now time.Time) [][]string {
-	slices.SortStableFunc(all, func(a, b store.Rated) int {
-		ra, rb := ranked.Shown(a.Rating).Rating, ranked.Shown(b.Rating).Rating
-		switch {
-		case ra != rb:
-			return int(rb) - int(ra)
-		case a.Rating.Games != b.Rating.Games:
-			return b.Rating.Games - a.Rating.Games
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
+	ranked.OrderBoard(all)
 	rows := make([][]string, 0, min(n, len(all)))
 	for i, r := range all {
 		if i == n {

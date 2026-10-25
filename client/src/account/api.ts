@@ -29,6 +29,24 @@ export function ratingText(r: ShownRating): string {
 
 export type Provider = "google" | "steam";
 
+/** The live counts (GET /api/stats, kept by the API a few seconds): by playlist (its team size) its matches, the players
+ *  in them and those searching it; by game server (its name, host:port: a region's) its matches and players; the players
+ *  playing (in a match or searching) and the matches. Counts only */
+export interface LiveStats {
+  readonly playlists: readonly { readonly playlist: number; readonly matches: number; readonly players: number; readonly searching: number }[];
+  readonly servers: ReadonlyMap<string, { readonly matches: number; readonly players: number }>;
+  readonly playing: number;
+  readonly matches: number;
+}
+
+/** A leaderboard's row (GET /api/leaderboard: the top 100 by the rating as shown, the provisional left out) */
+export interface BoardRow {
+  readonly rank: number;
+  readonly name: string;
+  readonly rating: number;
+  readonly games: number;
+}
+
 /** A sign-up waiting for its name (GET /api/signup): the provider signed in with, a name to start from, the Turnstile
  *  widget's site key (empty: no check, a development API) */
 export interface Signup {
@@ -112,6 +130,24 @@ export class AccountsApi {
     await this.#ok(await this.#send("DELETE", "/api/me", { confirm: true }));
   }
 
+  /** The live counts (no sign-in) */
+  async stats(): Promise<LiveStats> {
+    return liveStats(await this.#ok(await this.#send("GET", "/api/stats")));
+  }
+
+  /** A playlist's leaderboard (its team size; no sign-in) */
+  async leaderboard(playlist: number): Promise<BoardRow[]> {
+    const body = (await this.#ok(await this.#send("GET", `/api/leaderboard?playlist=${String(playlist)}v${String(playlist)}`))) as { players?: unknown } | null;
+    if (!Array.isArray(body?.players)) throw new AccountError("server");
+    const rows: BoardRow[] = [];
+    for (const r of body.players as unknown[]) {
+      const x = (r ?? {}) as Partial<Record<keyof BoardRow, unknown>>;
+      if (count(x.rank) && typeof x.name === "string" && count(x.rating) && count(x.games))
+        rows.push({ rank: x.rank, name: x.name, rating: x.rating, games: x.games });
+    }
+    return rows;
+  }
+
   async #send(method: string, path: string, body?: unknown): Promise<Response> {
     const write = method !== "GET";
     const headers: Record<string, string> = write ? { [WRITE_HEADER]: "1" } : {};
@@ -142,6 +178,31 @@ export class AccountsApi {
     }
     throw new AccountError(code);
   }
+}
+
+/** A count the API sent: a whole number, 0 or more */
+function count(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
+function liveStats(body: unknown): LiveStats {
+  const b = (body ?? {}) as { playlists?: unknown; servers?: unknown; playing?: unknown; matches?: unknown };
+  if (!count(b.playing) || !count(b.matches) || !Array.isArray(b.playlists)) throw new AccountError("server");
+  const playlists: LiveStats["playlists"][number][] = [];
+  for (const p of b.playlists as unknown[]) {
+    const x = (p ?? {}) as { playlist?: unknown; matches?: unknown; players?: unknown; searching?: unknown };
+    if (count(x.playlist) && count(x.matches) && count(x.players) && count(x.searching)) {
+      playlists.push({ playlist: x.playlist, matches: x.matches, players: x.players, searching: x.searching });
+    }
+  }
+  const servers = new Map<string, { matches: number; players: number }>();
+  if (typeof b.servers === "object" && b.servers !== null) {
+    for (const [name, s] of Object.entries(b.servers as Record<string, unknown>)) {
+      const x = (s ?? {}) as { matches?: unknown; players?: unknown };
+      if (count(x.matches) && count(x.players)) servers.set(name, { matches: x.matches, players: x.players });
+    }
+  }
+  return { playlists, servers, playing: b.playing, matches: b.matches };
 }
 
 function account(body: unknown): Account {

@@ -12,7 +12,7 @@ import type { BotChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
 import type { BotsPage } from "./botsPage";
 import type { PackListing } from "../training/packs";
-import { type ShownRating, ratingText } from "../account/api";
+import { type BoardRow, type LiveStats, type ShownRating, ratingText } from "../account/api";
 import { queueBanText } from "../net/tickets";
 
 export const MAIN_MENU_TEXT = {
@@ -22,7 +22,29 @@ export const MAIN_MENU_TEXT = {
   freePlay: "Free Play",
   /** The region picker's heading ([Global] Regions: notes/matchmaking.md, Regions) */
   regions: "Regions",
+  /** The leaderboard's entry and heading, its table's columns and states (ours) */
+  leaderboard: "Leaderboard",
+  boardColumns: ["Rank", "Name", "Rating", "Games"],
+  boardLoading: "Loading…",
+  boardFailed: "The leaderboard can't be reached right now. Try again later.",
+  boardEmpty: "No ranked players yet.",
 } as const;
+
+/** The fewest players the live counts are shown for (the menu's line, a playlist's, a region's): under it, hidden */
+export const MIN_SHOWN = 0;
+
+/** The menu's live line (ours): the players playing (in a match or searching) and the matches; null under MIN_SHOWN */
+export function liveText(playing: number, matches: number): string | null {
+  if (playing < MIN_SHOWN) return null;
+  return `${String(playing)} playing · ${String(matches)} ${matches === 1 ? "match" : "matches"}`;
+}
+
+/** A playlist's live count on its box (ours, two short lines): the players in its matches and those searching it; null
+ *  under MIN_SHOWN */
+export function playlistLiveText(players: number, searching: number): string | null {
+  if (players + searching < MIN_SHOWN) return null;
+  return `${String(players)} in matches\n${String(searching)} searching`;
+}
 
 /** A region as the Play page's picker shows it: its ping (ms; null: not reached; undefined: being measured), ticked */
 export interface RegionShown {
@@ -30,12 +52,19 @@ export interface RegionShown {
   readonly name: string;
   readonly ping: number | null | undefined;
   readonly selected: boolean;
+  /** The players in matches on its server (the live counts; undefined: not known) */
+  readonly players?: number | undefined;
 }
 
 /** A region's ping as the picker shows it (our words) */
 export function pingText(ping: number | null | undefined): string {
   if (ping === undefined) return "…";
   return ping === null ? "—" : `${String(ping)} ms`;
+}
+
+/** A region's line beside its name: its ping, and its players in matches when known and at MIN_SHOWN or more */
+export function regionText(ping: number | null | undefined, players: number | undefined): string {
+  return players === undefined || players < MIN_SHOWN ? pingText(ping) : `${pingText(ping)} · ${String(players)} playing`;
 }
 
 /** Our own words for the garage's team colours (Free Play's car colour; online, the queue's team) */
@@ -48,12 +77,12 @@ const BACK_TEXT = "Back";
 const CHOICE_NAMES = { playlist: "Playlist", car: "Car", team: "Team" } as const;
 
 const PLAYLIST_KEY = "carball.playlist";
-/** The menu's pages: the top (Play, Garage, Settings, the account's entry), Play's, the bots' setup, custom training's
- *  packs, the garage, the account (ui/accountPages.ts) */
-export type MenuView = "top" | "play" | "bots" | "training" | "garage" | "account";
+/** The menu's pages: the top (Play, Garage, the leaderboard, Settings, the account's entry), Play's, the bots' setup,
+ *  custom training's packs, the garage, the leaderboard, the account (ui/accountPages.ts) */
+export type MenuView = "top" | "play" | "bots" | "training" | "garage" | "leaderboard" | "account";
 
-/** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play, the garage and
- *  the account to the top; the top stays */
+/** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play, the garage, the
+ *  leaderboard and the account to the top; the top stays */
 export function backFrom(view: MenuView): MenuView {
   return view === "bots" || view === "training" ? "play" : "top";
 }
@@ -137,6 +166,19 @@ export class MainMenu {
   readonly #regions: HTMLDivElement;
   readonly #regionBoxes = new Map<string, { readonly box: HTMLButtonElement; readonly ping: HTMLSpanElement }>();
   readonly #regionAction: ((id: string) => void) | undefined;
+  /** The live counts: the top page's line, and each playlist's on its box */
+  readonly #liveLine: HTMLDivElement;
+  readonly #playlistCounts = new Map<number, HTMLSpanElement>();
+  /** The leaderboard: its entry (shown once there's an API to read: setLeaderboard), its page, tabs, state line and
+   *  rows; the playlist shown, and each read's number (a later tab's read wins over an earlier one still coming) */
+  readonly #boardEntry: HTMLButtonElement;
+  readonly #board: HTMLDivElement;
+  readonly #boardTabs: HTMLButtonElement[] = [];
+  readonly #boardState: HTMLDivElement;
+  readonly #boardRows: HTMLTableSectionElement;
+  #boardRead: ((playlist: number) => Promise<readonly BoardRow[]>) | null = null;
+  #boardPlaylist = 1;
+  #boardReads = 0;
   readonly #playShown: (() => void) | undefined;
   /** A leaver's queue ban under Find Match (LV1: the Play menu shows it), until when (ms) */
   readonly #banLine: HTMLDivElement;
@@ -172,12 +214,22 @@ export class MainMenu {
     button(this.#top, MAIN_MENU_TEXT.garage, () => {
       this.#show("garage");
     });
+    // (hidden until the API's there to read: setLeaderboard)
+    this.#boardEntry = button(this.#top, MAIN_MENU_TEXT.leaderboard, () => {
+      this.#show("leaderboard");
+    });
+    this.#boardEntry.hidden = true;
     button(this.#top, MAIN_MENU_TEXT.settings, actions.settings);
     this.#accountEntry = button(this.#top, "", () => {
       actions.account?.();
     });
     this.#accountEntry.classList.add("main-menu-account");
     this.#accountEntry.hidden = true;
+    // (the live counts' line: hidden until they're read, setStats)
+    this.#liveLine = document.createElement("div");
+    this.#liveLine.className = "main-menu-live";
+    this.#liveLine.hidden = true;
+    this.#top.append(this.#liveLine);
     this.#play = column();
     this.#play.dataset["padPage"] = "play";
     this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, actions.freePlay);
@@ -208,6 +260,11 @@ export class MainMenu {
       tag.className = "main-menu-rating";
       b.append(tag);
       this.#ratingTags.set(p.teamSize, tag);
+      const count = document.createElement("span");
+      count.className = "main-menu-live-count";
+      count.setAttribute("aria-hidden", "true");
+      b.append(count);
+      this.#playlistCounts.set(p.teamSize, count);
       b.classList.add("main-menu-playlist");
       b.setAttribute("role", "checkbox");
       // (its name the playlist's alone, its rating read as its description: not "1v11523", RV-709)
@@ -326,6 +383,46 @@ export class MainMenu {
     button(this.#garage, BACK_TEXT, () => {
       this.#show("top");
     });
+    // (the leaderboard: a tab a playlist (the bumpers step through them), its top players a row each, the API's read as a
+    // tab shows; its state line while it's read, can't be, or is empty)
+    this.#board = column();
+    this.#board.dataset["padPage"] = "leaderboard";
+    this.#board.classList.add("main-menu-board-view");
+    const boardHeading = document.createElement("div");
+    boardHeading.className = "main-menu-heading";
+    boardHeading.textContent = MAIN_MENU_TEXT.leaderboard;
+    const tabs = document.createElement("div");
+    tabs.className = "main-menu-board-tabs";
+    tabs.setAttribute("role", "tablist");
+    tabs.dataset["padTabs"] = "";
+    for (const p of PLAYLISTS) {
+      const tab = button(tabs, p.name, () => {
+        this.#showBoard(p.teamSize);
+      });
+      tab.setAttribute("role", "tab");
+      tab.dataset["playlist"] = String(p.teamSize);
+      this.#boardTabs.push(tab);
+    }
+    this.#boardState = document.createElement("div");
+    this.#boardState.className = "main-menu-board-state";
+    this.#boardState.setAttribute("role", "status");
+    const table = document.createElement("table");
+    table.className = "main-menu-board";
+    const head = table.createTHead().insertRow();
+    for (const name of MAIN_MENU_TEXT.boardColumns) {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = name;
+      head.append(th);
+    }
+    this.#boardRows = table.createTBody();
+    const scroller = document.createElement("div");
+    scroller.className = "main-menu-board-rows";
+    scroller.append(table);
+    this.#board.append(boardHeading, tabs, this.#boardState, scroller);
+    button(this.#board, BACK_TEXT, () => {
+      this.#show("top");
+    });
     // (the account's page: its body drawn by ui/accountPages.ts, its own Back among it)
     this.#account = column();
     this.#account.dataset["padPage"] = "account";
@@ -390,7 +487,7 @@ export class MainMenu {
       const shown = this.#regionBoxes.get(r.id);
       if (!shown) continue;
       shown.box.setAttribute("aria-checked", String(r.selected));
-      shown.ping.textContent = pingText(r.ping);
+      shown.ping.textContent = regionText(r.ping, r.players);
     }
   }
 
@@ -432,6 +529,56 @@ export class MainMenu {
   }
 
   /** The account's page shown (its body drawn first), the menu open */
+  /** The live counts (null: none read, or they can't be): the top page's line, each playlist's on its box */
+  setStats(stats: LiveStats | null): void {
+    const line = stats ? liveText(stats.playing, stats.matches) : null;
+    this.#liveLine.textContent = line ?? "";
+    this.#liveLine.hidden = line === null;
+    for (const [teamSize, count] of this.#playlistCounts) {
+      const p = stats?.playlists.find((x) => x.playlist === teamSize);
+      const text = p ? playlistLiveText(p.players, p.searching) : null;
+      count.textContent = text ?? "";
+      count.hidden = text === null;
+    }
+  }
+
+  /** The leaderboard's read (a playlist's top players: the API's); its entry shown with one */
+  setLeaderboard(read: (playlist: number) => Promise<readonly BoardRow[]>): void {
+    this.#boardRead = read;
+    this.#boardEntry.hidden = false;
+  }
+
+  /** The leaderboard's tab for this playlist, its rows read afresh (a later read's answer wins) */
+  #showBoard(playlist: number): void {
+    this.#boardPlaylist = playlist;
+    for (const tab of this.#boardTabs) tab.setAttribute("aria-selected", String(tab.dataset["playlist"] === String(playlist)));
+    this.#boardRows.replaceChildren();
+    const read = this.#boardRead;
+    if (!read) return;
+    const n = ++this.#boardReads;
+    this.#boardState.textContent = MAIN_MENU_TEXT.boardLoading;
+    this.#boardState.hidden = false;
+    read(playlist).then(
+      (rows) => {
+        if (n !== this.#boardReads) return;
+        this.#boardState.textContent = rows.length === 0 ? MAIN_MENU_TEXT.boardEmpty : "";
+        this.#boardState.hidden = rows.length > 0;
+        for (const r of rows) {
+          const tr = this.#boardRows.insertRow();
+          // (a row the pad steps to and scrolls into view: focusable, nothing to press)
+          tr.tabIndex = 0;
+          tr.className = "main-menu-board-row";
+          for (const value of [String(r.rank), r.name, String(r.rating), String(r.games)]) tr.insertCell().textContent = value;
+        }
+      },
+      () => {
+        if (n !== this.#boardReads) return;
+        this.#boardState.textContent = MAIN_MENU_TEXT.boardFailed;
+        this.#boardState.hidden = false;
+      },
+    );
+  }
+
   showAccount(): void {
     if (this.#root.hidden) this.open();
     this.#show("account");
@@ -533,9 +680,11 @@ export class MainMenu {
             ? "play"
             : !this.#garage.hidden
               ? "garage"
-              : !this.#account.hidden
-                ? "account"
-                : "top";
+              : !this.#board.hidden
+                ? "leaderboard"
+                : !this.#account.hidden
+                  ? "account"
+                  : "top";
     this.#show(backFrom(view));
     return view !== "top";
   }
@@ -582,6 +731,13 @@ export class MainMenu {
     if (this.#botsView) this.#botsView.page.hidden = view !== "bots";
     this.#training.hidden = view !== "training";
     this.#garage.hidden = view !== "garage";
+    const boardShown = !this.#board.hidden;
+    this.#board.hidden = view !== "leaderboard";
+    // (the leaderboard read as it's come to, its tab focused: the bumpers or left and right for the others)
+    if (view === "leaderboard" && !boardShown) {
+      this.#showBoard(this.#boardPlaylist);
+      this.#boardTabs.find((t) => t.dataset["playlist"] === String(this.#boardPlaylist))?.focus();
+    }
     // (the scene's garage while its page shows; the car chosen focused)
     this.#setGarage(view === "garage");
     if (view === "garage") this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();

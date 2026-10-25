@@ -85,6 +85,40 @@ describe("the accounts service's calls", () => {
     await expect(a.signup()).rejects.toEqual(new AccountError("server"));
   });
 
+  it("reads the live counts and a playlist's leaderboard (no sign-in), counts that aren't whole numbers left out", async () => {
+    const { api: a, call } = api(
+      reply(200, {
+        playlists: [
+          { playlist: 1, matches: 2, players: 4, searching: 1 },
+          { playlist: 2, matches: 0, players: 0, searching: -1 },
+        ],
+        servers: { "eu.example:4433": { matches: 2, players: 4 }, "odd.example:4433": { matches: "2", players: 4 } },
+        playing: 5,
+        matches: 2,
+      }),
+      reply(200, {
+        playlist: "3v3",
+        players: [
+          { rank: 1, name: "Ziggy", rating: 1820, games: 40 },
+          { rank: 2, name: 7 },
+        ],
+      }),
+      reply(200, { playing: "5" }),
+      reply(503, { error: "unavailable" }),
+    );
+    const stats = await a.stats();
+    expect(stats.playlists).toEqual([{ playlist: 1, matches: 2, players: 4, searching: 1 }]);
+    expect([...stats.servers]).toEqual([["eu.example:4433", { matches: 2, players: 4 }]]);
+    expect([stats.playing, stats.matches]).toEqual([5, 2]);
+    expect(await a.leaderboard(3)).toEqual([{ rank: 1, name: "Ziggy", rating: 1820, games: 40 }]);
+    expect(call.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ["/api/stats", "GET"],
+      ["/api/leaderboard?playlist=3v3", "GET"],
+    ]);
+    await expect(a.stats()).rejects.toEqual(new AccountError("server"));
+    await expect(a.leaderboard(1)).rejects.toEqual(new AccountError("unavailable"));
+  });
+
   it("names the API's refusals by its codes; anything else server, a gateway's or no answer unavailable", async () => {
     const code = async (r: Response | Error): Promise<string> => {
       const call = vi.fn<typeof fetch>(() => (r instanceof Error ? Promise.reject(r) : Promise.resolve(r)));

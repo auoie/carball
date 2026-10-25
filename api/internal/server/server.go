@@ -82,6 +82,7 @@ type Store interface {
 	QueueBanOf(ctx context.Context, accountID string) (store.QueueBan, bool, error)
 	ChangeQueueBan(ctx context.Context, accountID string, spend *store.SpentTicket, now time.Time, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
 	RecordResult(ctx context.Context, r store.Result, rate func(current map[string]*store.Rating) map[string]store.Rating, now time.Time) (bool, error)
+	PlaylistRatings(ctx context.Context, playlist int) ([]store.Rated, error)
 }
 
 // Turnstile checks a sign-up's token (turnstile.Verifier)
@@ -138,6 +139,9 @@ type Server struct {
 	// (the kinds of peer whose CF-Connecting-IP was ignored, each warned of once)
 	forwardMu     sync.Mutex
 	forwardWarned map[string]bool
+
+	// (the public reads' kept answers: public.go)
+	public publicReads
 }
 
 // Limit is one rate limit: Burst requests at once, Burst more each Window
@@ -307,6 +311,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/search/{id}", s.write(s.cancelSearch))
 	mux.HandleFunc("POST /api/fleet/events", s.gameServer(s.fleetEvent))
 	mux.HandleFunc("POST /api/fleet/rejoin", s.gameServerAsking(s.rejoinCheck))
+	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("GET /api/leaderboard", s.leaderboard)
 	s.e2eRoutes(mux)
 	return s.logged(headers(mux))
 }

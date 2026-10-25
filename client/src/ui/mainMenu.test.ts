@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { backFrom, pingText, storedPlaylists } from "./mainMenu";
+import { MIN_SHOWN, backFrom, liveText, pingText, playlistLiveText, regionText, storedPlaylists } from "./mainMenu";
 
 describe("the main menu's pages", () => {
   it("backs out a page at a time: the bots' setup to Play, Play and the garage to the top", () => {
     expect(backFrom("bots")).toBe("play");
     expect(backFrom("play")).toBe("top");
     expect(backFrom("garage")).toBe("top");
+    expect(backFrom("leaderboard")).toBe("top");
     expect(backFrom("top")).toBe("top");
   });
 });
@@ -13,6 +14,16 @@ describe("the main menu's pages", () => {
 describe("the region picker's pings (notes/matchmaking.md, Regions)", () => {
   it("in ms; a dash for a region not reached; an ellipsis while measured", () => {
     expect([pingText(31), pingText(null), pingText(undefined)]).toEqual(["31 ms", "—", "…"]);
+  });
+});
+
+describe("the live counts' words (ours)", () => {
+  it("the menu's line, a playlist's two lines, a region's beside its ping (not known: the ping alone)", () => {
+    expect([liveText(5, 2), liveText(1, 1), liveText(0, 0)]).toEqual(["5 playing · 2 matches", "1 playing · 1 match", "0 playing · 0 matches"]);
+    expect(playlistLiveText(4, 1)).toBe("4 in matches\n1 searching");
+    expect([regionText(31, 6), regionText(null, 0), regionText(31, undefined)]).toEqual(["31 ms · 6 playing", "— · 0 playing", "31 ms"]);
+    // (shown from MIN_SHOWN players: 0 for now, every count shown)
+    expect(MIN_SHOWN).toBe(0);
   });
 });
 

@@ -354,6 +354,12 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   each request's route pattern, never its path (a search's id: RV-871); 600 lines a minute for a client address (its
   /64), the rest counted and said (RV-963). A match ticket (a JWT:
   notes/accounts.md §3) is one seat of one match at one server (its `aud`), 30 s, taken once there (RV-850).
+- **The public reads** (no sign-in; the menu's; `api/internal/server/public.go`): `GET /api/stats` is the matchmaker's
+  counts (by playlist its matches, their players and those searching it; by game server, host:port, its matches and
+  players; the players playing and the matches), kept 5 s; `GET /api/leaderboard?playlist=1v1|2v2|3v3` is the top 100 by
+  the rating as shown (ties by games, then name), the provisional left out (the deviation grown while idle, at read time),
+  each its rank, display name, rating and games, kept a minute per playlist; another playlist 400. Counts and display
+  names only: no account id, match id or address. Each request still makes an access-log line.
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
   for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
   or once a later search gave that match up, whether or not it found a match (RV-869); a queue ban from that match
