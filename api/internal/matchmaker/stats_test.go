@@ -1,10 +1,15 @@
 package matchmaker
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"carball/api/internal/ticket"
 )
 
 // The public counts from the matchmaker's state: a match counted by its playlist (its seats over two) and its server, its
@@ -108,5 +113,28 @@ func TestStartOnlyListedServers(t *testing.T) {
 	h.m.AllowServers(nil)
 	if _, _, err := h.m.Start(player("z", 1500), req([]byte{1}, made), h.now); err != nil {
 		t.Fatalf("no list: %v", err)
+	}
+}
+
+// A game server whose own name isn't on the list (its PUBLIC_HOST:port and GAME_SERVERS' URL apart) is warned of once,
+// at its restart word: otherwise it would only be dropped from every search, silently (RV-1162)
+func TestUnlistedServerWarnedOnce(t *testing.T) {
+	var logs bytes.Buffer
+	m := New(func(Player, ticket.Seat, time.Time) (string, error) { return "", nil }, func() time.Time { return t0 },
+		slog.New(slog.NewTextHandler(&logs, nil)))
+	m.AllowServers([]string{"eu:4433"})
+	for range 2 {
+		m.Restarted("eu-alias:4433", t0)
+		m.Restarted("EU:4433", t0)
+	}
+	if n := strings.Count(logs.String(), "level=WARN"); n != 1 || !strings.Contains(logs.String(), "server=eu-alias:4433") {
+		t.Fatalf("%d warnings:\n%s", n, logs.String())
+	}
+	// (no list, development: no warning)
+	logs.Reset()
+	m.AllowServers(nil)
+	m.Restarted("anything:1", t0)
+	if logs.Len() != 0 {
+		t.Fatalf("development warned:\n%s", logs.String())
 	}
 }

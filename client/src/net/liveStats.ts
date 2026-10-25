@@ -1,12 +1,12 @@
 // The menu's live counts (GET /api/stats: the top page's line, each playlist's and region's count), read as the menu
 // opens and every STATS_EVERY_MS while it shows and the page is seen; one read at a time (an interval's and a page seen
-// again never overlap, an older answer never landing after a newer); counts older than STATS_STALE_MS hidden as the
-// menu opens, until read again (after a match, not the counts from before it: RV-1160)
+// again never overlap, an older answer never landing after a newer); counts older than STATS_STALE_MS hidden as a read
+// starts, until it answers (the menu opened after a match, the page seen again after a while: RV-1160, RV-1166)
 import type { LiveStats } from "../account/api";
 
 /** How often the counts are read while the menu shows (ms; the API keeps its count a few seconds) */
 export const STATS_EVERY_MS = 15_000;
-/** How old counts may be when the menu opens and still be shown while they're read again (ms) */
+/** How old counts may be as a read starts and still be shown while they're read again (ms) */
 export const STATS_STALE_MS = 30_000;
 
 export class LiveStatsPoller {
@@ -27,16 +27,21 @@ export class LiveStatsPoller {
     this.#now = now;
   }
 
-  /** The menu opened: counts too old hidden at once, then read */
+  /** The menu opened: read now (poll's) */
   opened(): Promise<void> {
-    if (this.#now() - this.#at > STATS_STALE_MS) this.#show(null);
     return this.poll();
   }
 
-  /** A read now (the interval's, the page seen again), unless none is wanted or one is under way; a failed one hides
-   *  the counts */
+  /** A read now (the interval's, the page seen again, the menu opened), unless none is wanted; counts too old hidden at
+   *  once; none while one's under way; a failed one hides the counts */
   async poll(): Promise<void> {
-    if (this.#busy || !this.#reading()) return;
+    if (!this.#reading()) return;
+    // (counts shown, now too old: hidden once, till a read answers)
+    if (this.#at !== -Infinity && this.#now() - this.#at > STATS_STALE_MS) {
+      this.#at = -Infinity;
+      this.#show(null);
+    }
+    if (this.#busy) return;
     this.#busy = true;
     try {
       const stats = await this.#read();

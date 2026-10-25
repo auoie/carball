@@ -364,7 +364,10 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   the `ratings_board` index (migration 00003); another playlist 400. One read for everyone asking meanwhile, each
   request waiting only while it lasts; a failed read kept 5 s (RV-1158). Counts and display names only: no account id,
   match id or address. A read that answers writes no access line (every open menu polls the counts: RV-1159); a refused
-  or failed one does.
+  or failed one does. The board's read skips, in rating order, the ratings settled when stored but idle past the line
+  now, so many idle former top players would make it read more pages (5 s at most, then a 503 kept 5 s): fine at today's
+  scale (RV-1167). For later: the idle growth in the SQL itself (ranked.Idle's formula) with `FETCH FIRST 100 ROWS WITH
+  TIES`, or a cap on the pages read as a band-aid.
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
   for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
   or once a later search gave that match up, whether or not it found a match (RV-869); a queue ban from that match

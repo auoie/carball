@@ -80,6 +80,23 @@ describe("the menu's live counts' reads", () => {
     expect(s.shown).toEqual([7, 8, null, 3]);
   });
 
+  it("the page seen again after a while with the menu open: counts too old hidden at once, then read (RV-1166)", async () => {
+    const s = setup();
+    const p = s.poller.poll();
+    await s.answer(4);
+    await p;
+    // (hidden a long while: the interval's ticks skipped, nothing read or hidden meanwhile)
+    s.set(STATS_STALE_MS * 10, false);
+    await s.poller.poll();
+    expect(s.shown).toEqual([4]);
+    s.set(STATS_STALE_MS * 10);
+    const back = s.poller.poll();
+    expect(s.shown).toEqual([4, null]);
+    await s.answer(6);
+    await back;
+    expect(s.shown).toEqual([4, null, 6]);
+  });
+
   it("a failed read hides the counts", async () => {
     const s = setup();
     const p = s.poller.poll();

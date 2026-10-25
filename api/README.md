@@ -16,7 +16,9 @@ internal/ratelimit/    per address (an IPv6 /64) and per account, in memory
 internal/names/        display names: the game server's rules, NFKC, 32 bytes
 internal/store/        Postgres (pgx), the migrations (goose, embedded: append-only from the first real deploy on, a
                        change a new numbered file, never an edit of one a database may have run; until then, with no
-                       database anywhere, 00001 and 00002 were edited in place)
+                       database anywhere, 00001 and 00002 were edited in place). An index on a big table gets a
+                       file of its own: `-- +goose NO TRANSACTION`, `CREATE INDEX CONCURRENTLY`, a `lock_timeout`
+                       (00003_indexes.sql is plain CREATE INDEX in one transaction: small tables then, RV-1165)
 internal/testdb/       the tests' throwaway Postgres; internal/testoidc/: the tests' stand-in OIDC provider
 ```
 

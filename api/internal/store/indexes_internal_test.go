@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"io/fs"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -197,5 +199,22 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 		if c.index != "" && !strings.Contains(p, c.index) {
 			t.Errorf("%s: not on %s:\n%s", c.name, c.index, p)
 		}
+	}
+}
+
+// The provisional line is in three places (BoardDeviation, which ranked's test ties to ranked.Provisional; the board's
+// SQL; the index's predicate in 00003_indexes.sql): the SQL and the migration each say it, so changing the constant
+// alone fails here, never a board that silently drops the settled between the old line and the new (RV-1164)
+func TestBoardLineInItsSQLAndIndex(t *testing.T) {
+	line := "deviation < " + strconv.FormatFloat(BoardDeviation, 'f', -1, 64)
+	if !strings.Contains(boardHead, "r."+line) {
+		t.Errorf("the board's query doesn't say %q:\n%s", line, boardHead)
+	}
+	migration, err := fs.ReadFile(migrations, "migrations/00003_indexes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(migration), "ON ratings (playlist, rating DESC, account_id) WHERE "+line+";") {
+		t.Errorf("ratings_board's predicate isn't %q", line)
 	}
 }

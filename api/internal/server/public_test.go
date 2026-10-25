@@ -273,3 +273,46 @@ func TestPublicBoardOneReadEachWaitsAlone(t *testing.T) {
 		t.Fatalf("%d reads after the failure's keep", n)
 	}
 }
+
+// panickingStore: the 1v1 board's read panics (a bug's stand-in); the others read as the database has them
+type panickingStore struct{ server.Store }
+
+func (s panickingStore) BoardRatings(ctx context.Context, playlist int, after *store.Rated, n int, now time.Time) ([]store.Rated, error) {
+	if playlist == 1 {
+		time.Sleep(50 * time.Millisecond) // (both requests waiting on the one read: singleflight's re-raise path)
+		panic("a bug in the board's read")
+	}
+	return s.Store.BoardRatings(ctx, playlist, after, n, now)
+}
+
+// A panic in a public read is that read's failure (503, logged once with its stack), never the service's: singleflight
+// would re-raise it in a goroutine of its own, where nothing recovers it (RV-1163)
+func TestPublicReadPanicIsAFailure(t *testing.T) {
+	e := setup(t, nil)
+	e.s.Store = panickingStore{Store: e.db}
+	h := e.s.Handler()
+	ask := func(playlist string) int {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/leaderboard?playlist="+playlist, nil))
+		return w.Code
+	}
+	var both sync.WaitGroup
+	codes := make(chan int, 2)
+	for range 2 {
+		both.Go(func() { codes <- ask("1v1") })
+	}
+	both.Wait()
+	close(codes)
+	for code := range codes {
+		if code != http.StatusServiceUnavailable {
+			t.Fatalf("a panicking read: %d", code)
+		}
+	}
+	if code := ask("2v2"); code != http.StatusOK {
+		t.Fatalf("the service after a panic: %d", code)
+	}
+	logs := e.logs.String()
+	if n := strings.Count(logs, `msg="a public read failed"`); n != 1 || !strings.Contains(logs, "a bug in the board's read") || !strings.Contains(logs, "goroutine") {
+		t.Fatalf("the panic's log (%d lines):\n%s", n, logs)
+	}
+}

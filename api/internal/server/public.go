@@ -3,7 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -59,9 +62,9 @@ func (k *keptBody) kept(now time.Time) (body []byte, ok bool, err error) {
 }
 
 // get is the kept answer at now, else one read (`fill`, on its own context: ctx's values, never its cancel, fillFor
-// long) shared by every asker meanwhile, its answer kept for `keep` (an error for errorKept); ctx's end ends this
-// asker's wait alone
-func (k *keptBody) get(ctx context.Context, now time.Time, keep time.Duration, fill func(context.Context) ([]byte, error)) ([]byte, error) {
+// long) shared by every asker meanwhile, its answer kept for `keep` (an error for errorKept, logged once on `log` as
+// `what`'s); ctx's end ends this asker's wait alone
+func (k *keptBody) get(ctx context.Context, now time.Time, keep time.Duration, log *slog.Logger, what string, fill func(context.Context) ([]byte, error)) ([]byte, error) {
 	if body, ok, err := k.kept(now); ok {
 		return body, err
 	}
@@ -72,10 +75,11 @@ func (k *keptBody) get(ctx context.Context, now time.Time, keep time.Duration, f
 		}
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fillFor)
 		defer cancel()
-		body, err := fill(fctx)
+		body, err := recovered(fctx, fill)
 		k.mu.Lock()
 		defer k.mu.Unlock()
 		if err != nil {
+			log.Error("a public read failed", "read", what, "err", err)
 			k.err, k.errUntil = err, now.Add(errorKept)
 			return nil, err
 		}
@@ -92,6 +96,18 @@ func (k *keptBody) get(ctx context.Context, now time.Time, keep time.Duration, f
 		body, _ := r.Val.([]byte)
 		return body, nil
 	}
+}
+
+// recovered is fill's answer, a panic in it an error (its value and stack): the shared read runs in singleflight's own
+// goroutine, which re-raises a panic where nothing recovers it, so one bug in a read would stop the whole service
+// (RV-1163)
+func recovered(ctx context.Context, fill func(context.Context) ([]byte, error)) (body []byte, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			body, err = nil, fmt.Errorf("a panic: %v\n%s", p, debug.Stack())
+		}
+	}()
+	return fill(ctx)
 }
 
 // publicReads are the public reads' kept answers: the counts, and each playlist's leaderboard
@@ -123,7 +139,7 @@ type statsBody struct {
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
-	body, err := s.public.stats.get(r.Context(), now, StatsKept, func(context.Context) ([]byte, error) {
+	body, err := s.public.stats.get(r.Context(), now, StatsKept, s.Log, "the live stats", func(context.Context) ([]byte, error) {
 		out := statsBody{Playlists: []playlistCount{}, Servers: map[string]serverCount{}}
 		if s.Matchmaker != nil {
 			st := s.Matchmaker.Stats(now)
@@ -139,8 +155,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if r.Context().Err() == nil {
-			s.log(r).Error("counting the live stats", "err", err)
-			writeError(w, http.StatusInternalServerError, "server")
+			writeError(w, http.StatusServiceUnavailable, "unavailable")
 		}
 		return
 	}
@@ -172,15 +187,13 @@ func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.Now()
-	log := s.log(r)
-	body, err := s.public.boards[p-1].get(r.Context(), now, BoardKept, func(ctx context.Context) ([]byte, error) {
+	body, err := s.public.boards[p-1].get(r.Context(), now, BoardKept, s.Log, "the "+name+" leaderboard", func(ctx context.Context) ([]byte, error) {
 		// (a page of ratings at a time from the board's index, the banned left out, till the top BoardSize are known:
 		// ranked.ReadBoard)
 		rows, err := ranked.ReadBoard(func(after *store.Rated, n int) ([]store.Rated, error) {
 			return s.Store.BoardRatings(ctx, p, after, n, now)
 		}, BoardSize, boardPage, now)
 		if err != nil {
-			log.Error("reading a leaderboard", "playlist", name, "err", err) // (once a read: not every request it's answered to)
 			return nil, err
 		}
 		out := boardBody{Playlist: name, Players: []boardRow{}}
