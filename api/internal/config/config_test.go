@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,7 @@ func good(t *testing.T) map[string]string {
 		"TICKET_SIGNING_KEY_FILE":   secret(t, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\n"),
 		"TRUSTED_PROXIES":           "127.0.0.1/32,::1/128",
 		"GAME_SERVER_TOKEN_FILE":    secret(t, strings.Repeat("g", 32)+"\n"),
+		"GAME_SERVERS":              "us-east|US East|https://Game.Carball.example:4433/play,eu|Europe (West)|https://game-eu.carball.example/play",
 	}
 }
 
@@ -55,6 +57,39 @@ func TestLoad(t *testing.T) {
 	if c.ListenAddr != ":8080" || c.TurnstileSecret != "turnstile-secret" || c.GoogleClientSecret != "client-secret" ||
 		string(c.DeletionKey) != strings.Repeat("k", 32) {
 		t.Errorf("Load = %+v", c)
+	}
+	if want := []string{"game.carball.example:4433", "game-eu.carball.example:443"}; !slices.Equal(c.GameServers, want) {
+		t.Errorf("GameServers = %v, want %v", c.GameServers, want)
+	}
+}
+
+// GAME_SERVERS by the web image's rules (40-carball-config.sh): each server's name as matches know it, host:port
+// (lower-case, 443 by default); an entry that breaks a rule refused, not dropped
+func TestParseGameServers(t *testing.T) {
+	got, err := ParseGameServers("a|A|https://one.example:4433/play,b-2|B (2)|https://TWO.example/,c|C.|https://three.example:1/x/y")
+	if want := []string{"one.example:4433", "two.example:443", "three.example:1"}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("got %v, %v; want %v", got, err, want)
+	}
+	for name, list := range map[string]string{
+		"an empty entry":             "a|A|https://one.example/play,",
+		"two fields":                 "a|https://one.example/play",
+		"four fields":                "a|A|https://one.example/play|x",
+		"an id twice":                "a|A|https://one.example/play,a|B|https://two.example/play",
+		"an upper-case id":           "A|A|https://one.example/play",
+		"an id ending in a hyphen":   "a-|A|https://one.example/play",
+		"a name with a comma's kin":  "a|A;B|https://one.example/play",
+		"a name too long":            "a|" + strings.Repeat("n", 41) + "|https://one.example/play",
+		"http":                       "a|A|http://one.example/play",
+		"no path":                    "a|A|https://one.example",
+		"a port past 65535":          "a|A|https://one.example:65536/play",
+		"a port with a leading zero": "a|A|https://one.example:0443/play",
+		"a host label with a hyphen": "a|A|https://-one.example/play",
+		"a query":                    "a|A|https://one.example/play?x=1",
+		"nine entries":               strings.Repeat("a|A|https://one.example/play,", 8) + "i|I|https://nine.example/play",
+	} {
+		if got, err := ParseGameServers(list); err == nil {
+			t.Errorf("%s: accepted as %v", name, got)
+		}
 	}
 }
 
@@ -87,6 +122,8 @@ func TestLoadRefusals(t *testing.T) {
 		"a ticket key without its id":        func(v map[string]string) { delete(v, "TICKET_KEY_ID") },
 		"no game server token (AP3)":         func(v map[string]string) { delete(v, "GAME_SERVER_TOKEN_FILE") },
 		"a short game server token":          func(v map[string]string) { v["GAME_SERVER_TOKEN_FILE"] = secret(t, strings.Repeat("g", 31)) },
+		"no game servers (RV-1157)":          func(v map[string]string) { delete(v, "GAME_SERVERS") },
+		"a game server list broken":          func(v map[string]string) { v["GAME_SERVERS"] = "us-east|US East|http://game.example/play" },
 	} {
 		vars := good(t)
 		edit(vars)
@@ -105,8 +142,9 @@ func TestLoadDev(t *testing.T) {
 	delete(vars, "TICKET_KEY_ID")
 	delete(vars, "TICKET_SIGNING_KEY_FILE")
 	delete(vars, "GAME_SERVER_TOKEN_FILE")
-	if _, err := Load(env(vars), true); err != nil {
-		t.Errorf("development on localhost without Turnstile, a ticket key or a game server token: %v", err)
+	delete(vars, "GAME_SERVERS")
+	if c, err := Load(env(vars), true); err != nil || c.GameServers != nil {
+		t.Errorf("development on localhost without Turnstile, a ticket key, a game server token or a list of servers (any): %v, %v", c.GameServers, err)
 	}
 	// (--dev never serves a public origin, https or not: its Turnstile is optional, AP-7)
 	for _, origin := range []string{"http://carball.example", "https://carball.example"} {

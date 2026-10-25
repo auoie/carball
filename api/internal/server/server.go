@@ -82,7 +82,7 @@ type Store interface {
 	QueueBanOf(ctx context.Context, accountID string) (store.QueueBan, bool, error)
 	ChangeQueueBan(ctx context.Context, accountID string, spend *store.SpentTicket, now time.Time, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
 	RecordResult(ctx context.Context, r store.Result, rate func(current map[string]*store.Rating) map[string]store.Rating, now time.Time) (bool, error)
-	PlaylistRatings(ctx context.Context, playlist int) ([]store.Rated, error)
+	BoardRatings(ctx context.Context, playlist int, after *store.Rated, n int, now time.Time) ([]store.Rated, error)
 }
 
 // Turnstile checks a sign-up's token (turnstile.Verifier)
@@ -113,6 +113,9 @@ type Server struct {
 	GameServerToken []byte
 	// Matchmaker is the one queue (NewMatchmaker; notes/matchmaking.md, the central matchmaker)
 	Matchmaker *matchmaker.Matchmaker
+	// GameServers are the game servers the matchmaker matches at (config's GameServers: their host:port); nil, any
+	// (development, the tests)
+	GameServers []string
 	// TrustedProxies are the connections whose CF-Connecting-IP is believed (cloudflared's: AP-1)
 	TrustedProxies []netip.Prefix
 	Now            func() time.Time
@@ -393,6 +396,11 @@ func (s *Server) logged(next http.Handler) http.Handler {
 			attrs = append(attrs, "error", sw.refusal)
 		}
 		attrs = append(attrs, "ms", time.Since(start).Milliseconds())
+		// (a public read answered: no line, its menus' polls would take the log's ceiling from every other request's,
+		// RV-1159; a refusal or a failure still has one)
+		if sw.status == http.StatusOK && quietRoutes[route] {
+			return
+		}
 		// (a line an address can write so often: past that, counted, RV-963)
 		unlogged, ok := s.lineAllowed(ratelimit.ClientKey(r, s.TrustedProxies), s.Now())
 		if !ok {
@@ -404,6 +412,9 @@ func (s *Server) logged(next http.Handler) http.Handler {
 		s.Log.Info("request", append(attrs, client.attrs()...)...)
 	})
 }
+
+// quietRoutes: the public reads (public.go), polled by every open menu: no access line when they answer
+var quietRoutes = map[string]bool{"GET /api/stats": true, "GET /api/leaderboard": true}
 
 // noteForward warns, once for each kind of peer, of a CF-Connecting-IP from outside TRUSTED_PROXIES: ignored, so its
 // connection's address is the limits' key, and behind the tunnel that's the connector's, every user's at once

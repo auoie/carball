@@ -1,6 +1,7 @@
 package matchmaker
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -55,5 +56,57 @@ func TestStatsEmpty(t *testing.T) {
 	h := newHarness()
 	if got := h.m.Stats(h.now); !reflect.DeepEqual(got, Stats{Servers: map[string]ServerStats{}}) {
 		t.Fatalf("empty: %+v", got)
+	}
+}
+
+// A player who searched again between a match's assignment and its start (another tab: allowed before the start) is
+// out of it at the start and counted once, as searching (RV-1156, RX67's probe)
+func TestStatsSearchedAgainBeforeStart(t *testing.T) {
+	h := newHarness()
+	for _, a := range []string{"a", "b"} {
+		h.search(t, player(a, 1500), []byte{1}, near)
+	}
+	h.m.Tick(h.now)
+	one := h.found(t, "a")
+	if one == nil {
+		t.Fatal("no match")
+	}
+	h.search(t, player("b", 1500), []byte{2}, near)
+	for _, when := range []string{"before the start", "after it"} {
+		got := h.m.Stats(h.now)
+		if got.Playing != 2 || got.Playlists[0].Players != 1 || got.Playlists[1].Searching != 1 || got.Servers["eu:4433"].Players != 1 {
+			t.Fatalf("%s: %+v", when, got)
+		}
+		h.m.Started("eu:4433", one.ID, h.now)
+	}
+}
+
+// With a list of game servers (GAME_SERVERS), a server name a page made up (any host:port it ticks and says it pinged)
+// is dropped before matching: a search naming none of the list accepts none (no-server), one naming both is matched only
+// at a listed one, so the stats only ever count listed servers (RV-1157). The names compared without case
+func TestStartOnlyListedServers(t *testing.T) {
+	h := newHarness()
+	h.m.AllowServers([]string{"eu:4433"})
+	made := map[string]int{"any-text-here.example:1": 1}
+	if _, _, err := h.m.Start(player("x", 1500), req([]byte{1}, made), h.now); !errors.Is(err, ErrNoServer) {
+		t.Fatalf("a search of made-up servers alone: %v", err)
+	}
+	both := map[string]int{"any-text-here.example:1": 1, "EU:4433": 40}
+	for _, a := range []string{"x", "y"} {
+		h.search(t, player(a, 1500), []byte{1}, both)
+	}
+	h.m.Tick(h.now)
+	found := h.found(t, "x")
+	if found == nil || found.Server != "EU:4433" {
+		t.Fatalf("matched at %+v, want the listed server", found)
+	}
+	got := h.m.Stats(h.now)
+	if _, listed := got.Servers["EU:4433"]; !listed || len(got.Servers) != 1 {
+		t.Fatalf("the stats' servers: %v", got.Servers)
+	}
+	// (no list: every server, as in development)
+	h.m.AllowServers(nil)
+	if _, _, err := h.m.Start(player("z", 1500), req([]byte{1}, made), h.now); err != nil {
+		t.Fatalf("no list: %v", err)
 	}
 }

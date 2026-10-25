@@ -24,9 +24,10 @@ type ServerStats struct {
 }
 
 // Stats counts the matchmaker's state at now (what expired let go first). A match counts from its assignment (its players
-// joining) until its server's word that it ended or was cancelled; its players are those in it: before its start the
-// accounts it still holds (one that searched again since is searching), after it those present (a leaver out, a rejoin
-// back). A search counts while it would be matched (polled, a poll open or just answered: Tick's)
+// joining) until its server's word that it ended or was cancelled (only ever at a listed server: AllowServers, RV-1157);
+// its players are those in it: before its start the accounts it still holds (one that searched again since is
+// searching), after it those present (a leaver out, a rejoin back; one that searched again before its start was never
+// present: RV-1156). A search counts while it would be matched (polled, a poll open or just answered: Tick's)
 func (m *Matchmaker) Stats(now time.Time) Stats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -41,7 +42,11 @@ func (m *Matchmaker) Stats(now time.Time) Stats {
 				}
 			}
 		} else {
-			players = len(mt.present)
+			for _, in := range mt.present {
+				if in {
+					players++
+				}
+			}
 		}
 		if p := len(mt.accounts) / 2; p >= 1 && p <= len(out.Playlists) {
 			out.Playlists[p-1].Matches++

@@ -274,6 +274,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 | `GOOGLE_CLIENT_SECRET_FILE` | | its secret |
 | `STEAM_WEB_API_KEY_FILE` | (none) | optional: a Steam sign-up's suggested name from the persona (else a guest-style one). Steam sign-in itself needs no key: realm `PUBLIC_ORIGIN`, return URL `PUBLIC_ORIGIN/api/auth/steam/callback` |
 | `TURNSTILE_SITE_KEY` | (required) | Turnstile's site key (public: the page's sign-up widget gets it from `GET /api/signup`) |
+| `GAME_SERVERS` | (required; `--dev`: optional) | the game servers the matchmaker matches at: the web image's `GAME_SERVERS`, the same value (`ID\|Name\|URL` entries, comma-separated, its rules: so the list lives once), each server known by its URL's `host:port` (443 when the URL has none, the host compared without case), as its pongs and match tickets name it (the game server's `PUBLIC_HOST:GAME_PORT`). A search's pings and ticked regions naming any other server are dropped before matching (a search naming none of them: 503 `no-server`), so a match is only ever at a listed server and the public stats only count those (RV-1157). Unset, or a bad entry: the service refuses to start; it logs the list at start. `--dev` unset: any server (the browser tests' stacks) |
 | `TURNSTILE_SECRET_FILE` | (required) | its secret (sign-up's siteverify, its hostname `PUBLIC_ORIGIN`'s, action `signup`) |
 | `TICKET_KEY_ID` | (required) | the tickets' key's id (1-32 characters, no spaces; the JWTs' `kid`): the game server finds the public key by it |
 | `TICKET_SIGNING_KEY_FILE` | (required) | that key's seed (32 bytes, base64: `carball-api ticket-key KID` prints a new one, its public line for the game server's `TICKET_PUBLIC_KEYS` on stderr) |
@@ -356,10 +357,14 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   notes/accounts.md §3) is one seat of one match at one server (its `aud`), 30 s, taken once there (RV-850).
 - **The public reads** (no sign-in; the menu's; `api/internal/server/public.go`): `GET /api/stats` is the matchmaker's
   counts (by playlist its matches, their players and those searching it; by game server, host:port, its matches and
-  players; the players playing and the matches), kept 5 s; `GET /api/leaderboard?playlist=1v1|2v2|3v3` is the top 100 by
-  the rating as shown (ties by games, then name), the provisional left out (the deviation grown while idle, at read time),
-  each its rank, display name, rating and games, kept a minute per playlist; another playlist 400. Counts and display
-  names only: no account id, match id or address. Each request still makes an access-log line.
+  players, only ever `GAME_SERVERS`' servers: RV-1157; the players playing and the matches), kept 5 s; `GET
+  /api/leaderboard?playlist=1v1|2v2|3v3` is the top 100 by the rating as shown (ties by games, then name, then account
+  id), the provisional (the deviation grown while idle, at read time) and accounts with a ban in force left out
+  (RV-1155), each its rank, display name, rating and games, kept a minute per playlist, read a page at a time through
+  the `ratings_board` index (migration 00003); another playlist 400. One read for everyone asking meanwhile, each
+  request waiting only while it lasts; a failed read kept 5 s (RV-1158). Counts and display names only: no account id,
+  match id or address. A read that answers writes no access line (every open menu polls the counts: RV-1159); a refused
+  or failed one does.
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
   for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
   or once a later search gave that match up, whether or not it found a match (RV-869); a queue ban from that match
@@ -483,8 +488,8 @@ names guard over each image's files. Run on a throwaway network, 44 checks passe
   with an `OUTBOX_DIR` it can't write or a blank one; healthy with a keys file, `API_URL` and a certificate, naming its outbox, which
   its user can write; the keys file reloaded on SIGHUP (a second key added), kept when the new file names none;
   `--dev` starting alone, its calls logged only.
-- api: `migrate` as the owner's role, the ranked tables made; refused without `TRUSTED_PROXIES`, with a short game
-  server token, or without one; healthy with the network's subnet, its list logged; `/api/me` 401;
+- api: `migrate` as the owner's role, the ranked tables made; refused without `TRUSTED_PROXIES` or `GAME_SERVERS`, with
+  a short game server token, or without one; healthy with the network's subnet, its list logged; `/api/me` 401;
   `/api/results` 401 without or with a wrong token, 400 for an empty result; `/api/quitters` and `/api/refills` 400 for
   an empty report; with a wrong list, the one warning naming the peer's kind, no address in the log; `healthcheck` 0.
 
@@ -497,7 +502,7 @@ throwaway network, 27 checks passed:
 - game: refused without `TICKET_PUBLIC_KEYS` or with it blank (queue mode, no `--dev`); healthy with it and a
   certificate mounted; `--dev` starting without keys.
 - api:
-  - `migrate` as the owner's role; refused without `TRUSTED_PROXIES`;
+  - `migrate` as the owner's role; refused without `TRUSTED_PROXIES` or `GAME_SERVERS`;
   - healthy with the network's subnet, its list logged; `/api/me` a 401 from a container on the network, no warning;
   - with a wrong list, the one warning naming the peer's kind (private), no address in the log; `healthcheck` exit 0.
 

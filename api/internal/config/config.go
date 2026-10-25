@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -52,6 +53,11 @@ type Config struct {
 	// GameServerToken is the game server's credential on /api/results and /api/quitters (compared in constant time, behind
 	// the tunnel's Access service token: notes/accounts.md §3); none: those calls answer 503
 	GameServerToken string
+	// GameServers are the game servers' names as matches know them (the URL's host:port, lower-case; 443 when the URL
+	// has no port), from GAME_SERVERS: the web image's list (`ID|Name|URL`, comma-separated, its rules:
+	// 40-carball-config.sh), so the list lives once. The matchmaker matches at these alone: a server name a page made up
+	// is never matched or counted (RV-1157). Required outside development; unset in development: any server
+	GameServers []string
 	// Dev is development mode (`--dev`): a localhost origin only (http or https), Turnstile optional (AP-7)
 	Dev bool
 }
@@ -137,7 +143,59 @@ func Load(env Env, dev bool) (Config, error) {
 	if len(c.DeletionKey) > 0 && len(c.DeletionKey) < 32 {
 		errs = append(errs, errors.New("DELETION_HMAC_KEY_FILE must hold 32 bytes or more"))
 	}
+	if list := env("GAME_SERVERS"); list != "" {
+		if c.GameServers, err = ParseGameServers(list); err != nil {
+			errs = append(errs, fmt.Errorf("GAME_SERVERS: %w", err))
+		}
+	} else if !dev {
+		errs = append(errs, errors.New("GAME_SERVERS is required: the web image's list (ID|Name|URL, comma-separated), "+
+			"the game servers the matchmaker matches at"))
+	}
 	return c, errors.Join(errs...)
+}
+
+// The web image's rules for GAME_SERVERS (client/docker/40-carball-config.sh, kept the same): an entry's id lower-case
+// letters, digits and inner hyphens (32 at most, each once), its name letters, digits, spaces and . - ( ) (40 at most),
+// its URL https://HOST[:PORT]/PATH (letters, digits and . - _ ~ / after the host), 8 entries at most
+var (
+	serverID   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
+	serverName = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9 .()-]{0,38}[A-Za-z0-9.)])?$`)
+	serverURL  = regexp.MustCompile(`^https://([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*)(:([1-9][0-9]{0,4}))?/[A-Za-z0-9._~/-]*$`)
+)
+
+// maxGameServers is the most entries GAME_SERVERS may have (the web image's)
+const maxGameServers = 8
+
+// ParseGameServers reads GAME_SERVERS (`ID|Name|URL`, comma-separated) by the web image's rules: each server's name as
+// matches know it, its URL's host:port (lower-case; 443 when the URL has none). An empty entry or one that breaks a
+// rule is refused, not dropped
+func ParseGameServers(list string) ([]string, error) {
+	entries := strings.Split(list, ",")
+	if len(entries) > maxGameServers {
+		return nil, fmt.Errorf("%d entries: %d at most", len(entries), maxGameServers)
+	}
+	ids := map[string]bool{}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		parts := strings.Split(entry, "|")
+		if len(parts) != 3 || !serverID.MatchString(parts[0]) || !serverName.MatchString(parts[1]) || ids[parts[0]] {
+			return nil, fmt.Errorf("entries must be ID|Name|URL (ids each once), got %q", entry)
+		}
+		m := serverURL.FindStringSubmatch(parts[2])
+		if m == nil {
+			return nil, fmt.Errorf("a URL must be https://HOST[:PORT]/PATH, got %q", parts[2])
+		}
+		port := "443"
+		if m[6] != "" {
+			if n, err := strconv.Atoi(m[6]); err != nil || n > 65535 {
+				return nil, fmt.Errorf("a URL's port must be 1-65535, got %q", parts[2])
+			}
+			port = m[6]
+		}
+		ids[parts[0]] = true
+		names = append(names, strings.ToLower(m[1])+":"+port)
+	}
+	return names, nil
 }
 
 // ReadSecret reads a secret's file, its trailing newline dropped (a file written by `echo` keeps one)

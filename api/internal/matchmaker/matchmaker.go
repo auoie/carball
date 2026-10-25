@@ -185,6 +185,9 @@ type Matchmaker struct {
 	waits     map[string]kept // a cancelled match's players' waits, for their next search
 	rejoining map[string]hold // each rejoin let through: its account's searches held till then, its Back, or its match freed
 	arrivals  uint64
+	// the game servers matched at (their names lower-case: GAME_SERVERS'); nil, any (development). A server a page
+	// pinged or ticked that isn't one is dropped before matching: never matched at, so never counted (RV-1157)
+	servers map[string]bool
 }
 
 // hold is a rejoin let through: until when its account's searches wait for its Back, its match, and its ticket's one-time
@@ -202,6 +205,37 @@ func New(issue Issuer, now func() time.Time, log *slog.Logger) *Matchmaker {
 		active: map[string]uint64{}, latest: map[string]uint64{}, cooldowns: map[string]time.Time{}, waits: map[string]kept{},
 		rejoining: map[string]hold{},
 	}
+}
+
+// AllowServers sets the game servers matched at (their names, host:port: config's GameServers); nil, any
+func (m *Matchmaker) AllowServers(names []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if names == nil {
+		m.servers = nil
+		return
+	}
+	m.servers = make(map[string]bool, len(names))
+	for _, n := range names {
+		m.servers[strings.ToLower(n)] = true
+	}
+}
+
+// listed is the request with the servers that aren't matched at dropped (its pings and its ticks): a search naming none
+// of the list accepts none
+func (m *Matchmaker) listed(req Request) Request {
+	if m.servers == nil {
+		return req
+	}
+	known := func(s string) bool { return m.servers[strings.ToLower(s)] }
+	pings := make(map[string]int, len(req.Pings))
+	for s, ms := range req.Pings {
+		if known(s) {
+			pings[s] = ms
+		}
+	}
+	ticked := slices.DeleteFunc(slices.Clone(req.Ticked), func(s string) bool { return !known(s) })
+	return Request{Playlists: req.Playlists, Pings: pings, Ticked: ticked}
 }
 
 // Run forms matches every second until ctx is done
@@ -227,6 +261,7 @@ func (m *Matchmaker) Start(p Player, req Request, now time.Time) (string, State,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.tidy(now)
+	req = m.listed(req)
 	if until, ok := m.cooldowns[p.Account]; ok {
 		return "", State{}, CooldownError{Until: until}
 	}

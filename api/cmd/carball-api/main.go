@@ -320,6 +320,11 @@ func serve(args []string, out io.Writer) error {
 		proxies[i] = p.String()
 	}
 	log.Info("trusted proxies (CF-Connecting-IP believed from)", "proxies", strings.Join(proxies, ","))
+	if cfg.GameServers == nil {
+		log.Warn("GAME_SERVERS not set (development): the matchmaker matches at any server a page names")
+	} else {
+		log.Info("the game servers matched at (GAME_SERVERS)", "servers", strings.Join(cfg.GameServers, ","))
+	}
 
 	// (every outbound call bounded: AC-15)
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -330,6 +335,7 @@ func serve(args []string, out io.Writer) error {
 		TurnstileSiteKey: cfg.TurnstileSiteKey,
 		DeletionKey:      cfg.DeletionKey,
 		TrustedProxies:   cfg.TrustedProxies,
+		GameServers:      cfg.GameServers,
 		Dev:              cfg.Dev,
 		Now:              time.Now,
 		Log:              log,

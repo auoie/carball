@@ -62,9 +62,10 @@ export function pingText(ping: number | null | undefined): string {
   return ping === null ? "—" : `${String(ping)} ms`;
 }
 
-/** A region's line beside its name: its ping, and its players in matches when known and at MIN_SHOWN or more */
+/** A region's line beside its name: its ping, and its players in matches when known and at MIN_SHOWN or more (in
+ *  matches: the menu's "playing" counts the searching too, RV-1161) */
 export function regionText(ping: number | null | undefined, players: number | undefined): string {
-  return players === undefined || players < MIN_SHOWN ? pingText(ping) : `${pingText(ping)} · ${String(players)} playing`;
+  return players === undefined || players < MIN_SHOWN ? pingText(ping) : `${pingText(ping)} · ${String(players)} in matches`;
 }
 
 /** Our own words for the garage's team colours (Free Play's car colour; online, the queue's team) */
@@ -121,6 +122,8 @@ export interface MainMenuActions {
   readonly playShown?: () => void;
   /** A region's box pressed on Play's page: its id */
   readonly region?: (id: string) => void;
+  /** The menu opened (the live counts read afresh: net/liveStats.ts) */
+  readonly opened?: () => void;
 }
 
 export class MainMenu {
@@ -166,6 +169,7 @@ export class MainMenu {
   readonly #regions: HTMLDivElement;
   readonly #regionBoxes = new Map<string, { readonly box: HTMLButtonElement; readonly ping: HTMLSpanElement }>();
   readonly #regionAction: ((id: string) => void) | undefined;
+  readonly #opened: (() => void) | undefined;
   /** The live counts: the top page's line, and each playlist's on its box */
   readonly #liveLine: HTMLDivElement;
   readonly #playlistCounts = new Map<number, HTMLSpanElement>();
@@ -287,6 +291,7 @@ export class MainMenu {
     this.#regions.append(regionsHeading);
     this.#play.append(this.#regions);
     this.#regionAction = actions.region;
+    this.#opened = actions.opened;
     this.#playShown = actions.playShown;
     button(this.#play, SEARCH_TEXT.findMatch, () => {
       actions.findMatch(this.#ticked);
@@ -528,8 +533,8 @@ export class MainMenu {
     }
   }
 
-  /** The account's page shown (its body drawn first), the menu open */
-  /** The live counts (null: none read, or they can't be): the top page's line, each playlist's on its box */
+  /** The live counts (null: none read, they can't be, or they're too old: net/liveStats.ts): the top page's line, each
+   *  playlist's on its box */
   setStats(stats: LiveStats | null): void {
     const line = stats ? liveText(stats.playing, stats.matches) : null;
     this.#liveLine.textContent = line ?? "";
@@ -579,6 +584,7 @@ export class MainMenu {
     );
   }
 
+  /** The account's page shown (its body drawn first), the menu open */
   showAccount(): void {
     if (this.#root.hidden) this.open();
     this.#show("account");
@@ -655,6 +661,7 @@ export class MainMenu {
     if (document.pointerLockElement) document.exitPointerLock();
     this.#show("top");
     this.#root.hidden = false;
+    this.#opened?.();
   }
 
   close(): void {

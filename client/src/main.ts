@@ -40,6 +40,7 @@ import { type Account, AccountsApi, type LiveStats, signInReturn, withoutSignInR
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
 import { chooseRegions, pingAnswer, searchPlan, storedPings, storedRegions, storePings, storeRegions, toggleRegion } from "./net/regions";
 import { pingServer } from "./net/search";
+import { LiveStatsPoller, STATS_EVERY_MS } from "./net/liveStats";
 import { VersionCheck, reloadText } from "./net/versionCheck";
 import { MATCHMAKER_TEXT, type MatchmakerSearch, MatchmakerSearchSession, type SearchRequest } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
@@ -104,8 +105,6 @@ const DECLINE_REREAD_MS = 2000;
 /** How long Sign Out and Delete Account wait for the page's search's cancel to be answered (ms) before going on: the
  *  delete still goes, its answer not waited for (RV-979) */
 const LEAVING_WAIT_MS = 2000;
-/** How often the menu's live counts are read while it shows (ms; the API keeps its count a few seconds) */
-const STATS_EVERY_MS = 15_000;
 
 // Every arena collision mesh: scripts/arena_gen.py writes one file per piece (each its own static body, as in the game)
 const arenaUrls = Object.values(import.meta.glob<string>("@arena/collision_meshes/arena/*.cmf", { query: "?url", import: "default", eager: true }));
@@ -550,8 +549,10 @@ async function main(): Promise<void> {
     let pingedAt = cachedPings?.at ?? -Infinity;
     /** Each region's server's name as its Pong said it (the matchmaker's: RV-863); none, its URL's host:port */
     const serverNames = new Map<string, string>();
-    /** The live counts last read (null: none, or they couldn't be): the menu's line and each playlist's and region's */
+    /** The live counts shown (null: none, they couldn't be read, or too old): the menu's line, each playlist's and
+     *  region's; their poller once the deployment's known (net/liveStats.ts) */
     let liveStats: LiveStats | null = null;
+    let statsPoller: LiveStatsPoller | null = null;
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
     /** The page's version against its servers' (VersionCheck: the regions that refused it left out of a search, the
      *  reload asked once and only of a page apart from its deployment, RV-1030, RV-1078) */
@@ -902,6 +903,9 @@ async function main(): Promise<void> {
       playShown: () => {
         void regionsListed.then(measurePings);
       },
+      opened: () => {
+        void statsPoller?.opened();
+      },
       region: (id) => {
         chosen = toggleRegion(
           chosen,
@@ -1022,19 +1026,23 @@ async function main(): Promise<void> {
       await readAccount();
     });
     // (the deployment's live counts and leaderboard (the API's, no sign-in): the counts read as the menu opens and every
-    // STATS_EVERY_MS while it shows and the page is seen; the leaderboard's entry shown)
+    // STATS_EVERY_MS while it shows and the page is seen (net/liveStats.ts); the leaderboard's entry shown)
     void accountsReady.then(() => {
       if (!accountsOn) return;
       mainMenu?.setLeaderboard(async (playlist) => accountsApi.leaderboard(playlist));
-      const readStats = async (): Promise<void> => {
-        if (document.hidden || mainMenu?.isOpen !== true) return;
-        liveStats = await accountsApi.stats().catch(() => null);
-        mainMenu.setStats(liveStats);
-        showRegions();
-      };
-      void readStats();
-      setInterval(() => void readStats(), STATS_EVERY_MS);
-      document.addEventListener("visibilitychange", () => void readStats());
+      const poller = new LiveStatsPoller(
+        async () => accountsApi.stats(),
+        (stats) => {
+          liveStats = stats;
+          mainMenu?.setStats(stats);
+          showRegions();
+        },
+        () => !document.hidden && mainMenu?.isOpen === true,
+      );
+      statsPoller = poller;
+      void poller.opened();
+      setInterval(() => void poller.poll(), STATS_EVERY_MS);
+      document.addEventListener("visibilitychange", () => void poller.poll());
     });
     // (a match's result reaches the accounts service after the page that played it went: the ratings and the ban read
     // again a little later, RX30C)

@@ -3,15 +3,21 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"carball/api/internal/matchmaker"
 	"carball/api/internal/server"
+	"carball/api/internal/store"
 )
 
 // exec: a statement run as the database's owner (the tests' own rows)
@@ -144,9 +150,126 @@ func TestPublicLeaderboard(t *testing.T) {
 	if again := e.board(b, "1v1"); again.Players[0].Name != "P cat" || again.Players[0].Rating != 1800 {
 		t.Fatalf("after BoardKept: %+v", again)
 	}
+	// (a ban in force on an account's sign-in: off the board at its next read; one that ended, on it: RV-1155)
+	e.exec(`INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+		SELECT provider, subject, 'made up', NULL, 'test', $2 FROM identities WHERE account_id = $1`, cat, now)
+	e.exec(`INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+		SELECT provider, subject, 'made up', $2::timestamptz, 'test', $2 FROM identities WHERE account_id = $1`, ann, now)
+	e.clock.Add(server.BoardKept)
+	if banned := e.board(b, "1v1"); len(banned.Players) != 1 || banned.Players[0].Name != "P ann" {
+		t.Fatalf("with cat banned: %+v", banned)
+	}
+	if two := e.board(b, "2v2"); len(two.Players) != 0 {
+		t.Fatalf("2v2 with cat banned: %+v", two)
+	}
 	for _, q := range []string{"", "?playlist=4v4", "?playlist=1"} {
 		if r := e.get(b, "/api/leaderboard"+q); r.StatusCode != http.StatusBadRequest {
 			t.Fatalf("GET /api/leaderboard%s: %d", q, r.StatusCode)
 		}
+	}
+}
+
+// A successful public read writes no access line (every open menu polls the counts: they'd take the log's ceiling from
+// every other request's, RV-1159); a refused one still does
+func TestPublicReadsQuietInTheLog(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	e.stats(b)
+	e.board(b, "1v1")
+	if logs := e.logs.String(); strings.Contains(logs, `route="GET /api/stats"`) || strings.Contains(logs, `route="GET /api/leaderboard"`) {
+		t.Fatalf("a public read's line:\n%s", logs)
+	}
+	if r := e.get(b, "/api/leaderboard?playlist=9v9"); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("9v9: %d", r.StatusCode)
+	}
+	if logs := e.logs.String(); !strings.Contains(logs, `route="GET /api/leaderboard" status=400`) {
+		t.Fatalf("a refused read's line missing:\n%s", logs)
+	}
+}
+
+// blockingStore: the board's read held until `release` (or its own context's end), each call counted; `fail` its error
+type blockingStore struct {
+	server.Store
+	calls   *atomic.Int32
+	release chan struct{}
+	fail    error
+}
+
+func (s blockingStore) BoardRatings(ctx context.Context, _ int, _ *store.Rated, _ int, _ time.Time) ([]store.Rated, error) {
+	s.calls.Add(1)
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return nil, s.fail
+}
+
+// The leaderboard's read is one for everyone asking meanwhile (one database call), each request waiting only as long as
+// it lasts itself (one cancelled returns at once, the read going on for the others); a failed read is kept a few seconds
+// (the database not asked again by each request), then tried again (RV-1158)
+func TestPublicBoardOneReadEachWaitsAlone(t *testing.T) {
+	e := setup(t, nil)
+	calls := &atomic.Int32{}
+	release := make(chan struct{})
+	e.s.Store = blockingStore{Store: e.db, calls: calls, release: release}
+	h := e.s.Handler()
+	ask := func(ctx context.Context) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/leaderboard?playlist=1v1", nil))
+		return w
+	}
+	var waiting sync.WaitGroup
+	answers := make(chan int, 4)
+	for range 4 {
+		waiting.Go(func() { answers <- ask(context.Background()).Code })
+	}
+	// (one more, given up while the read goes on: back at once)
+	gone, cancel := context.WithCancel(context.Background())
+	back := make(chan struct{})
+	go func() {
+		ask(gone)
+		close(back)
+	}()
+	for calls.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-back:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a cancelled request still waiting for the read")
+	}
+	close(release)
+	waiting.Wait()
+	close(answers)
+	for code := range answers {
+		if code != http.StatusOK {
+			t.Fatalf("a waiter's answer: %d", code)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("%d database reads for 5 requests", n)
+	}
+
+	// (a failing read: kept errorKept, then read again)
+	failCalls := &atomic.Int32{}
+	open := make(chan struct{})
+	close(open)
+	e.s.Store = blockingStore{Store: e.db, calls: failCalls, release: open, fail: errors.New("the database is down")}
+	h = e.s.Handler()
+	e.clock.Add(server.BoardKept)
+	for range 3 {
+		if code := ask(context.Background()).Code; code != http.StatusServiceUnavailable {
+			t.Fatalf("a failed read: %d", code)
+		}
+	}
+	if n := failCalls.Load(); n != 1 {
+		t.Fatalf("%d reads while the failure is kept", n)
+	}
+	e.clock.Add(5 * time.Second)
+	ask(context.Background())
+	if n := failCalls.Load(); n != 2 {
+		t.Fatalf("%d reads after the failure's keep", n)
 	}
 }

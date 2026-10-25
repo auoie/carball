@@ -212,6 +212,7 @@ func (s *Server) issueSeat(p matchmaker.Player, seat ticket.Seat, now time.Time)
 // NewMatchmaker gives the server its matchmaker, signing with its Tickets (Run it beside the server)
 func (s *Server) NewMatchmaker() *matchmaker.Matchmaker {
 	s.Matchmaker = matchmaker.New(s.issueSeat, s.Now, s.Log)
+	s.Matchmaker.AllowServers(s.GameServers)
 	return s.Matchmaker
 }
 

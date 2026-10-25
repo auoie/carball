@@ -781,21 +781,28 @@ func cutColon(s string) (string, string, bool) {
 
 // --- Retention (notes/accounts.md §2) ---
 
+// purges are Purge's statements, each by its time ($1: now, or the deletions' cut), each on its index (migration 00003)
+var purges = []struct {
+	sql       string
+	deletions bool
+}{
+	{`DELETE FROM sessions WHERE expires_at <= $1`, false},
+	{`UPDATE sessions SET previous_hash = NULL, previous_until = NULL WHERE previous_until <= $1`, false},
+	{`DELETE FROM auth_flows WHERE expires_at <= $1`, false},
+	{`DELETE FROM pending_signups WHERE expires_at <= $1`, false},
+	{`DELETE FROM steam_nonces WHERE expires_at <= $1`, false},
+	{`DELETE FROM deletions WHERE deleted_at <= $1`, true},
+}
+
 // Purge removes what has run out by now: sessions past their end, flows, sign-ups and Steam nonces past theirs, and the
 // delete/re-create rule's records from before deletionsBefore (their 30 days over)
 func (s *Store) Purge(ctx context.Context, now, deletionsBefore time.Time) error {
-	for _, q := range []struct {
-		sql string
-		at  time.Time
-	}{
-		{`DELETE FROM sessions WHERE expires_at <= $1`, now},
-		{`UPDATE sessions SET previous_hash = NULL, previous_until = NULL WHERE previous_until <= $1`, now},
-		{`DELETE FROM auth_flows WHERE expires_at <= $1`, now},
-		{`DELETE FROM pending_signups WHERE expires_at <= $1`, now},
-		{`DELETE FROM steam_nonces WHERE expires_at <= $1`, now},
-		{`DELETE FROM deletions WHERE deleted_at <= $1`, deletionsBefore},
-	} {
-		if _, err := s.pool.Exec(ctx, q.sql, q.at); err != nil {
+	for _, q := range purges {
+		at := now
+		if q.deletions {
+			at = deletionsBefore
+		}
+		if _, err := s.pool.Exec(ctx, q.sql, at); err != nil {
 			return err
 		}
 	}

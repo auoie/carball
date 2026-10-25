@@ -21,7 +21,7 @@ describe("the live counts' words (ours)", () => {
   it("the menu's line, a playlist's two lines, a region's beside its ping (not known: the ping alone)", () => {
     expect([liveText(5, 2), liveText(1, 1), liveText(0, 0)]).toEqual(["5 playing · 2 matches", "1 playing · 1 match", "0 playing · 0 matches"]);
     expect(playlistLiveText(4, 1)).toBe("4 in matches\n1 searching");
-    expect([regionText(31, 6), regionText(null, 0), regionText(31, undefined)]).toEqual(["31 ms · 6 playing", "— · 0 playing", "31 ms"]);
+    expect([regionText(31, 6), regionText(null, 0), regionText(31, undefined)]).toEqual(["31 ms · 6 in matches", "— · 0 in matches", "31 ms"]);
     // (shown from MIN_SHOWN players: 0 for now, every count shown)
     expect(MIN_SHOWN).toBe(0);
   });
