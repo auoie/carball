@@ -91,6 +91,9 @@ const TRAINING_PATH_SECONDS = 0.8;
 /** The editor's path predicted at most this often (real s) while its shot keeps changing (the last change's always) */
 const EDITOR_PATH_EVERY = 0.1;
 
+/** Where the engine scores a ball (|y| past it: IsBallScored, SOCCAR_GOAL_SCORE_BASE_THRESHOLD_Y and the ball's radius) */
+const GOAL_SCORED_Y = 5124.25 + 91.25;
+
 export class Freeplay {
   readonly #world: World;
   readonly #renderer: Renderer;
@@ -654,7 +657,7 @@ export class Freeplay {
       this.#editorPoints = null;
       this.editorCamera = null;
       // (free play's goals, as set, and boost again)
-      this.#setGoalScoring(this.settings().gameplay.freePlayGoals);
+      this.#freePlayGoalScoring();
       this.#world.setUnlimitedBoost(this.#unlimitedBoost);
       this.restart();
       return;
@@ -687,7 +690,7 @@ export class Freeplay {
     this.#training = null;
     this.#pathPoints = null;
     this.#disabledGoal.show(null);
-    this.#setGoalScoring(this.settings().gameplay.freePlayGoals);
+    this.#freePlayGoalScoring();
     this.#world.setUnlimitedBoost(this.#unlimitedBoost);
   }
 
@@ -833,11 +836,19 @@ export class Freeplay {
   #updateGoalScoring(): void {
     const run = this.#training;
     if (!run) {
-      if (!this.#editing) this.#setGoalScoring(this.settings().gameplay.freePlayGoals);
+      if (!this.#editing) this.#freePlayGoalScoring();
       return;
     }
     const goal = run.state === "active" ? run.scoringGoal() : null;
     this.#setGoalScoring(goal !== null && this.#world.ball().pos.y * goal > 0);
+  }
+
+  /** Free play's goals as its setting has them; but turned back on with the ball in a net, not until it's out of both:
+   *  the engine scores a ball by where it is alone, so it would count at once a goal nobody shot (RV-1183) */
+  #freePlayGoalScoring(): void {
+    const on = this.settings().gameplay.freePlayGoals;
+    if (on && !this.#goalScoring && Math.abs(this.#world.ball().pos.y) > GOAL_SCORED_Y) return;
+    this.#setGoalScoring(on);
   }
 
   #setGoalScoring(on: boolean): void {

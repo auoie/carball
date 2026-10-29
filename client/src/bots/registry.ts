@@ -5,8 +5,8 @@ import type { BotBrain } from "../local/bots";
 import { type ActionParser, lookupParser, multiDiscreteParser, parseTable } from "./actions";
 import { randomControls, tickSkipDriver } from "./driver";
 import { json, unplayable } from "./listing";
-import { type BotManifest, parseManifest, pickBeta, policyFile } from "./manifest";
-import { KICKOFFS, OBSERVATIONS } from "./observations";
+import { type BotManifest, type Controls8, parseManifest, pickBeta, policyFile } from "./manifest";
+import { KICKOFFS, MASKS, MIRRORS, MOMENTS, OBSERVATIONS } from "./observations";
 import { OnnxPolicy } from "./policy";
 
 /** A package's parts its bots share in a match of one team size: its manifest, its policy's session (one model run at a
@@ -17,6 +17,8 @@ interface PackageParts {
   readonly entities: number | null;
   readonly policy: OnnxPolicy;
   readonly parser: ActionParser;
+  /** A lookup parser's table (its mask's) */
+  readonly table: readonly Controls8[] | null;
 }
 
 /** The match's packages' shared parts, by base, id and team size */
@@ -34,12 +36,14 @@ async function packageParts(base: string, id: string, teamSize: number, fetcher:
   const policy = await OnnxPolicy.create(new Uint8Array(await model.arrayBuffer()), manifest.policy, runtime);
   const action = manifest.action;
   let parser: ActionParser;
+  let rows: Controls8[] | null = null;
   if (action.parser === "lookup-v1") {
     const table = parseTable(await json(`${base}${id}/${action.table}`, fetcher));
     if (typeof table === "string") throw new Error(`bot ${id}: its action table: ${table}`);
+    rows = table;
     parser = lookupParser(table);
   } else parser = multiDiscreteParser(action);
-  return { manifest, entities: policyAt.entities, policy, parser };
+  return { manifest, entities: policyAt.entities, policy, parser, table: rows };
 }
 
 /** A bot's brain from its package, for a match of `teamSize` a side: its builder's observations into its policy, the pick
@@ -62,9 +66,13 @@ export async function loadBrain(
     shared = packageParts(base, id, teamSize, fetcher, runtime);
     packages?.set(key, shared);
   }
-  const { manifest, entities, policy, parser } = await shared;
-  const observer = OBSERVATIONS[manifest.observation.builder]?.(manifest, teamSize, entities);
+  const { manifest, entities, policy, parser, table } = await shared;
+  const observer = OBSERVATIONS[manifest.observation.builder]?.(manifest, teamSize, entities, random);
   if (!observer) throw new Error(`bot ${id}: no observation builder`);
+  const action = manifest.action.parser === "lookup-v1" ? manifest.action : null;
+  const mask = action?.mask && table ? MASKS[action.mask.rule]?.(table, action.mask.groundRows) : undefined;
+  const mirror = action?.mirror === undefined ? undefined : MIRRORS[action.mirror];
+  const moment = manifest.moments === undefined ? undefined : MOMENTS[manifest.moments];
   const kickoff = manifest.kickoff ? KICKOFFS[manifest.kickoff.taker]?.(manifest.kickoff) : undefined;
   const level = manifest.difficulty?.kind === "random-controls-v1" ? (strength ?? manifest.difficulty.defaultStrength) : 1;
   return tickSkipDriver({
@@ -73,9 +81,11 @@ export async function loadBrain(
     track: (view) => observer.track?.(view),
     async decide(view, previous) {
       const logits = await policy.run(observer.build(view, previous));
-      return parser(logits, pickBeta(manifest.policy.pick, view.state), random).row;
+      const row = parser(logits, pickBeta(manifest.policy.pick, view.state), random, mask?.(view)).row;
+      return mirror ? mirror(view, row) : row;
     },
     ...(level < 1 ? { onApply: randomControls(level, random) } : {}),
     ...(kickoff ? { kickoff } : {}),
+    ...(moment ? { moment } : {}),
   });
 }

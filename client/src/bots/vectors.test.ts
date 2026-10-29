@@ -48,12 +48,29 @@ interface Sequence {
 }
 
 const v = ([x, y, z]: V3): { x: number; y: number; z: number } => ({ x, y, z });
+// (the fields these packages' builders don't read: as at a kickoff)
 const state = (s: Frame["state"]): BotState => ({
-  cars: s.cars.map((c) => ({ ...c, pos: v(c.pos), vel: v(c.vel), angVel: v(c.angVel), rot: { forward: v(c.rot.forward), up: v(c.rot.up) } })),
+  cars: s.cars.map((c) => ({
+    ...c,
+    pos: v(c.pos),
+    vel: v(c.vel),
+    angVel: v(c.angVel),
+    rot: { forward: v(c.rot.forward), right: { x: 0, y: 0, z: 0 }, up: v(c.rot.up) },
+    jumping: false,
+    hasJumped: false,
+    airTimeSinceJump: 0,
+    demoRespawnTimer: 0,
+    handbrakeVal: 0,
+    lastBallHitTick: -1,
+  })),
   ball: { pos: v(s.ball.pos), vel: v(s.ball.vel), angVel: v(s.ball.angVel) },
-  pads: s.pads,
+  pads: s.pads.map((p) => ({ ...p, pos: { x: 0, y: 0, z: 0 }, cooldown: 0 })),
+  score: [0, 0],
+  tickCount: 0,
   kickoffPause: s.kickoffPause,
+  goalScored: false,
   matchEnded: s.matchEnded,
+  ballPrediction: () => new Float32Array(0),
 });
 const json = (path: string): unknown => JSON.parse(readFileSync(`${ROOT}${path}`, "utf8"));
 const far = (a: ArrayLike<number>, b: readonly number[], tolerance: number): number => b.findIndex((x, i) => !(Math.abs((a[i] ?? NaN) - x) <= tolerance));

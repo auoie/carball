@@ -40,12 +40,22 @@ export interface Parsed {
   readonly row: Controls8;
 }
 
-export type ActionParser = (logits: ArrayLike<number>, beta: number, random: () => number) => Parsed;
+/** `allowed`: a mask's rows (the others' logits pushed to DISABLED_LOGIT before the pick; none allowed: all) */
+export type ActionParser = (logits: ArrayLike<number>, beta: number, random: () => number, allowed?: readonly boolean[]) => Parsed;
+
+/** A masked-off row's logit (Wisp's model.py) */
+export const DISABLED_LOGIT = Math.fround(-1e10);
+
+/** The logits with the rows a mask doesn't allow pushed down (none allowed: all, as given) */
+export function maskLogits(logits: ArrayLike<number>, allowed: readonly boolean[] | undefined): ArrayLike<number> {
+  if (!allowed?.some((a) => a)) return logits;
+  return Float32Array.from({ length: logits.length }, (_, i) => (allowed[i] ? (logits[i] ?? DISABLED_LOGIT) : DISABLED_LOGIT));
+}
 
 /** lookup-v1: a row of the table */
 export function lookupParser(table: readonly Controls8[]): ActionParser {
-  return (logits, beta, random) => {
-    const pick = pickIndex(logits, beta, random(), 0, table.length);
+  return (logits, beta, random, allowed) => {
+    const pick = pickIndex(maskLogits(logits, allowed), beta, random(), 0, table.length);
     const row = table[pick];
     if (!row) throw new Error(`action ${String(pick)} outside its table of ${String(table.length)}`);
     return { pick, row };

@@ -22,6 +22,8 @@ export interface DriverParts {
   readonly onApply?: (row: Controls8, current: Controls8) => Controls8;
   /** The kickoff's step, last: its script's row while it runs, else null */
   readonly kickoff?: (view: BotView) => Controls8 | null;
+  /** First of all: scripted controls for a moment it doesn't play (manifest moments), the schedule held; else null */
+  readonly moment?: (view: BotView) => Controls8 | null;
 }
 
 /** The driver's state between calls (exposed for the vectors' comparison: `derived.counter`, `derived.updateAction`) */
@@ -38,6 +40,8 @@ export function tickSkipDriver(parts: DriverParts): BotBrain & { readonly state:
   return {
     state,
     async tick(view: BotView): Promise<BotControls> {
+      const held = parts.moment?.(view) ?? null;
+      if (held) return rowControls(held);
       state.counter++;
       parts.track?.(view);
       if (state.updateAction) {

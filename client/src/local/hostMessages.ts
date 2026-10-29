@@ -19,6 +19,8 @@ export interface LocalMatchSetup {
   readonly teamSize: number;
   readonly seed: number;
   readonly bots: readonly BotSlot[];
+  /** The player's name in it: their account's when signed in, else "Player" (RV-1186) */
+  readonly playerName: string;
 }
 
 export type ToHost =

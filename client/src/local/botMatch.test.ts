@@ -59,6 +59,7 @@ describe("Play vs Bots' setup", () => {
         { team: 0, name: "Nexto EZ 1", brain: "nexto", strength: 0.8 },
         { team: 0, name: "Nexto EZ 2", brain: "nexto", strength: 0.8 },
       ],
+      playerName: "Player",
     });
   });
 
@@ -66,10 +67,16 @@ describe("Play vs Bots' setup", () => {
     const store = memory();
     storeChoices({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("nexto", "ez"), pick("necto")] }, store);
     expect(storedChoices(store)).toEqual({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("nexto", "ez"), pick("necto")] });
-    const setup = botMatchSetup({ teamSize: 1, teammates: [], opponents: [pick("nexto", "ez")] }, LISTINGS, 0, 7);
+    const setup = botMatchSetup({ teamSize: 1, teammates: [], opponents: [pick("nexto", "ez")] }, LISTINGS, 0, 7, "Signed_In");
     storeBotMatch(setup, store);
     expect(readBotMatch(store)).toEqual(setup);
     expect(readBotMatch(store)).toEqual(setup);
+    // (the player's name: the account's as stored; a setup from before it, or one not a short string: "Player", RV-1186)
+    expect(readBotMatch(store)?.playerName).toBe("Signed_In");
+    for (const playerName of [undefined, 7, "", "x".repeat(33)]) {
+      store.setItem("carball.botMatch", JSON.stringify({ ...setup, playerName }));
+      expect(readBotMatch(store)?.playerName).toBe("Player");
+    }
     store.setItem("carball.botMatch", JSON.stringify({ ...setup, bots: [] }));
     expect(readBotMatch(store)).toBeNull();
     store.setItem("carball.botMatch", JSON.stringify({ ...setup, bots: [{ team: 1, name: "Nexto", brain: "nexto", strength: 3 }] }));

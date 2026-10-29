@@ -389,7 +389,9 @@ test("free play's goal in the garage's colour: an orange car's explosion orange,
   expect(errors).toEqual([]);
 });
 
-test("free play goals off (Gameplay): the ball stays in play in the net, looks as it does anywhere, no explosion, no replay, no reset", async ({ page }) => {
+test("free play goals off (Gameplay): the ball stays in play in the net, looks as it does anywhere, no explosion, no replay, no reset; back on, no goal till it's out (RV-1183)", async ({
+  page,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
@@ -415,6 +417,24 @@ test("free play goals off (Gameplay): the ball stays in play in the net, looks a
   await openSettings(page);
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
   await expect(page.locator('[data-setting="freePlayGoals"]')).not.toBeChecked();
+  // (back on with the ball resting in the net: no goal nobody shot, its look a goal's again; then a shot in scores)
+  await page.locator('[data-setting="freePlayGoals"]').click();
+  await expect(page.locator('[data-setting="freePlayGoals"]')).toBeChecked();
+  await closeMenus(page);
+  await page.waitForTimeout(1_000);
+  const colours = async (): Promise<number[]> =>
+    page.evaluate(() => [...(window as unknown as { carballFreeplay: { goalColours: () => readonly number[] } }).carballFreeplay.goalColours()]);
+  expect(await colours()).toEqual([0, 0]);
+  expect((await ball()).pos.y).toBeGreaterThan(5120);
+  expect(await page.evaluate(() => (window as unknown as { carballFreeplay: { goalLineOn: () => boolean } }).carballFreeplay.goalLineOn())).toBe(true);
+  await page.evaluate(() => {
+    (window as unknown as { carballFreeplay: { place: (car: object, ball: object, vel: object) => void } }).carballFreeplay.place(
+      { x: 3000, y: 0, yaw: 0 },
+      { x: 0, y: 3500, z: 200 },
+      { x: 0, y: 2500, z: 0 },
+    );
+  });
+  await expect.poll(colours, { timeout: 10_000 }).toEqual([1, 0]);
   expect(errors).toEqual([]);
 });
 

@@ -13,6 +13,7 @@
 #include "NetState.h"
 #include "RocketSim.h"
 
+#include <algorithm>
 #include <map>
 
 #include <emscripten/bind.h>
@@ -34,6 +35,9 @@ namespace Layout {
 		BALL_EXPLODED = 18 /* scored: frozen and not colliding until a reset (the game's Ball.Explode) */,
 		BALL_SPAWN_COUNT = 19 /* placements by a reset (wraps at 65536): a correction that changes it is a new ball */,
 		BALL_SIZE = 20;
+
+	// A ball prediction's slice (predictBall): position, velocity
+	constexpr int PREDICT_POS = 0, PREDICT_VEL = 3, PREDICT_SIZE = 6;
 
 	// Car: as the ball, then boost (0-100) and flags (0/1)
 	constexpr int
@@ -169,7 +173,10 @@ public:
 	// touching this one)
 	Sim* Sibling() const { return new Sim(); }
 
-	~Sim() { delete _arena; }
+	~Sim() {
+		delete _arena;
+		delete _predictor;
+	}
 
 	int AddCar(int team, int carType) {
 		return (int)_arena->AddCar(team ? Team::ORANGE : Team::BLUE, *CarConfigByIndex(carType))->id;
@@ -314,6 +321,27 @@ public:
 		s.angVel = Vec();
 		s.isExploded = true;
 		_arena->ball->SetState(s);
+	}
+
+	// The ball's path from now with nothing else in the arena and no goal scored (a bot's ball prediction, as RLBot's:
+	// the ball alone, through the goals' nets): `ticks` slices of PREDICT_SIZE floats, slice i the ball after i + 1
+	// ticks, on an arena of its own (made the first time) that this one never sees
+	Float32ArrayVal PredictBall(int ticks) {
+		if (!_predictor) {
+			_predictor = Arena::Create(GameMode::SOCCAR);
+			MutatorConfig config = _predictor->GetMutatorConfig();
+			config.goalBaseThresholdY = 1e9f;
+			_predictor->SetMutatorConfig(config);
+		}
+		_predictor->ball->SetState(_arena->ball->GetState());
+		_floats.assign((size_t)std::max(ticks, 0) * Layout::PREDICT_SIZE, 0);
+		for (int i = 0; i < ticks; i++) {
+			_predictor->Step(1);
+			const RocketSim::BallState s = _predictor->ball->GetState();
+			WriteVec(&_floats[(size_t)i * Layout::PREDICT_SIZE + Layout::PREDICT_POS], s.pos);
+			WriteVec(&_floats[(size_t)i * Layout::PREDICT_SIZE + Layout::PREDICT_VEL], s.vel);
+		}
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
 	Float32ArrayVal BallState() {
@@ -588,6 +616,7 @@ public:
 
 private:
 	Arena* _arena;
+	Arena* _predictor = nullptr; // (PredictBall's: the ball alone)
 	std::vector<float> _floats;
 	std::vector<int> _ints;
 	std::vector<int> _events;
@@ -649,6 +678,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("hideBall", &Sim::HideBall)
 		.function("ballState", &Sim::BallState)
 		.function("setBallState", &Sim::SetBallState)
+		.function("predictBall", &Sim::PredictBall)
 		.function("rayToStatic", &Sim::RayToStatic)
 		.function("carState", &Sim::CarState)
 		.function("setCarState", &Sim::SetCarState)
@@ -668,6 +698,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 
 #define LAYOUT(name) constant(#name, name)
 	LAYOUT(BALL_POS); LAYOUT(BALL_VEL); LAYOUT(BALL_ANG_VEL); LAYOUT(BALL_ROT); LAYOUT(BALL_EXPLODED); LAYOUT(BALL_SPAWN_COUNT); LAYOUT(BALL_SIZE);
+	LAYOUT(PREDICT_POS); LAYOUT(PREDICT_VEL); LAYOUT(PREDICT_SIZE);
 	LAYOUT(CAR_POS); LAYOUT(CAR_VEL); LAYOUT(CAR_ANG_VEL); LAYOUT(CAR_ROT); LAYOUT(CAR_BOOST);
 	LAYOUT(CAR_ON_GROUND); LAYOUT(CAR_HAS_JUMPED); LAYOUT(CAR_HAS_DOUBLE_JUMPED); LAYOUT(CAR_HAS_FLIPPED);
 	LAYOUT(CAR_IS_FLIPPING); LAYOUT(CAR_IS_JUMPING); LAYOUT(CAR_SUPERSONIC); LAYOUT(CAR_BOOSTING); LAYOUT(CAR_DEMOED);

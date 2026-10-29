@@ -237,3 +237,119 @@ The models saw 733 observations per bot (NX1's 133 plus 600 random, over 1v1/2v2
 
 Our PyTorch module matches Necto's original exactly (0.0). **This proves the networks only;** the observation builders are
 reimplemented from the text and weren't run against the original Python. Results are in packages/<bot>/equivalence.json.
+
+## 5. Wisp v2 port (WISP1, 2026-10-29)
+Wisp v2 replaces Necto and Nexto (CC BY-NC-SA) for the monetised game (decisions 2026-10-24). This section covers its source,
+licence, port, parity checks and strength.
+
+### Source and licence
+- **Repository:** https://github.com/NicEastvillage/RLBot-Wisp-v2-py at `58d4ab18fd0c92529b5ae6582ecf1713a6b1887a`
+  (2026-05-10, "Prepare Wisp v2-75B for release"). The tarball's sha256 is `7ebc0a7a…` (12,831,015 bytes).
+- **Model archives:**
+  - `src/models/SHARED_HEAD.lt`: sha256 `3f7b6b36…`;
+  - `src/models/POLICY.lt`: sha256 `1bd600a1…`.
+- **Licence:** MIT, (c) 2026 Nicolaj 'Eastvillage' Jensen, in its LICENSE file. That file stores ©, “ and ” as U+FFFD; the
+  shipped `client/bots/wisp/LICENSE.txt` writes them back, with the text otherwise unchanged.
+- **The README's condition, recorded here** (it isn't part of LICENSE, and names the game, so it isn't shipped): "MIT
+  License with the following exception: This software and its derivatives may not be used to cheat or in other ways break
+  Rocket League's terms of service." Carball's bots play only inside Carball's own offline matches, so the condition is
+  kept.
+- **The README's credits:** made with GigaLearn and RLBot; it thanks Redd, Aether, FlamingFury, Zealan and the RLBot/RLGym
+  community.
+- **Not in the shipped files:** the repository URL holds "RLBot", which the shipped-names guard refuses. bot.json and
+  NOTICES.txt credit the author and link github.com/NicEastvillage instead.
+
+### Model
+The archives hold parameters only: their TorchScript code defines no `forward`. Wisp's `model.py` therefore rebuilds the
+network by rule: two parameters with a 2-D weight make a Linear, a 1-D weight a LayerNorm (torch's default epsilon 1e-5),
+and none the config's activation, ReLU.
+- **Shared head:** 432 → 1024 → 1024, each Linear + LayerNorm + ReLU.
+- **Policy:** 1024 → 1024 → 512 → 512 → 128, the same blocks, then Linear 128 → 90.
+- **Size:** 3,415,770 parameters.
+- **Conversion** (`scripts/wisp_package.py`):
+  - the weights are read by a whitelisting unpickler (module stand-ins, `_rebuild_tensor_v2`, FloatStorage, OrderedDict;
+    every other global refused), with no torch and nothing of theirs run;
+  - written as ONNX opset 17 (Gemm, LayerNormalization, Relu), float32, 13.7 MB;
+  - loaded only when a bot match starts, one session shared by a match's Wisp bots.
+- **Not quantised:** float16 weights picked the same action on only 99.75% of 2,000 random observations.
+
+### Port (client/src/bots/wisp.ts)
+- **Observation builder `wisp-v1`, 432 floats:**
+  - the ball (16): position, velocity, angular velocity, both goals' offsets, the kickoff flag;
+  - its predicted path at 22, 66, 198 and 594 ticks (48);
+  - the 34 pads (1 when up, else 1 / (1 + cooldown)) and the 5 nearest to 420 uu ahead of the car (10);
+  - the previous action (8);
+  - the distances to the back, side and corner walls, and the landing normal from an SDF of the arena (6);
+  - the score difference, clipped to ±1; the turn radius; whether the ball was touched; the handbrake (4);
+  - 51 floats for the bot, 2 teammates and 3 opponents (empty seats zero; teammates and opponents each shuffled).
+- **Frames:** orange sees the field turned, and the bot always sees itself at +x (x mirrored when it isn't).
+- **Precision:** vectors in float32 as its numpy computes them, scalars in float64.
+- **Quirks kept as deployed:**
+  - for orange, the goals are named by their world side in the ball rows;
+  - the dodge-relative frame's right/up rows stay at identity (the original sets copies of them);
+  - the goal box of its SDF is shrunk by its rounding;
+  - the post check mixes the car's world position with the turned ball;
+  - the ETA's boost time isn't added after the boost runs out;
+  - the x-mirror pad order sorts by y·10000 − x;
+  - the air mask leaves out the first aerial row;
+  - the jump rows are re-allowed after the no-boost removal.
+- **Action table** (`actions.json`, lookup-v1): 90 rows, 24 ground then 66 air, following `action_parser.py`.
+  - The mask `wisp-v1` and the mirror `wisp-x-v1` (steer, yaw and roll negated back) are applied at each decision.
+  - The pick is the argmax of the masked logits (-1e10 for disallowed rows; none allowed means all).
+- **Timing:** tick skip 8, `applyAtCounter` 7. The action takes effect 7 ticks after its decision, as its config's
+  ACTION_DELAY intends; its RLBot loop applies one frame earlier to make up RLBot's own delay.
+- **Moments `wisp-celebrate-v1`** (bot.py `celebrate`): after a goal (post-goal, replay) and at the match's end, scripted
+  controls; the schedule is held meanwhile.
+- **State:** the engine's own fields, as its training (GigaLearn on RocketSim) had them:
+  - handbrakeVal, airTimeSinceJump, isJumping;
+  - the pads' cooldowns;
+  - "ball touched this step" = the car's last ball hit within the last 8 ticks.
+  
+  Its RLBot adapter approximates or loses these: a 1-tick touch window, a handbrake ramp of ±5/s, and an `is_jumping`
+  compared against the enum class.
+- **Ball prediction:** the engine's new `predictBall` (WASM bindings only; web deploy). It simulates the ball alone on its
+  own arena with goal scoring off, 720 slices of 1 tick (as RLBot's: slice i is the ball after i + 1 ticks), worked out
+  once a tick for all bots.
+- **Score:** from the local host's new `host_score` export.
+
+### Parity (2026-10-29)
+**Recording.** `client/src/bots/wispRecord.test.ts` (WISP_RECORD) recorded 5,412 decisions from 1v1 60 s, 2v2 30 s and
+3v3 20 s of Wisp against itself in the local host. Each decision keeps its state, the shuffles' draws, the previous action,
+the observation, the logits (onnxruntime-web), the mask and the pick.
+
+**Model** (`scripts/wisp_parity.py`). The reference is the network rebuilt as `model.py` does, in eager PyTorch, with the
+weights from our unpickler, and ModelSet.get_action's deterministic pick.
+
+| Measure | Result |
+|---|---|
+| Same pick | 5,412 / 5,412 (1v1 1,802; 2v2 1,804; 3v3 1,806) |
+| Max / mean logit difference | 5.7e-5 / 1.6e-6 |
+| Near-ties (top-2 gap under 1e-4) | 11, all the same pick |
+
+The original TorchScript wasn't loaded: it holds no code beyond the parameters.
+
+**Observation builder.** Wisp's own `obs_builder.py` and `action_parser.py` (with `eta.py`, `utils.py`, `arena_sdf.py`
+and `backend/`) ran on the recorded states.
+- **How it ran:** once, at the user's direct authorisation; `bwrap --unshare-all --die-with-parent`, no home directory;
+  /usr, the uv Python, a throwaway venv (numpy 1.26.4, torch), the source, stub modules for the framework's flatbuffer
+  types and numba's jit, and the recording read-only; one writable output folder. Harness:
+  `.agents/…/wisp/scripts/obs_reference.{py,sh}`.
+- **Every feature except the ETA:** at most 2.4e-7 from ours. Masks equal 5,412 / 5,412; mirrored rows 5,412 / 5,412.
+- **The ETA** (each player's 49th float) differs in 187 of the bot's own and 597 of the others'.
+  - The cause is a knife edge in `eta.py`: after the boost phase the speed lands exactly on the 1410 uu/s throttle cap.
+    V8's and glibc's `exp` differ in the last bit (1409.9999999999998 against 1410.0), which sends the two down different
+    branches (2.58 s against 2.18 s).
+  - The ETA cache feeds the next decision, so a flip lasts a few decisions.
+  - The original itself depends on its platform here (numba calls the platform's libm).
+  - **End to end** (its own observation and mask through the reference): the same pick in 5,380 / 5,412 (99.4%).
+
+### Strength (2026-10-29)
+Full matches in the local host (`wispRecord.test.ts`, WISP_MATCHES), Wisp's goals first:
+
+| Opponent | 1v1 (Wisp blue / orange) | 3v3 (Wisp blue / orange) |
+|---|---|---|
+| Built-in chaser | 22–0 / 22–0 | 31–0 / 19–0 |
+| Nexto | 4–5 / 5–4 | 1–4 / 1–7 |
+| Necto | 10–0 / 14–0 | 7–0 / 2–1 |
+
+This is in line with the ChadGPT chart: Wisp 1109 against Nexto 1512 in 3v3, with 1v1 even here.

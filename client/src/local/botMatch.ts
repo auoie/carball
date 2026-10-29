@@ -59,8 +59,9 @@ export function fitChoices(choices: BotChoices | null, listings: readonly BotLis
 }
 
 /** The match's setup: the teammates on the player's team, the opponents on the other, each named after its bot (its
- *  level's name after it below full; a number after a name used twice), at its level's strength */
-export function botMatchSetup(choices: BotChoices, listings: readonly BotListing[], team: Team, seed: number): LocalMatchSetup {
+ *  level's name after it below full; a number after a name used twice), at its level's strength; the player named
+ *  `playerName` (their account's, else "Player") */
+export function botMatchSetup(choices: BotChoices, listings: readonly BotListing[], team: Team, seed: number, playerName = PLAYER_NAME): LocalMatchSetup {
   const picks = [...choices.teammates, ...choices.opponents];
   const level = (pick: BotPick): { readonly name: string; readonly strength: number } | undefined =>
     listings.find((l) => l.id === pick.bot)?.levels.find((v) => v.id === pick.level);
@@ -82,8 +83,11 @@ export function botMatchSetup(choices: BotChoices, listings: readonly BotListing
       ...(strength < 1 ? { strength } : {}),
     };
   });
-  return { teamSize: choices.teamSize, seed, bots };
+  return { teamSize: choices.teamSize, seed, bots, playerName };
 }
+
+/** The player's name in a bot match when not signed in */
+export const PLAYER_NAME = "Player";
 
 const isPick = (v: unknown): v is BotPick =>
   typeof v === "object" && v !== null && "bot" in v && typeof v.bot === "string" && "level" in v && typeof v.level === "string";
@@ -127,7 +131,7 @@ export function storeBotMatch(setup: LocalMatchSetup, storage: Store | null = se
 /** The match page's setup (kept: a reload plays it again), checked; null for none or a broken one */
 export function readBotMatch(storage: Store | null = session()): LocalMatchSetup | null {
   try {
-    const v = JSON.parse(storage?.getItem(MATCH_KEY) ?? "null") as { teamSize?: unknown; seed?: unknown; bots?: unknown } | null;
+    const v = JSON.parse(storage?.getItem(MATCH_KEY) ?? "null") as { teamSize?: unknown; seed?: unknown; bots?: unknown; playerName?: unknown } | null;
     if (!v || (v.teamSize !== 1 && v.teamSize !== 2 && v.teamSize !== 3) || typeof v.seed !== "number" || !Array.isArray(v.bots)) return null;
     const slots = v.bots as readonly Partial<Record<keyof BotSlot, unknown>>[];
     const strength = (s: unknown): boolean => s === undefined || (typeof s === "number" && s >= 0 && s <= 1);
@@ -137,7 +141,9 @@ export function readBotMatch(storage: Store | null = session()): LocalMatchSetup
         (b.team === 0 || b.team === 1) && typeof b.name === "string" && typeof b.brain === "string" && BOT_ID.test(b.brain) && strength(b.strength),
     );
     if (bots.length !== v.teamSize * 2 - 1) return null;
-    return { teamSize: v.teamSize, seed: v.seed, bots };
+    // (the server tidies a name it's given; one that isn't a short string: "Player")
+    const playerName = typeof v.playerName === "string" && v.playerName.length > 0 && v.playerName.length <= 32 ? v.playerName : PLAYER_NAME;
+    return { teamSize: v.teamSize, seed: v.seed, bots, playerName };
   } catch {
     return null;
   }

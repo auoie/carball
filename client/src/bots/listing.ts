@@ -3,7 +3,7 @@
 // parser, schedule, kickoff) is one of ours, with its difficulty levels. The page reads this alone; a bot's brain (its
 // policy, onnxruntime) is made in the match's worker (bots/registry.ts). No package to play: the bots' mode is hidden.
 import { type BotManifest, parseManifest } from "./manifest";
-import { KICKOFFS, OBSERVATIONS } from "./observations";
+import { KICKOFFS, MASKS, MIRRORS, MOMENTS, OBSERVATIONS } from "./observations";
 
 /** Where the packages are served (the dev server's /bots/; a build's, if it has them) */
 export const BOTS_BASE = `${import.meta.env.BASE_URL}bots/`;
@@ -56,6 +56,10 @@ export function unplayable(manifest: BotManifest): string | null {
   if (manifest.policy.state !== undefined && manifest.policy.state !== null) return "its policy's state isn't written yet";
   if (!(manifest.observation.builder in OBSERVATIONS)) return `its observation builder ${manifest.observation.builder} isn't written yet`;
   if (!PARSERS.has(manifest.action.parser)) return `its action parser ${manifest.action.parser} isn't written yet`;
+  const { action } = manifest;
+  if (action.parser === "lookup-v1" && action.mask && !(action.mask.rule in MASKS)) return `its action mask ${action.mask.rule} isn't written yet`;
+  if (action.parser === "lookup-v1" && action.mirror !== undefined && !(action.mirror in MIRRORS)) return `its mirror ${action.mirror} isn't written yet`;
+  if (manifest.moments !== undefined && !(manifest.moments in MOMENTS)) return `its moments ${manifest.moments} aren't written yet`;
   if (manifest.timing && !SCHEDULES.has(manifest.timing.schedule)) return `its timing ${manifest.timing.schedule} isn't written yet`;
   if (manifest.kickoff && !(manifest.kickoff.taker in KICKOFFS)) return `its kickoff ${manifest.kickoff.taker} isn't written yet`;
   return null;

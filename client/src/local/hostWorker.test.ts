@@ -43,7 +43,12 @@ const outs = (): number => posted.filter((m) => m.type === "out").length;
 describe("the match's worker", () => {
   it("welcomes the page's player, and after its leave drops the host: nothing more sent, a new hello unanswered", async () => {
     await import("./hostWorker");
-    send({ type: "open", setup: { teamSize: 1, seed: 3, bots: [{ team: 1, name: "Chaser", brain: "chaser" }] }, meshes: arenaMeshes(), botsBase: "/bots/" });
+    send({
+      type: "open",
+      setup: { teamSize: 1, seed: 3, bots: [{ team: 1, name: "Chaser", brain: "chaser" }], playerName: "Player" },
+      meshes: arenaMeshes(),
+      botsBase: "/bots/",
+    });
     await vi.waitFor(() => {
       expect(posted.some((m) => m.type === "ready")).toBe(true);
     }, 60_000);

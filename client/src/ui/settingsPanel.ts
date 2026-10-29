@@ -1107,7 +1107,7 @@ export class SettingsPanel {
 }
 
 /** A settings tab's every setting back to its default (the pad's X Default, "Reset this page to its defaults?": MENU-14,
- *  RV-474), the rest kept; the player's name kept on the chat's */
+ *  RV-474), the rest kept */
 export function pageDefaults(tab: Tab, s: Settings): Settings {
   const d = DEFAULT_SETTINGS;
   const options = (keys: readonly (keyof Options)[]): Options => ({ ...s.options, ...Object.fromEntries(keys.map((k) => [k, d.options[k]])) });

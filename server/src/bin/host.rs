@@ -284,6 +284,20 @@ pub extern "C" fn host_phase(id: u32) -> i32 {
     with(|h| h.matches.game_of(id).map(|g| g.phase() as i32)).flatten().unwrap_or(-1)
 }
 
+/// A team's goals in a player's match (0 blue, 1 orange), or -1 (no such player or team: the bots' score difference)
+#[unsafe(no_mangle)]
+pub extern "C" fn host_score(id: u32, team: u32) -> i32 {
+    let id = PlayerId::from(id);
+    let team = usize::try_from(team).ok();
+    with(|h| {
+        h.matches
+            .game_of(id)
+            .and_then(|g| team.and_then(|t| g.score.get(t)).map(|&s| i32::try_from(s).unwrap_or(i32::MAX)))
+    })
+    .flatten()
+    .unwrap_or(-1)
+}
+
 /// One of a player's input buffer counters (0 consumed, 1 never consumed, 2 over, 3 under, 4 refill skips, 5 duplicates,
 /// 6 late, 7 trimmed: the client's network tests read them, RV-1034; i32::MAX at most), or -1 (no such player or counter)
 #[unsafe(no_mangle)]

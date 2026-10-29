@@ -118,6 +118,10 @@ export interface CarState extends BodyState {
   readonly wheelNormals: readonly [Vec3, Vec3, Vec3, Vec3];
   /** Seconds until a demolished car respawns */
   readonly demoRespawnTimer: number;
+  /** How far the handbrake is on, 0 to 1 (the engine's handbrakeVal: it rises while held, falls after) */
+  readonly handbrakeVal: number;
+  /** The tick count when it last touched the ball (the engine's ballHitInfo), -1: never */
+  readonly lastBallHitTick: number;
   readonly spawnSelection: SpawnSelection;
   /** Landings on the ball or a car that gave the jump back (wraps at 65536): a change is a flip reset (the game's
    *  DodgesRefreshedCounter, which drives its indicator) */
@@ -394,6 +398,19 @@ export class World {
     return state;
   }
 
+  /** The ball's path from now with nothing else in the arena and no goal scored (a bot's ball prediction): `ticks`
+   *  slices, slice i the ball after i + 1 ticks, PREDICT_SIZE floats each (PREDICT_POS, PREDICT_VEL), simulated on an
+   *  arena of the engine's own (this world untouched) */
+  predictBall(ticks: number): Float32Array {
+    return this.#sim.predictBall(ticks);
+  }
+
+  /** Where a ball prediction's slice keeps its position and velocity, and its size (predictBall) */
+  get predictLayout(): { readonly pos: number; readonly vel: number; readonly size: number } {
+    const m = this.#m;
+    return { pos: m.PREDICT_POS, vel: m.PREDICT_VEL, size: m.PREDICT_SIZE };
+  }
+
   /** Placements of the ball by a reset or a state set (see CarState.spawnCount) */
   ballSpawnCount(): number {
     return at(this.#sim.ballState(), this.#m.BALL_SPAWN_COUNT);
@@ -484,6 +501,8 @@ export class World {
         readVec(a, m.CAR_WHEEL_NORMALS + 9),
       ],
       demoRespawnTimer: at(a, m.CAR_DEMO_RESPAWN_TIMER),
+      handbrakeVal: at(a, m.CAR_HANDBRAKE),
+      lastBallHitTick: at(a, m.CAR_LAST_BALL_HIT_TICK),
       spawnSelection: {
         side: SPAWN_SIDES[at(a, m.CAR_DEMO_SPAWN_SIDE)] ?? null,
         index: at(a, m.CAR_DEMO_SPAWN_INDEX),

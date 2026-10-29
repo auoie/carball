@@ -1,0 +1,133 @@
+{
+ "format": 1,
+ "id": "wisp",
+ "name": "Wisp",
+ "version": "v2-75B (58d4ab18; POLICY.lt sha256 1bd600a1, SHARED_HEAD.lt sha256 3f7b6b36)",
+ "authors": "Nicolaj 'Eastvillage' Jensen",
+ "licence": "MIT",
+ "licenceSpdx": "MIT",
+ "licenceFile": "LICENSE.txt",
+ "credit": "Wisp v2 by Nicolaj 'Eastvillage' Jensen (github.com/NicEastvillage), MIT. Its network converted to ONNX with its weights unchanged; its observation and actions re-implemented. No warranty.",
+ "source": "https://github.com/NicEastvillage",
+ "sourceCommit": "58d4ab18fd0c92529b5ae6582ecf1713a6b1887a",
+ "sourceFiles": [
+  {
+   "path": "src/models/SHARED_HEAD.lt",
+   "bytes": 5995907,
+   "sha256": "3f7b6b363a72d7ceaba3cdb58bc13e1ae95e07b041b5e94a326c7045bebd7e42"
+  },
+  {
+   "path": "src/models/POLICY.lt",
+   "bytes": 7689613,
+   "sha256": "1bd600a15f43106645de84b42379fe9ae404ecfb509dc21a2e309480ea17ebf7"
+  },
+  {
+   "path": "src/obs_builder.py",
+   "bytes": 7569,
+   "sha256": "99b282b3c7224a2095898ba452f20d884286c027216fb31ee35cb5383a0b5194"
+  },
+  {
+   "path": "src/eta.py",
+   "bytes": 4208,
+   "sha256": "af1a10d107d49fa272a6d0a0c2ef8997835ec8e041d62867ec66298e8dbd3935"
+  },
+  {
+   "path": "src/utils.py",
+   "bytes": 4317,
+   "sha256": "615f54209d08399da92b9bbb069c374adf45036e8f67d67f1a2cdb40da111fe5"
+  },
+  {
+   "path": "src/arena_sdf.py",
+   "bytes": 2750,
+   "sha256": "5a1d58b36b93a8bbc8f4c597b04b1656886bb6af017f0a173dc46d3198892b35"
+  },
+  {
+   "path": "src/action_parser.py",
+   "bytes": 4578,
+   "sha256": "3adbe95bd32168fffc963d971a7f281b751f7e7ebc1f389f014d5ddcbd8aae9d"
+  },
+  {
+   "path": "src/bot.py",
+   "bytes": 7938,
+   "sha256": "3b8d0418ecfe71c6077d8b0ab6d96724adf1fad543f7ab8047bde7374a182d74"
+  },
+  {
+   "path": "src/config.py",
+   "bytes": 753,
+   "sha256": "f9c3691862a84981a04001d1127c9497cdde0a7c1c80bd11cfb36fab50c96283"
+  },
+  {
+   "path": "src/backend/model.py",
+   "bytes": 7228,
+   "sha256": "12eb41afd180e05883e979fe7793d32a351ed279ce51d18eeb497f17266dc589"
+  },
+  {
+   "path": "src/backend/gamestate/common_values.py",
+   "bytes": 1759,
+   "sha256": "1abd3e6f97892f48e5841f2590686d06dc1b189a7172c200cec854517206b2cf"
+  }
+ ],
+ "policy": {
+  "opset": 17,
+  "file": "policy.onnx",
+  "sha256": "62dbb6da317def0de4419cef2a67a481d842a0933fd4fa7f44c77fc0e032c508",
+  "parameters": 3415770,
+  "inputs": [
+   {
+    "name": "obs",
+    "shape": [
+     1,
+     432
+    ],
+    "dtype": "float32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "logits",
+    "shape": [
+     1,
+     90
+    ],
+    "dtype": "float32"
+   }
+  ],
+  "pick": "argmax",
+  "state": null
+ },
+ "observation": {
+  "builder": "wisp-v1",
+  "size": 432
+ },
+ "action": {
+  "parser": "lookup-v1",
+  "table": "actions.json",
+  "rows": 90,
+  "columns": [
+   "throttle",
+   "steer",
+   "pitch",
+   "yaw",
+   "roll",
+   "jump",
+   "boost",
+   "handbrake"
+  ],
+  "mask": {
+   "rule": "wisp-v1",
+   "groundRows": 24
+  },
+  "mirror": "wisp-x-v1"
+ },
+ "tickSkip": 8,
+ "timing": {
+  "schedule": "tick-skip-v1",
+  "applyAtCounter": 7
+ },
+ "teamSizes": [
+  1,
+  2,
+  3
+ ],
+ "moments": "wisp-celebrate-v1"
+}

@@ -36,6 +36,8 @@ function car(overrides: Partial<CarState> = {}): CarState {
     groundNormal: UP,
     wheelNormals: [UP, UP, UP, UP],
     demoRespawnTimer: 0,
+    handbrakeVal: 0,
+    lastBallHitTick: -1,
     spawnSelection: { side: null, index: 0, locked: null },
     flipResets: 0,
     spawnCount: 0,

@@ -4,7 +4,7 @@
 // skip, its tracker of every tick, bots/driver.ts). Brains: a bot package's policy (bots/), or the built-in ball chaser
 // (the tests', and a stand-in while no package is there).
 import type { World } from "../engine/world";
-import type { Vec3 } from "../math/vec";
+import type { Rot3, Vec3 } from "../math/vec";
 import { PROTOCOL_VERSION, encodeControl } from "../net/protocol";
 import type { BotControls, LocalHost } from "./host";
 import type { BotSlot } from "./hostMessages";
@@ -14,24 +14,42 @@ export interface BotCar {
   readonly pos: Vec3;
   readonly vel: Vec3;
   readonly angVel: Vec3;
-  readonly rot: { readonly forward: Vec3; readonly up: Vec3 };
+  readonly rot: Rot3;
   readonly team: 0 | 1;
   readonly boost: number;
   readonly onGround: boolean;
+  readonly jumping: boolean;
+  readonly hasJumped: boolean;
   readonly doubleJumped: boolean;
   readonly hasFlipped: boolean;
+  readonly airTimeSinceJump: number;
   readonly demoed: boolean;
+  readonly demoRespawnTimer: number;
+  readonly handbrakeVal: number;
+  /** The arena's tick count when it last touched the ball, -1: never (BotState.tickCount's clock) */
+  readonly lastBallHitTick: number;
 }
 
+/** A ball prediction's slices (BotState.ballPrediction): BALL_PREDICTION_TICKS of them, slice i the ball after i + 1
+ *  ticks, BALL_SLICE floats each (position, then velocity): 6 s at 120 Hz, as the bots' own framework gives them */
+export const BALL_PREDICTION_TICKS = 720;
+export const BALL_SLICE = 6;
+
 /** The match after a tick as the bots see it: every car in index order (the match's, by car id), the ball, the pads in
- *  our arena's order; the kickoff's pause (from "go" until the ball's first touch: the packages' SPEC §6) and the match's
- *  end (the winner shown, the podium, the end screen) */
+ *  our arena's order; the teams' goals (blue, orange) and the arena's tick count; the kickoff's pause (from "go" until the
+ *  ball's first touch: the packages' SPEC §6), a goal's aftermath (its explosion and replay) and the match's end (the
+ *  winner shown, the podium, the end screen); the ball's path from now (alone in the arena, no goal scored: worked out
+ *  once a tick, the first time a bot asks) */
 export interface BotState {
   readonly cars: readonly BotCar[];
   readonly ball: { readonly pos: Vec3; readonly vel: Vec3; readonly angVel: Vec3 };
-  readonly pads: readonly { readonly active: boolean }[];
+  readonly pads: readonly { readonly pos: Vec3; readonly active: boolean; readonly cooldown: number }[];
+  readonly score: readonly [number, number];
+  readonly tickCount: number;
   readonly kickoffPause: boolean;
+  readonly goalScored: boolean;
   readonly matchEnded: boolean;
+  readonly ballPrediction: () => Float32Array;
 }
 
 /** What a brain is given after a tick: the state, its own car's index in it, the tick (its calls from 0) */
@@ -48,24 +66,44 @@ export interface BotBrain {
 
 /** The match's phases (protocol's Phase numbers) a brain reads */
 const PHASE_ACTIVE = 1;
+const GOAL_PHASES: ReadonlySet<number> = new Set([2, 5]);
 const ENDED_PHASES: ReadonlySet<number> = new Set([4, 7, 8]);
 
 /** The match's moments a brain reads, from its phase and the ball: the kickoff's pause while play is on and the ball
- *  hasn't been touched (it rests on its spot, still, until then; not the countdown's), the match's end (its pre-podium,
- *  podium and after) */
+ *  hasn't been touched (it rests on its spot, still, until then; not the countdown's), a goal's aftermath (post-goal and
+ *  its replay), the match's end (its pre-podium, podium and after) */
 export function matchMoments(
   phase: number | null,
   ball: Pick<BotState["ball"], "pos" | "vel">,
-): { readonly kickoffPause: boolean; readonly matchEnded: boolean } {
+): { readonly kickoffPause: boolean; readonly goalScored: boolean; readonly matchEnded: boolean } {
   const untouched = ball.pos.x === 0 && ball.pos.y === 0 && ball.vel.x === 0 && ball.vel.y === 0 && ball.vel.z === 0;
-  return { kickoffPause: phase === PHASE_ACTIVE && untouched, matchEnded: phase !== null && ENDED_PHASES.has(phase) };
+  return {
+    kickoffPause: phase === PHASE_ACTIVE && untouched,
+    goalScored: phase !== null && GOAL_PHASES.has(phase),
+    matchEnded: phase !== null && ENDED_PHASES.has(phase),
+  };
 }
 
-/** The bots' state from the world after a tick, and the match's phase (matchMoments) */
-export function botState(world: World, phase: number | null): { readonly state: BotState; readonly ids: readonly number[] } {
+/** The bots' state from the world after a tick, the match's phase (matchMoments) and score */
+export function botState(
+  world: World,
+  phase: number | null,
+  score: readonly [number, number] = [0, 0],
+): { readonly state: BotState; readonly ids: readonly number[] } {
   const ids = world.carIds().sort((a, b) => a - b);
   const ball = world.ball();
-  const state: BotState = { cars: ids.map((id) => world.car(id)), ball, pads: world.boostPads(), ...matchMoments(phase, ball) };
+  const layout = world.predictLayout;
+  if (layout.pos !== 0 || layout.vel !== 3 || layout.size !== BALL_SLICE) throw new Error("the engine's ball prediction isn't laid out as BALL_SLICE");
+  let path: Float32Array | null = null;
+  const state: BotState = {
+    cars: ids.map((id) => world.car(id)),
+    ball,
+    pads: world.boostPads(),
+    score,
+    tickCount: world.tick,
+    ...matchMoments(phase, ball),
+    ballPrediction: () => (path ??= world.predictBall(BALL_PREDICTION_TICKS)),
+  };
   return { state, ids };
 }
 
@@ -158,7 +196,7 @@ export class LocalBots {
     const snapshot = host.state(first.id);
     if (snapshot.byteLength === 0) return;
     this.#world.loadState(snapshot);
-    const { state, ids } = botState(this.#world, host.phase(first.id));
+    const { state, ids } = botState(this.#world, host.phase(first.id), host.score(first.id) ?? [0, 0]);
     if (state.cars.length < this.#cars) return;
     const tick = this.#tick++;
     for (const bot of this.#bots) {

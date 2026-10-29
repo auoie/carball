@@ -285,7 +285,8 @@ async function main(): Promise<void> {
       const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
       address = await devServerAddress(host, Number(port));
     }
-    const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
+    // (a bot match's player named as its setup has it: their account's, else "Player", RV-1186)
+    const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings, storedCar(), botMatch?.playerName ?? ""), match);
     // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
     const opened = claim?.rejoin ? openClaim(open) : open();
     opened.catch(claimFailed);
@@ -952,7 +953,7 @@ async function main(): Promise<void> {
         if (!__CARBALL_BOTS__) return;
         const go = (): void => {
           void import("./local/botMatch").then(({ botMatchSetup, storeBotMatch }) => {
-            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff)));
+            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff), account?.name));
             location.assign(pageUrl("bots", location));
           });
         };

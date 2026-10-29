@@ -133,6 +133,13 @@ export class LocalHost {
     return phase < 0 ? null : phase;
   }
 
+  /** The goals of each team (blue, orange) in a player's match, or null */
+  score(id: number): readonly [number, number] | null {
+    const blue = this.#m._host_score(id, 0);
+    const orange = this.#m._host_score(id, 1);
+    return blue < 0 || orange < 0 ? null : [blue, orange];
+  }
+
   /** A player's input buffer counters on the host (the network tests'), or null for no such player */
   inputStats(id: number): InputStats | null {
     const read = (which: number): number => this.#m._host_input_stat(id, which);

@@ -194,6 +194,8 @@ const car = (pos: Vec3, vel: Vec3, extra: Partial<CarState> = {}): CarState => (
   groundNormal: vec3(0, 0, 1),
   wheelNormals: [vec3(0, 0, 1), vec3(0, 0, 1), vec3(0, 0, 1), vec3(0, 0, 1)],
   demoRespawnTimer: 0,
+  handbrakeVal: 0,
+  lastBallHitTick: -1,
   spawnSelection: { side: null, index: 0, locked: null },
   flipResets: 0,
   spawnCount: 0,

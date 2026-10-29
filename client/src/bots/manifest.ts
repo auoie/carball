@@ -28,6 +28,11 @@ export interface PolicySpec {
 export interface LookupAction {
   readonly parser: "lookup-v1";
   readonly table: string;
+  /** The rows allowed at a decision (a rule of ours by name; its table's first `groundRows` the ground's): the others'
+   *  logits set to -1e10 before the pick, none allowed meaning all */
+  readonly mask?: { readonly rule: string; readonly groundRows: number };
+  /** The row picked in a mirrored view turned back (a rule of ours by name) */
+  readonly mirror?: string;
 }
 
 export interface MultiDiscreteAction {
@@ -64,6 +69,9 @@ export interface BotManifest {
   readonly timing?: { readonly schedule: string; readonly applyAtCounter: number };
   readonly teamSizes: readonly number[];
   readonly kickoff?: KickoffScript;
+  /** Scripted controls for the moments it doesn't play (a goal's aftermath, the match's end: a rule of ours by name),
+   *  its schedule held meanwhile */
+  readonly moments?: string;
   /** random-controls-v1: its default strength, and Nexto's own easier level where its package defines it */
   readonly difficulty?: { readonly kind: string; readonly defaultStrength: number; readonly nextoEzStrength?: number };
   readonly vectors?: string;

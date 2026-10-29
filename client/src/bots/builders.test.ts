@@ -20,22 +20,32 @@ const car = (over: Partial<BotCar> = {}): BotCar => ({
   pos: { x: 0, y: -4608, z: 17 },
   vel: zero,
   angVel: zero,
-  rot: { forward: { x: 0, y: 1, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+  rot: { forward: { x: 0, y: 1, z: 0 }, right: { x: -1, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } },
   team: 0,
   boost: 33,
   onGround: true,
+  jumping: false,
+  hasJumped: false,
   doubleJumped: false,
   hasFlipped: false,
+  airTimeSinceJump: 0,
   demoed: false,
+  demoRespawnTimer: 0,
+  handbrakeVal: 0,
+  lastBallHitTick: -1,
   ...over,
 });
 const view = (cars: BotCar[], over: { self?: number; ball?: Partial<BotView["state"]["ball"]>; pads?: boolean[]; kickoffPause?: boolean } = {}): BotView => ({
   state: {
     cars,
     ball: { pos: { x: 0, y: 0, z: 93 }, vel: zero, angVel: zero, ...over.ball },
-    pads: (over.pads ?? new Array<boolean>(34).fill(true)).map((active) => ({ active })),
+    pads: (over.pads ?? new Array<boolean>(34).fill(true)).map((active) => ({ pos: zero, active, cooldown: 0 })),
+    score: [0, 0],
+    tickCount: 0,
     kickoffPause: over.kickoffPause ?? false,
+    goalScored: false,
     matchEnded: false,
+    ballPrediction: () => new Float32Array(0),
   },
   self: over.self ?? 0,
   tick: 0,
@@ -54,7 +64,7 @@ describe("the entity perceiver", () => {
     const nexto = manifest("nexto");
     const builder = entityPerceiver(nexto);
     // (the bot facing +x: a quarter turn; the ball spinning about y)
-    const inputs = builder.build(view([car({ rot: { forward: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } } }), car({ team: 1, pos: { x: 0, y: 4608, z: 17 } })], { ball: { angVel: { x: 0, y: 2, z: 0 } } }), ZERO_ROW);
+    const inputs = builder.build(view([car({ rot: { forward: { x: 1, y: 0, z: 0 }, right: { x: 0, y: 1, z: 0 }, up: { x: 0, y: 0, z: 1 } } }), car({ team: 1, pos: { x: 0, y: 4608, z: 17 } })], { ball: { angVel: { x: 0, y: 2, z: 0 } } }), ZERO_ROW);
     const ball = keyRow(inputs, 2);
     const norm = (nexto.observation as unknown as { norm: { angVel: number } }).norm.angVel;
     expect(ball[17]).toBeCloseTo(-2 / norm, 5);

@@ -14,6 +14,7 @@ describe("a settings page reset to its defaults (the pad's X Default)", () => {
     audio: { ...DEFAULT_SETTINGS.audio, master: 0.3 },
     interface: { ...DEFAULT_SETTINGS.interface, nameplateMode: "hidden" as never, scale: 1.2 },
     chat: { ...DEFAULT_SETTINGS.chat, quickChatFilter: "off" },
+    gameplay: { ...DEFAULT_SETTINGS.gameplay, freePlayGoals: false },
   };
 
   it("all of the page's own settings, its checkboxes and lists too, the others as they were", () => {
@@ -39,6 +40,9 @@ describe("a settings page reset to its defaults (the pad's X Default)", () => {
     expect([chosen.video.chosen, chosen.video.stepped, chosen.video.autoLevel]).toEqual([false, false, 0]);
     const gameplay = pageDefaults("gameplay", changed);
     expect(gameplay.options.unlimitedBoost).toBe(DEFAULT_SETTINGS.options.unlimitedBoost);
+    expect(gameplay.gameplay).toEqual(DEFAULT_SETTINGS.gameplay);
+    expect(gameplay.gameplay.freePlayGoals).toBe(true);
+    expect(camera.gameplay.freePlayGoals).toBe(false);
     const controller = pageDefaults("controller", changed);
     expect([controller.controller, controller.options.airPitchSafety]).toEqual([DEFAULT_SETTINGS.controller, DEFAULT_SETTINGS.options.airPitchSafety]);
   });
