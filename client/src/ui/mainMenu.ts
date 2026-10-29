@@ -840,6 +840,9 @@ export class MainMenu {
       if (this.#trainingTab === "mine") this.#trainingList.querySelector("button")?.focus();
       else if (this.#trainingTab === "starter") this.#starterList.querySelector("button")?.focus();
     }
+    // (each page shown from its top: a page taller than the window scrolls, never left where the last one was, nor where
+    // its focus (the bots' Start, at their foot) took it)
+    this.#root.scrollTop = 0;
   }
 }
 

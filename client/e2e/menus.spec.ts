@@ -73,6 +73,48 @@ for (const [width, height, scale] of [
   });
 }
 
+// The main menu's column anchored 18% down, never centred (the user's, 2026-10-29): every page's first control where the
+// top page's is, the bots' page keeping its place from 1v1 to 3v3 (its rows going on downward); at 640 x 360 the long
+// bots' page scrolls, its top on screen and its Start reached
+test("the main menu's column stays at its place: every page's top where the first page's is, the bots' page from 1v1 to 3v3 too; a long page scrolls", async ({
+  page,
+}) => {
+  for (const [width, height] of [
+    [1280, 720],
+    [640, 360],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    await page.goto("/?render=off");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+    const menu = page.locator("#main-menu");
+    const column = menu.locator(".main-menu-column:not([hidden])");
+    // (its top in the menu's own scroll: Playwright's clicks scroll their target into view, a mouse's don't)
+    const top = async (): Promise<number> => ((await column.boundingBox())?.y ?? Number.NaN) + (await menu.evaluate((m) => m.scrollTop));
+    const place = await top();
+    expect(place, `${String(width)} x ${String(height)}`).toBeCloseTo(0.18 * height, 0);
+    await menu.getByRole("button", { name: /^play$/i }).click();
+    expect(await top()).toBeCloseTo(place, 0);
+    await menu.getByRole("button", { name: "Play vs Bots" }).click({ timeout: 15_000 });
+    // (shown from its top, though its Start, at its foot, has the focus)
+    await expect(menu.getByRole("button", { name: /^start$/i })).toBeFocused();
+    expect(await menu.evaluate((m) => m.scrollTop)).toBe(0);
+    const sizes = menu.locator(".main-menu-bot-sizes").getByRole("radio");
+    await sizes.first().click();
+    expect(await top()).toBeCloseTo(place, 0);
+    await sizes.last().click();
+    await expect(menu.locator(".main-menu-bot-slot")).toHaveCount(5);
+    expect(await top()).toBeCloseTo(place, 0);
+    // (taller than the window at 640 x 360: the menu scrolls to its Start, the top back on screen after)
+    const start = menu.getByRole("button", { name: /^start$/i });
+    await start.scrollIntoViewIfNeeded();
+    await expect(start).toBeInViewport();
+    await menu.evaluate((m) => {
+      m.scrollTop = 0;
+    });
+    expect((await column.boundingBox())?.y).toBeCloseTo(place, 0);
+  }
+});
+
 test("a binding slot waiting for an input keeps its size and the table its layout: narrow and wide, keyboard and gamepad", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });

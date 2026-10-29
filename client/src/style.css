@@ -2414,12 +2414,20 @@ body {
 }
 
 /* MENU-1/2: the main menu over the arena: Play and Settings; Play's Free Play, the playlists and Find Match */
+/* (its column anchored 18% down, never centred: a page taller or shorter, or one growing (the bots' 1v1 to 3v3), keeps
+   its heading and first buttons where they were, its rows going on downward (the user's, 2026-10-29); a page taller
+   than the window scrolls here, its foot clear of the pad's button hints, 48 px at the scale and their 12 px gaps:
+   src/ui/padNav.ts) */
 .main-menu {
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
-  padding-left: 8vw;
+  align-items: flex-start;
+  padding: 18vh 0 calc(48px * var(--menu-scale, 1) + 24px) 8vw;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* (no scroll anchoring: rows redrawn above the view, the bots' slots, never move the page) */
+  overflow-anchor: none;
   background: linear-gradient(90deg, rgba(4, 8, 16, 0.8), rgba(4, 8, 16, 0.2) 60%, transparent);
   z-index: 4;
 }
@@ -2433,7 +2441,7 @@ body {
   flex-direction: column;
   gap: 8px;
   scale: var(--menu-scale, 1);
-  transform-origin: left center;
+  transform-origin: left top;
 }
 
 .main-menu-column[hidden] {
