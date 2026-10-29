@@ -601,7 +601,7 @@ sharing goes through its accounts service (api/, migration 00006); packs are pur
 
 - **Sharing:** the editor's Share saves the pack, then uploads its file (`POST /api/packs`, signed in). The service checks
   it strictly (`api/internal/packs`):
-  - the page's format 1 exactly, with no unknown field;
+  - the page's format 1 exactly, with no unknown field, and no key twice or in another case (RV-1201);
   - 1–50 shots;
   - every position within the arena's box (|x| ≤ 4096, |y| ≤ 6000, 0 ≤ z ≤ 2044);
   - speeds within the game's (the ball 0–6000, the car 0–2300), time limits 0–59;
@@ -613,7 +613,9 @@ sharing goes through its accounts service (api/, migration 00006); packs are pur
   read with the owner's display name now) and answers with a fresh code (64 bits from crypto/rand).
 - **Limits:** 10 uploads a day per account, counted in the database (a pack deleted since still counts), and 10 per
   address (50 per wider network) in memory; 100 packs an account at a time. Reads: 120 per address in 10 minutes.
-  Deletes and reports: 30 per account in 10 minutes, one report per account per pack.
+  Deletes and reports: 30 per account in 10 minutes, one report per account per pack, never of one's own. Browse's
+  first page (no search) is kept 5 s: a share, a delete or an account's deletion drops it at once, an admin's hide or
+  ban shows within the 5 s (RV-1198).
 - **Finding packs:** Custom Training has four tabs on the deployment's page (a development page has My Packs and Starter
   Packs alone):
   - **My Packs:** the packs the player made or saved (local), and "My Shared Packs" with each one's code, Copy Code and
@@ -624,7 +626,7 @@ sharing goes through its accounts service (api/, migration 00006); packs are pur
   - **Enter Code:** a code typed in any case, with or without its dashes.
   
   Play reads the pack through the API (`GET /api/packs/{code}`: its downloads counted once a day per account or
-  address, an address kept only as a keyed hash for two days). Save keeps a copy among the player's own packs, with an id
+  address, an address kept only as a keyed hash for two days, its key the day's: days can't be matched). Save keeps a copy among the player's own packs, with an id
   of its own.
 - **Moderation:**
   - hidden packs and those of owners with a ban in force are out of browse and the code's read;

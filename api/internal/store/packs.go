@@ -209,12 +209,14 @@ func (s *Store) DeletePack(ctx context.Context, code, owner string) (bool, error
 	return tag.RowsAffected() == 1, err
 }
 
-// ReportPack records an account's report of a visible pack (once: again is the same report); false: no such pack
-func (s *Store) ReportPack(ctx context.Context, code, account string, now time.Time) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `INSERT INTO pack_reports (code, account_id, reported_at)
-		SELECT p.code, $3, $1 FROM training_packs p WHERE p.code = $2 AND `+packVisible+`
-		ON CONFLICT (code, account_id) DO UPDATE SET reported_at = pack_reports.reported_at`, now, code, account)
-	return tag.RowsAffected() == 1, err
+// ReportPack records an account's report of a visible pack of another's (once: again is the same report); found false:
+// no such pack, own true: the account's own (not recorded, RV-1203)
+func (s *Store) ReportPack(ctx context.Context, code, account string, now time.Time) (found, own bool, err error) {
+	err = s.pool.QueryRow(ctx, `WITH p AS (SELECT p.code, p.owner_id FROM training_packs p WHERE p.code = $2 AND `+packVisible+`),
+		reported AS (INSERT INTO pack_reports (code, account_id, reported_at) SELECT code, $3, $1 FROM p WHERE owner_id <> $3
+			ON CONFLICT (code, account_id) DO UPDATE SET reported_at = pack_reports.reported_at)
+		SELECT EXISTS (SELECT 1 FROM p), EXISTS (SELECT 1 FROM p WHERE owner_id = $3)`, now, code, account).Scan(&found, &own)
+	return found, own, err
 }
 
 // --- The admin's ---

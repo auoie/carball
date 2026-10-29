@@ -24,7 +24,7 @@ import (
 // address in memory, and its packs at a time), GET /api/packs/{code} hands one out (public; its downloads counted once a
 // day per account or address), GET /api/packs browses and searches them (public, a page at a time, the first pages kept
 // a while), GET /api/me/packs lists the account's own, DELETE /api/packs/{code} deletes one of them, POST
-// /api/packs/{code}/report reports one. Packs are data, never evaluated; their texts are the page's to show as text.
+// /api/packs/{code}/report reports another's. Packs are data, never evaluated; their texts are the page's to show as text.
 
 const (
 	// PacksPerDay is an account's uploads in a day (a pack deleted since counted too)
@@ -33,8 +33,10 @@ const (
 	PacksPerAccount = 100
 	// BrowsePage is how many packs a browse's page lists
 	BrowsePage = 30
-	// BrowseKept is how long a browse's first page (no search) is answered from its last read
-	BrowseKept = 30 * time.Second
+	// BrowseKept is how long a browse's first page (no search) is answered from its last read: this service's own
+	// changes (a share, a delete, an account deleted) forget it at once; the admin's hides and bans (another process)
+	// show within it (RV-1198)
+	BrowseKept = 5 * time.Second
 	// SearchMax is a search's longest text (a pack name's)
 	SearchMax = packs.NameMax
 )
@@ -103,15 +105,22 @@ func (s *Server) sharePack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
-	s.public.browse[0].forget()
-	s.public.browse[1].forget()
+	s.forgetBrowse()
 	s.log(r).Info("pack shared", "code", code, "pack", p.Name, "shots", len(p.Shots))
 	writeJSON(w, http.StatusCreated, map[string]string{"code": code})
 }
 
-// viewer is who a download is counted for: the signed-in account (any of its addresses), else the address's keyed hash
-// (HMAC with the server's secret: the database keeps no address)
-func (s *Server) viewer(r *http.Request) []byte {
+// forgetBrowse drops the kept first pages (a pack shared or deleted, an account deleted with its packs)
+func (s *Server) forgetBrowse() {
+	for i := range s.public.browse {
+		s.public.browse[i].forget()
+	}
+}
+
+// viewer is who a download is counted for on now's day: the signed-in account (any of its addresses), else the
+// address's keyed hash under the day's key (HMAC, its key derived from the server's secret and the day: the database
+// keeps no address, and one day's hashes can't be matched with another's, RV-1203)
+func (s *Server) viewer(r *http.Request, now time.Time) []byte {
 	if tok := cookie(r, sessionCookie); tok != "" {
 		if ss, ok, err := s.Store.SessionByToken(r.Context(), digest(tok), s.Now()); err == nil && ok {
 			whoOf(r).signedIn(ss.AccountID, ss.AccountName)
@@ -120,8 +129,10 @@ func (s *Server) viewer(r *http.Request) []byte {
 			}
 		}
 	}
-	m := hmac.New(sha256.New, s.DeletionKey)
-	_, _ = io.WriteString(m, "pack-viewer:"+ratelimit.ClientKey(r, s.TrustedProxies))
+	day := hmac.New(sha256.New, s.DeletionKey)
+	_, _ = io.WriteString(day, "pack-viewer:"+now.UTC().Format(time.DateOnly))
+	m := hmac.New(sha256.New, day.Sum(nil))
+	_, _ = io.WriteString(m, ratelimit.ClientKey(r, s.TrustedProxies))
 	return m.Sum(nil)
 }
 
@@ -137,7 +148,7 @@ func (s *Server) pack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not-found")
 		return
 	}
-	p, file, found, err := s.Store.PackByCode(r.Context(), code, s.viewer(r), now)
+	p, file, found, err := s.Store.PackByCode(r.Context(), code, s.viewer(r, now), now)
 	if err != nil {
 		s.log(r).Error("reading a pack", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
@@ -306,13 +317,13 @@ func (s *Server) deletePack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not-found")
 		return
 	}
-	s.public.browse[0].forget()
-	s.public.browse[1].forget()
+	s.forgetBrowse()
 	s.log(r).Info("pack deleted", "code", code)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// reportPack: the signed-in account's report of a pack (once per pack: again is the same report)
+// reportPack: the signed-in account's report of another's pack (once per pack: again is the same report; its own
+// refused, 400 pack-own)
 func (s *Server) reportPack(w http.ResponseWriter, r *http.Request) {
 	ss, ok := s.session(w, r)
 	if !ok {
@@ -327,14 +338,17 @@ func (s *Server) reportPack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "busy")
 		return
 	}
-	found, err := s.Store.ReportPack(r.Context(), code, ss.AccountID, s.Now())
-	if err != nil {
+	found, own, err := s.Store.ReportPack(r.Context(), code, ss.AccountID, s.Now())
+	switch {
+	case err != nil:
 		s.log(r).Error("reporting a pack", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
-	}
-	if !found {
+	case !found:
 		writeError(w, http.StatusNotFound, "not-found")
+		return
+	case own:
+		writeError(w, http.StatusBadRequest, "pack-own")
 		return
 	}
 	s.log(r).Info("pack reported", "code", code)

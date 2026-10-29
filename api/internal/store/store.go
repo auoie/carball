@@ -631,6 +631,11 @@ func (s *Store) DeleteAccount(ctx context.Context, id string, hmacOf func(Identi
 				return err
 			}
 		}
+		// (its shared packs' downloads counted for it: no foreign key, its viewer the account id's bytes (RV-1203); its
+		// packs, uploads and reports go with the account by their keys)
+		if _, err := tx.Exec(ctx, `DELETE FROM pack_downloads WHERE viewer = uuid_send($1::uuid)`, id); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, id)
 		if err == nil && tag.RowsAffected() != 1 {
 			return ErrNoAccount

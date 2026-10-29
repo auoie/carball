@@ -80,6 +80,7 @@ export type ApiError =
   | "pack-description-not-allowed"
   | "pack-uploads"
   | "pack-limit"
+  | "pack-own"
   | "too-large"
   | "not-found";
 
@@ -150,6 +151,7 @@ const CODES: readonly ApiError[] = [
   "pack-description-not-allowed",
   "pack-uploads",
   "pack-limit",
+  "pack-own",
   "too-large",
   "not-found",
 ];

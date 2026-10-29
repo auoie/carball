@@ -31,7 +31,10 @@ export function sharedPackOf(file: unknown, creator: string): TrainingPack | str
   return typeof pack === "string" ? pack : { ...pack, creator };
 }
 
-/** A shared pack saved among the player's own: a copy, an id of its own (editable; its creator kept) */
-export function savedCopy(pack: TrainingPack, random: () => number = Math.random): TrainingPack {
-  return { ...pack, id: newPackId(random) };
+/** A shared pack saved among the player's own: a copy, an id of its own, none of `taken` (editable; its creator kept;
+ *  a pack stored with a taken id would replace that one, RV-1202) */
+export function savedCopy(pack: TrainingPack, taken: ReadonlySet<string>, random: () => number = Math.random): TrainingPack {
+  let id = newPackId(random);
+  while (taken.has(id)) id = newPackId(random);
+  return { ...pack, id };
 }

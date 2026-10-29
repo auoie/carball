@@ -230,6 +230,9 @@ test("a development page has no shared packs: My Packs and Starter Packs alone, 
   await expect(menu.getByRole("button", { name: /^create training$/i })).toBeVisible();
   await expect(menu.locator('[data-training-panel="mine"] .main-menu-pack')).toHaveCount(0);
   await tabs.getByRole("tab", { name: "Starter Packs" }).click();
+  // (each panel a tabpanel named by its tab: RV-1203)
+  await expect(menu.getByRole("tabpanel", { name: "Starter Packs" })).toBeVisible();
+  await expect(menu.getByRole("tabpanel", { name: "My Packs" })).toBeHidden();
   await expect(menu.locator('[data-training-panel="starter"] .main-menu-pack-name')).toHaveText([
     "First Touches",
     "Open Net",

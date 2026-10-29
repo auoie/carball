@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,9 +121,13 @@ func TestPackShareAndDownload(t *testing.T) {
 	if n := downloads(anon, "2001:db8:1::1"); n != 4 {
 		t.Errorf("the next day: %d", n)
 	}
-	// (no address is kept: the viewers are an account's id or a keyed hash)
+	// (no address is kept: the viewers are an account's id or a keyed hash, its key the day's: the first address's hash
+	// on the next day another, so three hashes for two addresses, RV-1203)
 	if e.rows(`SELECT count(*) FROM pack_downloads WHERE position('2001:db8' in encode(viewer, 'escape')) > 0`) != 0 {
 		t.Error("an address in the download records")
+	}
+	if n := e.rows(`SELECT count(DISTINCT viewer) FROM pack_downloads WHERE length(viewer) = 32`); n != 3 {
+		t.Errorf("the addresses' hashes over two days: %d distinct, want 3", n)
 	}
 	if e.get(anon, "/api/packs/0000-0000-0000-0000").StatusCode != http.StatusNotFound || e.get(anon, "/api/packs/nope").StatusCode != http.StatusNotFound {
 		t.Error("an unknown code not 404")
@@ -350,6 +356,14 @@ func TestPackReportsAndDeletes(t *testing.T) {
 	if resp := e.write(reporter, http.MethodPost, "/api/packs/0000-0000-0000-0000/report", nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("an unknown pack's report: %d", resp.StatusCode)
 	}
+	// (its own: refused, not recorded, RV-1203)
+	if resp := e.write(owner, http.MethodPost, "/api/packs/"+code+"/report", nil); resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(string(resp.Body), `"pack-own"`) {
+		t.Errorf("a report of its own: %d %s", resp.StatusCode, resp.Body)
+	}
+	if n := e.rows(`SELECT count(*) FROM pack_reports`); n != 1 {
+		t.Errorf("reports after its own: %d", n)
+	}
 	if resp := e.write(reporter, http.MethodDelete, "/api/packs/"+code, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("another's delete: %d", resp.StatusCode)
 	}
@@ -359,12 +373,103 @@ func TestPackReportsAndDeletes(t *testing.T) {
 	if e.get(reporter, "/api/packs/"+code).StatusCode != http.StatusNotFound || e.rows(`SELECT count(*) FROM pack_reports`) != 0 {
 		t.Error("a deleted pack still there")
 	}
-	// (the account deleted: its packs with it)
+	// (the account deleted: its packs with it, and the downloads it was counted for, RV-1203)
 	e.share(owner, "Goes With Me")
+	theirs := e.share(reporter, "Stays Here")
+	if e.get(owner, "/api/packs/"+theirs).StatusCode != http.StatusOK {
+		t.Fatal("a download")
+	}
+	if n := e.rows(`SELECT count(*) FROM pack_downloads WHERE viewer = uuid_send($1::uuid)`, ownerID); n != 1 {
+		t.Fatalf("the account's download records: %d", n)
+	}
 	if resp := e.write(owner, http.MethodDelete, "/api/me", map[string]bool{"confirm": true}); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("account delete: %d", resp.StatusCode)
 	}
-	if e.rows(`SELECT count(*) FROM training_packs`) != 0 || e.rows(`SELECT count(*) FROM pack_uploads`) != 0 {
+	if e.rows(`SELECT count(*) FROM training_packs WHERE name <> 'Stays Here'`) != 0 || e.rows(`SELECT count(*) FROM pack_uploads WHERE account_id = $1`, ownerID) != 0 {
 		t.Error("an account's packs kept after its deletion")
+	}
+	if n := e.rows(`SELECT count(*) FROM pack_downloads WHERE viewer = uuid_send($1::uuid)`, ownerID); n != 0 {
+		t.Errorf("the account's download records after its deletion: %d", n)
+	}
+}
+
+// slowBrowse is the store with its next browse read held (once armed) after reading, till released: a read in flight
+type slowBrowse struct {
+	server.Store
+	armed         atomic.Bool
+	read, release chan struct{}
+}
+
+func (s *slowBrowse) BrowsePacks(ctx context.Context, search string, byDownloads bool, after *store.PackCursor, n int, now time.Time) ([]store.SharedPack, error) {
+	rows, err := s.Store.BrowsePacks(ctx, search, byDownloads, after, n, now)
+	if s.armed.CompareAndSwap(true, false) {
+		close(s.read)
+		<-s.release
+	}
+	return rows, err
+}
+
+// The kept first page never shows a pack gone (RV-1198): a delete during a read in flight (that read not kept, an ask
+// after the delete not joining it); an account deleted with its packs; an admin's hide (another process) within
+// BrowseKept
+func TestPackBrowseKeptForgets(t *testing.T) {
+	e := setup(t, roomy())
+	slow := &slowBrowse{Store: e.db, read: make(chan struct{}), release: make(chan struct{})}
+	e.s.Store = slow
+	owner, _ := e.signedUp("sub-kept", "Kept_Owner")
+	leaver, _ := e.signedUp("sub-leaver", "Leaving_Owner")
+	stays := e.share(owner, "Stays Listed")
+	deleted := e.share(owner, "Deleted Mid Read")
+	goes := e.share(leaver, "Goes With Account")
+	b := e.browser()
+	listed := func() []string {
+		t.Helper()
+		resp := e.get(b, "/api/packs")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("browse: %d %s", resp.StatusCode, resp.Body)
+		}
+		var p struct{ Packs []struct{ Code string } }
+		if err := json.Unmarshal(resp.Body, &p); err != nil {
+			t.Fatal(err)
+		}
+		var codes []string
+		for _, pk := range p.Packs {
+			codes = append(codes, pk.Code)
+		}
+		return codes
+	}
+	// (a read held in flight with the pack in it; the pack deleted; an ask meanwhile reads again, without it)
+	slow.armed.Store(true)
+	first := make(chan []string)
+	go func() { first <- listed() }()
+	<-slow.read
+	if resp := e.write(owner, http.MethodDelete, "/api/packs/"+deleted, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: %d", resp.StatusCode)
+	}
+	if codes := listed(); slices.Contains(codes, deleted) || !slices.Contains(codes, stays) {
+		t.Errorf("an ask after the delete, the read before it in flight: %v", codes)
+	}
+	close(slow.release)
+	<-first
+	if codes := listed(); slices.Contains(codes, deleted) {
+		t.Errorf("the read begun before the delete kept: %v", codes)
+	}
+	// (an account deleted: its pack off the kept page at once)
+	if !slices.Contains(listed(), goes) {
+		t.Fatal("the leaver's pack not listed")
+	}
+	if resp := e.write(leaver, http.MethodDelete, "/api/me", map[string]bool{"confirm": true}); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("account delete: %d", resp.StatusCode)
+	}
+	if codes := listed(); slices.Contains(codes, goes) {
+		t.Errorf("a deleted account's pack still listed: %v", codes)
+	}
+	// (the admin's hide, from another process: gone once BrowseKept is over)
+	if err := e.db.HidePack(context.Background(), stays, "made-up reason", "admin", e.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Add(server.BrowseKept)
+	if codes := listed(); slices.Contains(codes, stays) {
+		t.Errorf("a hidden pack listed after BrowseKept: %v", codes)
 	}
 }

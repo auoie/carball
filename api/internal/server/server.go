@@ -90,7 +90,7 @@ type Store interface {
 	BrowsePacks(ctx context.Context, search string, byDownloads bool, after *store.PackCursor, n int, now time.Time) ([]store.SharedPack, error)
 	OwnPacks(ctx context.Context, owner string) ([]store.SharedPack, error)
 	DeletePack(ctx context.Context, code, owner string) (bool, error)
-	ReportPack(ctx context.Context, code, account string, now time.Time) (bool, error)
+	ReportPack(ctx context.Context, code, account string, now time.Time) (found, own bool, err error)
 }
 
 // Turnstile checks a sign-up's token (turnstile.Verifier)

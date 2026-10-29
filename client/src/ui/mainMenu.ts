@@ -359,7 +359,10 @@ export class MainMenu {
       const b = button(this.#trainingTabs, SHARE_TEXT.tabs[tab], () => {
         this.#showTrainingTab(tab);
       });
+      // (a tab and its panel named for each other: RV-1203)
       b.setAttribute("role", "tab");
+      b.id = `main-menu-training-tab-${tab}`;
+      b.setAttribute("aria-controls", `main-menu-training-panel-${tab}`);
       b.dataset["trainingTab"] = tab;
       return b;
     };
@@ -369,6 +372,9 @@ export class MainMenu {
     const panel = (tab: TrainingTab): HTMLDivElement => {
       const d = document.createElement("div");
       d.className = "main-menu-training-panel";
+      d.id = `main-menu-training-panel-${tab}`;
+      d.setAttribute("role", "tabpanel");
+      d.setAttribute("aria-labelledby", `main-menu-training-tab-${tab}`);
       d.dataset["trainingPanel"] = tab;
       d.hidden = tab !== "mine";
       return d;

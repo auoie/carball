@@ -36,8 +36,10 @@
   <body>
     <h1>Privacy</h1>
     <p>
-      Carball's offline modes (Free Play, Custom Training, Play vs Bots) need no account and send nothing about you anywhere. Your settings and training
-      packs stay in this browser's storage.
+      Carball's offline modes (Free Play, Custom Training, Play vs Bots) need no account. Your settings and training packs stay in this browser's
+      storage, and Free Play, Play vs Bots and your own packs send nothing about you anywhere. Custom Training's shared packs do ask Carball's
+      service: Browse, Enter Code, and playing or saving a shared pack. Like every request to it, these are logged with your IP address (see Logs),
+      and a shared pack's download is counted (see below).
     </p>
     <p>Online play needs an account. This page says what an account stores and how to delete it.</p>
 
@@ -63,10 +65,11 @@
       <li>
         The training packs you share: each pack's name, description and shots, its share code and when it was shared, how
         many times it was downloaded, and your uploads of the last two days (for the daily limit). A shared pack shows your
-        display name publicly as its creator, to anyone who browses or enters its code. It is kept until you delete it, or
-        a moderator hides it, and is deleted with your account.
+        display name publicly as its creator, to anyone who browses or enters its code, until you delete it or a moderator
+        hides it (a hidden pack stays on your list, with why, until you delete it). It is deleted with your account.
       </li>
-      <li>Your reports of other players' shared packs.</li>
+      <li>The shared packs you open while signed in, by day, so each is counted once a day: kept for two days, and deleted with your account.</li>
+      <li>Your reports of other players' shared packs, kept until the pack or your account is deleted.</li>
     </ul>
 
     <h2>What it doesn't store</h2>
@@ -79,7 +82,8 @@
     <p>
       The services log, for security, abuse prevention and debugging: IP addresses (with the connection's port, on the game server), account ids and
       display names (and a rename's new name), and what each connection did: signing in (with Google or Steam), searching (its playlists and regions),
-      joining and leaving a match, a vote to forfeit, its result (each player's team, whether they left, how long they played), and anything refused. The web server logs
+      joining and leaving a match, a vote to forfeit, its result (each player's team, whether they left, how long they played), a training pack
+      shared (its code and name), deleted or reported (its code), and anything refused. The web server logs
       each page and file fetched, with the IP address, the browser's user agent and the page it came from. The logs are kept until the servers' log
       rotation overwrites them (about 100 MB for each service) and are never shared. They never hold your cookies, sign-in codes or tokens.
     </p>

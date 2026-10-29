@@ -46,7 +46,7 @@ func TestPackCommands(t *testing.T) {
 		}
 		codes = append(codes, code)
 	}
-	if _, err := db.ReportPack(ctx, codes[0], reporter, now); err != nil {
+	if _, _, err := db.ReportPack(ctx, codes[0], reporter, now); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("DATABASE_URL", app)

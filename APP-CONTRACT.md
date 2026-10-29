@@ -374,7 +374,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   TIES`, or a cap on the pages read as a band-aid.
 - **Shared training packs** (`api/internal/server/packs.go`, `api/internal/packs`; migration 00006; notes/custom-training.md
   §9). `POST /api/packs` (signed in; a write, its body up to 64 KiB): the page's pack file, checked strictly (no unknown
-  field, 1–50 shots, every number within the arena's box and the speeds, rotators whole units; its name 3–30 and its
+  field, no key twice or in another case, 1–50 shots, every number within the arena's box and the speeds, rotators whole units; its name 3–30 and its
   description 0–200 printable ASCII characters, past the word filter), kept in canonical form; 201 `{code}`
   (`XXXX-XXXX-XXXX-XXXX`, 64 random bits); refusals 400 `pack-invalid` (with a `detail`), `pack-name`,
   `pack-name-not-allowed`, `pack-description`, `pack-description-not-allowed`; 413 `too-large`; 429 `pack-uploads`
@@ -383,9 +383,11 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   once a day per account or address; 404 `not-found` for an unknown, hidden or banned owner's pack. `GET
   /api/packs?search=&sort=new|downloads&cursor=` (public): 30 a page, keyset-paged (the cursor opaque), the search a
   part of the name (any case; plain ILIKE), hidden packs and banned owners' left out; the first page of each order
-  without a search kept 30 s, dropped at a share or a delete. `GET /api/me/packs` (signed in): the account's own, hidden
-  ones too with the reason. `DELETE /api/packs/{code}` (the owner's) and `POST /api/packs/{code}/report` (signed in,
-  once per pack): 204, else 404. Packs are deleted with their account. Admin: `packs --recent [N] | --reported`, `pack
+  without a search kept 5 s: dropped at once by a share, a delete or an account's deletion (a read under way then not
+  kept), an admin's hide or ban (another process) showing within the 5 s (RV-1198). `GET /api/me/packs` (signed in):
+  the account's own, hidden ones too with the reason. `DELETE /api/packs/{code}` (the owner's) and `POST
+  /api/packs/{code}/report` (signed in, once per pack, never the account's own: 400 `pack-own`): 204, else 404. Packs
+  are deleted with their account, and the download records counted for it. Admin: `packs --recent [N] | --reported`, `pack
   ACCOUNT`, `pack-hide CODE --reason --by`, `pack-unhide CODE`.
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
   for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
@@ -446,7 +448,7 @@ window.
 | A rejoin let through (`/api/fleet/rejoin` yes) | account | its searches held till its server says it's back or refused it there (the `rejoin-refused` event, with the rejoin's ticket: RV-1076), or its match ends; 2 minutes at most, a word lost (RV-1026); none held for a match the matchmaker no longer has (ended: its server refuses that rejoin, RV-1075). Deploy the API before the game servers: an older API refuses the new event (400, dropped by the outbox), the hold then lasting its 2 minutes |
 | A request's body | request | 16 KiB (a shared training pack's upload: 64 KiB) |
 | Shared training packs' uploads | account / address / wider network | 10 a day per account, kept in the database (a pack deleted since still counted; the window a rolling 24 h) / 10 / 50 a day in memory; 100 packs an account at a time |
-| Shared training packs' reads (a pack by its code, a browse page) | address / wider network | 120 / 600 in 10 minutes; a pack's downloads counted once a day per account or address (an address as a keyed hash, `DELETION_HMAC_KEY_FILE`'s key; kept 2 days); a browse's first page without a search kept 30 s |
+| Shared training packs' reads (a pack by its code, a browse page) | address / wider network | 120 / 600 in 10 minutes; a pack's downloads counted once a day per account or address (an address as a keyed hash under the day's key, derived from `DELETION_HMAC_KEY_FILE`'s; kept 2 days); a browse's first page without a search kept 5 s |
 | Shared training packs' deletes and reports | account | 30 in 10 minutes; a report once per account per pack |
 | A search's poll | poll | 25 s; a search no page polls goes 45 s on, unmatched 3 s on |
 | No-show cooldown | account | 2 minutes |

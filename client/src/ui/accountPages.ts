@@ -115,6 +115,8 @@ export function accountErrorText(code: ApiError, seconds: number | null = null, 
         : `You've shared ${String(PACK_TEXT_RULES.perDay)} packs today. You can share again in ${lockLeftText(seconds)}.`;
     case "pack-limit":
       return `You have ${String(PACK_TEXT_RULES.most)} shared packs, the most there can be. Delete one to share another.`;
+    case "pack-own":
+      return "That's your own pack: you can't report it.";
     case "too-large":
       return "This pack is too large to share.";
     case "not-found":

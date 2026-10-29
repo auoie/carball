@@ -3,7 +3,7 @@
 // the API (training/packs.ts loadPack). Made-up packs and codes.
 import { describe, expect, it, vi } from "vitest";
 import type { SharedPack } from "../account/api";
-import { newPack, packFile } from "./myPacks";
+import { newPack, newPackId, packFile } from "./myPacks";
 import { loadPack } from "./packs";
 import { SHARED, savedCopy, shareCode, sharedListing, sharedPackOf } from "./shared";
 
@@ -29,6 +29,8 @@ describe("shared training packs", () => {
     // (as the game reads one: any letters, anything else dropped)
     expect(shareCode("GA1B-2C3D-4E5F-6071")).toBe("GA1B-2C3D-4E5F-6071");
     expect(shareCode("0A1B_2C3D/4E5F.6071")).toBe("0A1B-2C3D-4E5F-6071");
+    // (en dashes, as chat apps turn dashes into: RV-1200)
+    expect(shareCode("0A1B\u20132C3D\u20134E5F\u20136071")).toBe("0A1B-2C3D-4E5F-6071");
     for (const bad of ["", "0A1B-2C3D-4E5F-607", "0A1B-2C3D-4E5F-60712", "not a code"]) expect(shareCode(bad)).toBeNull();
   });
 
@@ -51,10 +53,14 @@ describe("shared training packs", () => {
     if (typeof pack === "string") throw new Error(pack);
     expect(pack.creator).toBe("Some_Creator");
     expect(typeof sharedPackOf({ format: 1, id: "x", shots: [] }, "Some_Creator")).toBe("string");
-    const copy = savedCopy(pack, () => 0.25);
+    const copy = savedCopy(pack, new Set());
     expect(copy.id).not.toBe(pack.id);
     expect(copy.id).toMatch(/^mine-/);
     expect(copy.shots).toEqual(pack.shots);
+    // (an id taken drawn again: never one of the player's)
+    const draws = [0.25, 0.25, 0.5];
+    const taken = savedCopy(pack, new Set([newPackId(() => 0.25)]), () => draws.shift() ?? 0.75);
+    expect(taken.id).toBe(newPackId(() => 0.5));
   });
 
   it("loads a shared listing through the API (its pack checked, its creator the API's); a missing code says so", async () => {

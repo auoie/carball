@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
@@ -38,21 +39,32 @@ const (
 )
 
 // keptBody is an answer kept until `until`, or the error of its last read kept until `errUntil`; one read at a time for
-// everyone who asks meanwhile (`reading`), each asker waiting only as long as its own request lasts (RV-1158)
+// everyone who asks meanwhile (`reading`), each asker waiting only as long as its own request lasts (RV-1158). `gen`
+// counts the forgets: a read begun before one is never kept, nor joined by an ask after it (RV-1198)
 type keptBody struct {
 	mu       sync.Mutex
 	until    time.Time
 	body     []byte
 	err      error
 	errUntil time.Time
+	gen      uint64
 	reading  singleflight.Group
 }
 
-// forget drops the kept answer (a change it would hide: a pack shared or deleted), the next ask reading again
+// forget drops the kept answer (a change it would hide: a pack shared, deleted, or its owner's account deleted), the
+// next ask reading again; a read under way then is answered to its askers but not kept
 func (k *keptBody) forget() {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.body, k.until = nil, time.Time{}
+	k.gen++
+}
+
+// generation is the forgets so far
+func (k *keptBody) generation() uint64 {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.gen
 }
 
 // kept is the answer, or the error, kept at now (ok false: neither)
@@ -75,7 +87,9 @@ func (k *keptBody) get(ctx context.Context, now time.Time, keep time.Duration, l
 	if body, ok, err := k.kept(now); ok {
 		return body, err
 	}
-	answer := k.reading.DoChan("", func() (any, error) {
+	// (one read per generation: an ask after a forget never joins the read begun before it)
+	gen := k.generation()
+	answer := k.reading.DoChan(strconv.FormatUint(gen, 10), func() (any, error) {
 		// (another read's answer may have come between the look above and this read's start)
 		if body, ok, err := k.kept(now); ok {
 			return body, err
@@ -85,12 +99,18 @@ func (k *keptBody) get(ctx context.Context, now time.Time, keep time.Duration, l
 		body, err := recovered(fctx, fill)
 		k.mu.Lock()
 		defer k.mu.Unlock()
+		// (kept only if nothing was forgotten meanwhile: else it may hold what the forget dropped)
+		current := k.gen == gen
 		if err != nil {
 			log.Error("a public read failed", "read", what, "err", err)
-			k.err, k.errUntil = err, now.Add(errorKept)
+			if current {
+				k.err, k.errUntil = err, now.Add(errorKept)
+			}
 			return nil, err
 		}
-		k.body, k.until, k.err = body, now.Add(keep), nil
+		if current {
+			k.body, k.until, k.err = body, now.Add(keep), nil
+		}
 		return body, nil
 	})
 	select {

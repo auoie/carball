@@ -231,3 +231,34 @@ func TestCodes(t *testing.T) {
 		}
 	}
 }
+
+// Keys as encoding/json lets them by refused (RV-1201): one twice (it keeps the last), one in another case (it matches
+// without case), at the top and inside a shot; no two of the wire's names alike but for case
+func TestStrictKeys(t *testing.T) {
+	good := string(raw(t, file(1)))
+	if _, err := Parse([]byte(good)); err != nil {
+		t.Fatalf("a good pack: %v", err)
+	}
+	for _, c := range []struct{ what, from, to string }{
+		{"a name twice", `"name":`, `"name":"Made Up First","name":`},
+		{"its format's key in capitals", `"format":`, `"Format":`},
+		{"its name's key in capitals", `"name":`, `"NAME":`},
+		{"a shot's ball twice", `"ball":`, `"ball":{},"ball":`},
+		{"a shot's car's key in another case", `"startSpeed":`, `"startspeed":`},
+	} {
+		sent := strings.Replace(good, c.from, c.to, 1)
+		if sent == good {
+			t.Fatalf("%s: %q not in the pack", c.what, c.from)
+		}
+		if _, err := Parse([]byte(sent)); code(err) != "pack-invalid" {
+			t.Errorf("%s: %v", c.what, err)
+		}
+	}
+	seen := map[string]string{}
+	for k := range keyNames {
+		if other, ok := seen[strings.ToLower(k)]; ok {
+			t.Errorf("%q and %q alike but for case", k, other)
+		}
+		seen[strings.ToLower(k)] = k
+	}
+}

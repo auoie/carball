@@ -80,7 +80,7 @@ import { DisplayMode } from "./ui/displayMode";
 import { browserNotice, browserNoticeDismissed, currentBrowserLimits, dismissBrowserNotice } from "./ui/browserNotice";
 import { type PackListing, listPacks, loadPack } from "./training/packs";
 import { type TrainingPack, parsePack } from "./training/pack";
-import { newPack, packFile, storePack } from "./training/myPacks";
+import { newPack, packFile, storePack, storedPacks } from "./training/myPacks";
 import { savedCopy, sharedPackOf } from "./training/shared";
 import { SHARE_TEXT, sharedErrorText } from "./ui/sharedPacks";
 import type { TrainingEditor } from "./ui/trainingEditor";
@@ -1062,7 +1062,7 @@ async function main(): Promise<void> {
             const { pack, file } = await accountsApi.pack(code);
             const shared = sharedPackOf(file, pack.creator);
             if (typeof shared === "string") return SHARE_TEXT.notPlayable;
-            if (!storePack(savedCopy(shared))) return SHARE_TEXT.notSaved;
+            if (!storePack(savedCopy(shared, new Set(storedPacks().map((p) => p.id))))) return SHARE_TEXT.notSaved;
             refreshPacks();
             return null;
           } catch (e) {

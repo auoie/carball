@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -163,6 +164,9 @@ func Parse(raw []byte) (Pack, error) {
 	if err := d.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Pack{}, invalid("one JSON value only")
 	}
+	if err := strictKeys(raw); err != nil {
+		return Pack{}, err
+	}
 	if w.Format == nil || *w.Format != Format {
 		return Pack{}, invalid("its format")
 	}
@@ -214,6 +218,72 @@ func Parse(raw []byte) (Pack, error) {
 		p.Shots = append(p.Shots, s)
 	}
 	return p, nil
+}
+
+// keyNames are the wire's field names (its shapes' json tags), exactly as written
+var keyNames = wireNames(reflect.TypeFor[wirePack](), map[string]bool{})
+
+func wireNames(t reflect.Type, into map[string]bool) map[string]bool {
+	if k := t.Kind(); k == reflect.Pointer || k == reflect.Slice || k == reflect.Array {
+		return wireNames(t.Elem(), into)
+	}
+	// (a plain value: no names in it)
+	if t.Kind() != reflect.Struct {
+		return into
+	}
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		into[name] = true
+		wireNames(t.Field(i).Type, into)
+	}
+	return into
+}
+
+// strictKeys refuses what encoding/json lets by (RV-1201): a key twice in an object (it keeps the last) or a key not
+// written exactly as the wire's (it matches without case); raw is one JSON value already decoded, so well formed
+func strictKeys(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	// (the containers open: an object's keys so far, nil for an array; whether the next token is a key)
+	var open []map[string]bool
+	key := false
+	for {
+		t, err := d.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return invalid("not a pack: %v", err)
+		}
+		if key {
+			if k, ok := t.(string); ok {
+				seen := open[len(open)-1]
+				switch {
+				case !keyNames[k]:
+					return invalid("a field it doesn't know: %.40q", k)
+				case seen[k]:
+					return invalid("a field twice: %q", k)
+				}
+				seen[k] = true
+				key = false
+				continue
+			}
+		}
+		switch t {
+		case json.Delim('{'):
+			open = append(open, map[string]bool{})
+			key = true
+			continue
+		case json.Delim('['):
+			open = append(open, nil)
+			key = false
+			continue
+		case json.Delim('}'), json.Delim(']'):
+			open = open[:len(open)-1]
+		}
+		// (a value ended: in an object, a key or its end next)
+		key = len(open) > 0 && open[len(open)-1] != nil
+	}
 }
 
 // Text is a pack's name or description as kept: printable ASCII alone (spaces allowed, the ends' taken off), least to

@@ -180,6 +180,8 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
+	// (its packs went with it: off the kept browse pages at once, RV-1198)
+	s.forgetBrowse()
 	clearCookie(w, sessionCookie)
 	s.log(r).Info("account deleted")
 	w.WriteHeader(http.StatusNoContent)
