@@ -1,6 +1,8 @@
 // Wisp's port (bots/wisp.ts) on made-up states: its action table and mask (counts worked out from action_parser.py's
 // rules), its geometry (the arena's SDF, the corner walls), its ETA's cases, its mirror and moments, its observation's
-// layout; then its package in the local host's 1v1 (it plays: the ball moves, no brain fails).
+// layout; against Wisp's own observation and mask (golden vectors, src/testing/wisp.vectors.json: its Python run once in a
+// sandbox on recorded states, RV-1190); then its package in the local host's 1v1 (it plays: the ball moves, no brain
+// fails).
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as ort from "onnxruntime-web";
@@ -18,6 +20,16 @@ import { loadBrain } from "./registry";
 import { WISP_OBS_SIZE, linearEta, mirrorsX, sdfWallDist, wispBuilder, wispCelebrate, wispMask, wispMirror } from "./wisp";
 
 const ROOT = fileURLToPath(new URL("../../bots/", import.meta.url));
+/** A seeded random stream in [0, 1) (mulberry32) */
+const seeded = (seed: number): (() => number) => {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
 const PRESENT = existsSync(`${ROOT}wisp/bot.json`);
 const files: typeof fetch = (input) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -58,7 +70,6 @@ const view = (cars: BotCar[], over: Partial<BotView["state"]> & { self?: number;
     pads: [],
     score: [0, 0],
     tickCount: 100,
-    kickoffPause: false,
     goalScored: false,
     matchEnded: false,
     ballPrediction: restingPath,
@@ -170,8 +181,66 @@ describe("Wisp's observation", () => {
   });
 });
 
+/** A golden vector: a recorded decision (our engine's state), the shuffles' draws, and Wisp's own observation and mask */
+interface Golden {
+  readonly self: number;
+  readonly tick: number;
+  readonly state: {
+    readonly cars: readonly (Omit<BotCar, "pos" | "vel" | "angVel" | "rot"> & Record<"pos" | "vel" | "angVel" | "forward" | "right" | "up", readonly [number, number, number]>)[];
+    readonly ball: Record<"pos" | "vel" | "angVel", readonly [number, number, number]>;
+    readonly pads: readonly { readonly pos: readonly [number, number, number]; readonly active: boolean; readonly cooldown: number }[];
+    readonly score: readonly [number, number];
+    readonly tickCount: number;
+  };
+  readonly draws: readonly number[];
+  readonly previous: Controls8;
+  readonly slices: Readonly<Record<string, readonly number[]>>;
+  readonly obs: readonly number[];
+  readonly mask: readonly number[];
+}
+const GOLDEN = (JSON.parse(readFileSync(fileURLToPath(new URL("../testing/wisp.vectors.json", import.meta.url)), "utf8")) as { cases: Golden[] }).cases;
+/** Each player's ETA (its 49th float): rough_eta's history across decisions, not in a vector */
+const ETAS = new Set([0, 1, 2, 3, 4, 5].map((k) => 126 + k * 51 + 48));
+
+describe.skipIf(!PRESENT)("Wisp's observation and mask against Wisp's own (golden vectors, RV-1190)", () => {
+  it("every feature within 1e-6 but the ETAs, the mask exactly, on each recorded decision", () => {
+    expect(GOLDEN.length).toBeGreaterThanOrEqual(15);
+    const v = ([x, y, z]: readonly [number, number, number]): { x: number; y: number; z: number } => ({ x, y, z });
+    const mask = wispMask(table, 24);
+    const off: string[] = [];
+    for (const [n, g] of GOLDEN.entries()) {
+      const path = new Float32Array(BALL_PREDICTION_TICKS * BALL_SLICE);
+      for (const [at, slice] of Object.entries(g.slices)) path.set(slice, Number(at) * BALL_SLICE);
+      const cars = g.state.cars.map(({ pos, vel, angVel, forward, right, up, ...flags }) => ({ ...flags, pos: v(pos), vel: v(vel), angVel: v(angVel), rot: { forward: v(forward), right: v(right), up: v(up) } }));
+      const at: BotView = {
+        state: {
+          cars,
+          ball: { pos: v(g.state.ball.pos), vel: v(g.state.ball.vel), angVel: v(g.state.ball.angVel) },
+          pads: g.state.pads.map((p) => ({ ...p, pos: v(p.pos) })),
+          score: g.state.score,
+          tickCount: g.state.tickCount,
+          goalScored: false,
+          matchEnded: false,
+          ballPrediction: () => path,
+        },
+        self: g.self,
+        tick: g.tick,
+      };
+      const draws = [...g.draws];
+      const [input] = wispBuilder(() => draws.shift() ?? Number.NaN).build(at, g.previous);
+      const obs = input?.data ?? new Float32Array(0);
+      g.obs.forEach((want, i) => {
+        if (!ETAS.has(i) && !(Math.abs((obs[i] ?? Number.NaN) - want) <= 1e-6)) off.push(`case ${String(n)} [${String(i)}] ${String(obs[i])} vs ${String(want)}`);
+      });
+      const allowed = mask(at).map((a) => (a ? 1 : 0));
+      if (JSON.stringify(allowed) !== JSON.stringify(g.mask)) off.push(`case ${String(n)}: its mask`);
+    }
+    expect(off.slice(0, 8)).toEqual([]);
+  });
+});
+
 describe.skipIf(!PRESENT)("Wisp in the local host", () => {
-  it("a 1v1 of Wisp against itself: both brains run, the ball moves, none fails", async () => {
+  it("a 1v1 of Wisp against itself: both brains run, the ball is hit, none fails", async () => {
     const failures = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const meshes = arenaMeshes();
     const engine = await createEngine();
@@ -179,23 +248,26 @@ describe.skipIf(!PRESENT)("Wisp in the local host", () => {
     const host = LocalHost.create(await createHost({ printErr: () => undefined }), meshes);
     host.open(1, 5);
     const bots = new LocalBots(World.create(engine), 2);
-    bots.join(host, 2, { team: 0, name: "Wisp 1", brain: "wisp" }, await loadBrain("/bots/", "wisp", 1, files, Math.random, ort), 0);
-    bots.join(host, 3, { team: 1, name: "Wisp 2", brain: "wisp" }, await loadBrain("/bots/", "wisp", 1, files, Math.random, ort), 0);
+    // (each its own seeded shuffles: the same match every run)
+    bots.join(host, 2, { team: 0, name: "Wisp 1", brain: "wisp" }, await loadBrain("/bots/", "wisp", 1, files, seeded(11), ort), 0);
+    bots.join(host, 3, { team: 1, name: "Wisp 2", brain: "wisp" }, await loadBrain("/bots/", "wisp", 1, files, seeded(12), ort), 0);
     const world = World.create(engine);
     let now = 0;
-    let moved = 0;
+    let fastest = 0;
     for (let i = 0; i < 12 * 120; i++) {
       now = host.nextTick() ?? now + 1 / 120;
       await bots.beforeTick(host);
       host.tick(now);
       host.drain();
-      if (i % 60 === 0) {
+      if (i % 10 === 0) {
         world.loadState(host.state(2));
-        moved = Math.max(moved, Math.hypot(world.ball().pos.x, world.ball().pos.y));
+        const { vel } = world.ball();
+        fastest = Math.max(fastest, Math.hypot(vel.x, vel.y, vel.z));
       }
     }
     expect(failures).not.toHaveBeenCalled();
-    expect(moved).toBeGreaterThan(200);
+    // (hit: a kickoff's touch sends it well over 500 uu/s, even a head-on one that leaves it near the spot)
+    expect(fastest).toBeGreaterThan(500);
     failures.mockRestore();
   }, 300_000);
 });

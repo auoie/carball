@@ -78,18 +78,9 @@ export function botsPage(body: HTMLElement, listings: readonly BotListing[]): Bo
         const items = bots.map((b) => ({ value: b.id, label: b.name, checked: b.id === picked.bot }));
         body.append(
           radios("main-menu-bot-slot", items, (bot) => {
-            pick({ bot, level: picked.level });
+            pick({ bot });
           }),
         );
-        const levels = bots.find((b) => b.id === picked.bot)?.levels ?? [];
-        if (levels.length > 1) {
-          const options = levels.map((l) => ({ value: l.id, label: l.name, checked: l.id === picked.level }));
-          body.append(
-            radios("main-menu-bot-levels", options, (level) => {
-              pick({ bot: picked.bot, level });
-            }),
-          );
-        }
       });
     };
     slots(BOT_MATCH_TEXT.teammates, "teammates");

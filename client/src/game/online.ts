@@ -131,8 +131,9 @@ export interface OnlineStats {
   readonly ping: number | null; // ms, smoothed
   readonly ackFrame: number;
   readonly frame: number;
-  /** Each car drawn: its place and its garage car (the roster's model, as drawn) */
-  readonly cars: readonly { readonly id: number; readonly pos: Vec3; readonly model: number }[];
+  /** Each car drawn: its place, its garage car (the roster's model, as drawn) and its player's name (the roster's; "" before
+   *  it) */
+  readonly cars: readonly { readonly id: number; readonly pos: Vec3; readonly model: number; readonly name: string }[];
   /** This player's car */
   readonly localCar: number;
   readonly corrections: number;
@@ -411,7 +412,7 @@ export class Online {
       ping: this.#session.ping,
       ackFrame: this.#session.ackFrame,
       frame: this.#predictor.frame,
-      cars: [...this.#cars].map(([id, entry]) => ({ id, pos: entry.state.current.pos, model: entry.model })),
+      cars: [...this.#cars].map(([id, entry]) => ({ id, pos: entry.state.current.pos, model: entry.model, name: this.#roster?.get(id)?.name ?? "" })),
       localCar: this.#localCar,
       corrections: this.#predictor.stats.corrections,
       localMispredictions: this.#predictor.stats.localMispredictions,

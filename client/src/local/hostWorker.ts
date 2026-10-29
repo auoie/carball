@@ -41,9 +41,7 @@ async function open(message: Extract<ToHost, { type: "open" }>): Promise<void> {
   const packages: PackageCache = new Map();
   const brains: BotBrain[] = await Promise.all(
     message.setup.bots.map(async (slot) =>
-      slot.brain === "chaser"
-        ? chaser()
-        : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, slot.strength, packages),
+      slot.brain === "chaser" ? chaser() : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, packages),
     ),
   );
   message.setup.bots.forEach((slot, i) => {

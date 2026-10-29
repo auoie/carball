@@ -275,8 +275,9 @@ the game-style pads, the reflection capture, the height fog, the map select, `?t
 are gone (git history at 3cb78f8). The wire keeps the map byte, always 0 (`MAP_COUNT` 1, `NIGHT_MAP`); the server has no
 `--map`. **Play vs Bots** (same day): the server's game core compiled to wasm (`server/src/bin/host.rs`,
 `scripts/build_host.sh`) runs the match in a worker (`client/src/local/`), the page its online client; bots are the
-built-in chaser or the shipped Nexto/Necto packages (`client/bots/`, CC BY-NC-SA 4.0, onnxruntime-web on one thread;
-`CARBALL_BOTS=0` builds without them). RX23 (RV-532..547) fixed in the tree after 3c8622b.
+built-in chaser or the shipped packages (`client/bots/`, onnxruntime-web on one thread; `CARBALL_BOTS=0` builds without
+them). Nexto/Necto (CC BY-NC-SA 4.0) shipped first, off from 2026-10-24; since 2026-10-29 Wisp v2 (MIT) is the only one,
+Play vs Bots on (notes/bots-ml.md §5). RX23 (RV-532..547) fixed in the tree after 3c8622b.
 **Custom training, 2026-10-17** (the user's next feature after be5653a; spec notes/custom-training.md, CTR-1..21):
 Carball's own JSON pack format (`client/src/training/pack.ts`), the run's rules (`training/run.ts`) wired into free play's
 session (`game/freeplay.ts`: the engine's kickoff hold as the countdown's, the ball held frozen, goals scored only when an

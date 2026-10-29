@@ -7,7 +7,9 @@ The weights are copied unchanged (float32). The action table follows its action_
 mask and the mirror are ours in TypeScript (client/src/bots/wisp.ts). Provenance and parity: notes/bots-ml.md.
 
 Usage: python -I scripts/wisp_package.py WISP_SOURCE_DIR [OUT_DIR]   (OUT_DIR: client/bots/wisp)
-  WISP_SOURCE_DIR: the source at commit 58d4ab18 (its archives' sha256s checked); needs numpy and onnx.
+  WISP_SOURCE_DIR: the source at commit 58d4ab18 (verified(): every file read a regular one inside it, the archives' and
+  LICENSE's sha256s pinned; each archive member's size capped before it's read); needs numpy and onnx.
+  Its own checks: scripts/wisp_package_test.py.
 """
 import hashlib
 import io
@@ -27,6 +29,10 @@ MODELS = {
     "src/models/SHARED_HEAD.lt": "3f7b6b363a72d7ceaba3cdb58bc13e1ae95e07b041b5e94a326c7045bebd7e42",
     "src/models/POLICY.lt": "1bd600a15f43106645de84b42379fe9ae404ecfb509dc21a2e309480ea17ebf7",
 }
+# Every file whose bytes are used, not only hashed: the archives, and LICENSE (copied into the shipped package, RV-1188)
+PINNED = {**MODELS, "LICENSE": "0757ad3fb2d0b9ca85e173ddc22c4ba149c6d2816826af71416ac05468b45e23"}
+# An archive member's size at most (the largest is 4 MiB): read only after its declared size is checked (RV-1189)
+MAX_MEMBER = 16 << 20
 # The files the port follows (their hashes recorded in the manifest)
 PORTED = ["src/obs_builder.py", "src/eta.py", "src/utils.py", "src/arena_sdf.py", "src/action_parser.py", "src/bot.py", "src/config.py",
           "src/backend/model.py", "src/backend/gamestate/common_values.py"]
@@ -36,6 +42,30 @@ GROUND_ROWS = 24
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def regular(src: Path, rel: str) -> Path:
+    """The source's file at `rel`: a regular file, no symlink, inside the source (else refused)"""
+    path = src / rel
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(src.resolve()):
+        raise SystemExit(f"{rel}: not a regular file inside the source")
+    return path
+
+
+def verified(src: Path) -> Path:
+    """The source, once every pinned file is a regular one with its pinned sha256 (both scripts' gate)"""
+    for rel, want in PINNED.items():
+        if sha256(regular(src, rel)) != want:
+            raise SystemExit(f"{rel}: not the file of {COMMIT[:8]}")
+    return src
+
+
+def member(archive: zipfile.ZipFile, name: str) -> bytes:
+    """An archive member's bytes, its declared size checked first (zipfile reads no more than it declares)"""
+    info = archive.getinfo(name)
+    if info.file_size > MAX_MEMBER:
+        raise SystemExit(f"{name}: {info.file_size} bytes, over {MAX_MEMBER}")
+    return archive.read(info)
 
 
 # --- the archives' parameters
@@ -91,7 +121,7 @@ class _Unpickler(pickle.Unpickler):
         _, _, key, _location, numel = pid
         if not (isinstance(key, str) and key.isdigit() and isinstance(numel, int)):
             raise pickle.UnpicklingError(f"a storage id of the wrong form {pid!r}")
-        raw = self._archive.read(f"archive/data/{key}")
+        raw = member(self._archive, f"archive/data/{key}")
         if len(raw) != numel * 4:
             raise pickle.UnpicklingError(f"storage {key}: {len(raw)} bytes for {numel} floats")
         return np.frombuffer(raw, dtype="<f4").copy()
@@ -99,9 +129,9 @@ class _Unpickler(pickle.Unpickler):
 
 def layers(path: Path) -> list:
     archive = zipfile.ZipFile(path)
-    if archive.read("archive/byteorder") != b"little":
+    if member(archive, "archive/byteorder") != b"little":
         raise SystemExit(f"{path}: not little-endian")
-    root = _Unpickler(archive.read("archive/data.pkl"), archive).load()
+    root = _Unpickler(member(archive, "archive/data.pkl"), archive).load()
     if not isinstance(root, _Module):
         raise SystemExit(f"{path}: the root isn't a module")
     out = []
@@ -181,9 +211,7 @@ def action_table() -> list:
 def main() -> None:
     src = Path(sys.argv[1])
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent / "client/bots/wisp"
-    for rel, want in MODELS.items():
-        if sha256(src / rel) != want:
-            raise SystemExit(f"{rel}: not the archive of {COMMIT[:8]}")
+    verified(src)
     stack = layers(src / "src/models/SHARED_HEAD.lt") + layers(src / "src/models/POLICY.lt")
     model, first, width, params = policy_onnx(stack)
     table = action_table()
@@ -193,7 +221,7 @@ def main() -> None:
     onnx.save(model, out / "policy.onnx")
     (out / "actions.json").write_text(json.dumps(table, separators=(",", ":")) + "\n")
     # (its LICENSE's ©, “ and ” were stored as U+FFFD: written back)
-    licence = (src / "LICENSE").read_text(encoding="utf-8")
+    licence = regular(src, "LICENSE").read_text(encoding="utf-8")
     licence = licence.replace("Copyright �", "Copyright ©").replace("�Software�", "“Software”").replace("�AS IS�", "“AS IS”")
     if "�" in licence:
         raise SystemExit("LICENSE: an unknown character")
@@ -207,10 +235,10 @@ def main() -> None:
         "licence": "MIT",
         "licenceSpdx": "MIT",
         "licenceFile": "LICENSE.txt",
-        "credit": "Wisp v2 by Nicolaj 'Eastvillage' Jensen (github.com/NicEastvillage), MIT. Its network converted to ONNX with its weights unchanged; its observation and actions re-implemented. No warranty.",
+        "credit": "Wisp v2 by Nicolaj 'Eastvillage' Jensen, https://github.com/NicEastvillage, MIT. Its network converted to ONNX with its weights unchanged; its observation and actions re-implemented. No warranty.",
         "source": "https://github.com/NicEastvillage",
         "sourceCommit": COMMIT,
-        "sourceFiles": [{"path": rel, "bytes": (src / rel).stat().st_size, "sha256": sha256(src / rel)} for rel in [*MODELS, *PORTED]],
+        "sourceFiles": [{"path": rel, "bytes": regular(src, rel).stat().st_size, "sha256": sha256(regular(src, rel))} for rel in [*MODELS, *PORTED]],
         "policy": {
             "opset": 17,
             "file": "policy.onnx",

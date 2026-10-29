@@ -43,11 +43,11 @@ function localAssets(): Plugin {
   };
 }
 
-/** The bot packages (the offline match against bots: src/bots/; Nexto's and Necto's, CC BY-NC-SA 4.0), tracked in
- *  client/bots/ (their derived specs stay local: out/bsim/assets_local/bots/packages): the dev server serves them at
- *  /bots/; a build has them, onnxruntime's WebAssembly and the match host when src/features.ts says (PLAY_VS_BOTS,
- *  CARBALL_BOTS=1 or 0 over it; without them none of the three: __CARBALL_BOTS__ false, the bots' mode hidden). A build with them: their runtime files in dist/bots/ (not their test
- *  vectors), their notices after the page's (bots/NOTICES.txt) and onnxruntime's third-party notices beside them */
+/** The bot packages (the offline match against bots: src/bots/; Wisp's, MIT, built by scripts/wisp_package.py), tracked
+ *  in client/bots/: the dev server serves them at /bots/; a build has them, onnxruntime's WebAssembly and the match host
+ *  when src/features.ts says (PLAY_VS_BOTS, CARBALL_BOTS=1 or 0 over it; without them none of the three:
+ *  __CARBALL_BOTS__ false, the bots' mode hidden). A build with them: their runtime files in dist/bots/, their notices
+ *  after the page's (bots/NOTICES.txt) and onnxruntime's third-party notices beside them */
 const BOT_PACKAGES = here("bots");
 const BOTS = botsBuilt(process.env.CARBALL_BOTS);
 
@@ -64,7 +64,7 @@ function botPackages(): Plugin {
     },
     closeBundle() {
       if (!BOTS || !outDir) return;
-      const shipped = (path: string): boolean => !/(vectors\.json|NOTICES\.txt|ThirdPartyNotices\.txt)$/.test(path);
+      const shipped = (path: string): boolean => !/(NOTICES\.txt|ThirdPartyNotices\.txt)$/.test(path);
       cpSync(BOT_PACKAGES, join(outDir, "bots"), { recursive: true, filter: shipped });
       const notices = join(outDir, "THIRD_PARTY_NOTICES.txt");
       const bots = readFileSync(join(BOT_PACKAGES, "NOTICES.txt"), "utf8");

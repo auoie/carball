@@ -2831,18 +2831,6 @@ body {
   background: rgba(20, 60, 110, 0.9);
 }
 
-/* (a slot's levels under its bots, smaller: Full, and the bot's own easier one) */
-.main-menu-bots .main-menu-bot-levels {
-  grid-template-columns: repeat(auto-fit, minmax(80px, 140px));
-  margin-top: -2px;
-}
-
-.main-menu-bot-levels .main-menu-button {
-  padding-top: 4px;
-  padding-bottom: 4px;
-  font-size: 0.85em;
-}
-
 .main-menu-bot-side {
   padding: 6px 2px 0;
   font: calc(15px * var(--hud-header-scale, 1))/18px var(--hud-header);

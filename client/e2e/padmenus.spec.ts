@@ -199,8 +199,8 @@ test("the settings with a pad: the bumpers step the tabs (stopping at the ends),
   await expect(page.locator("#menu-hints")).toContainText("Back");
   await expect(page.locator("#menu-hints")).toContainText("Default");
   await expect(page.locator("#menu-hints .key-pad")).toHaveCount(2);
-  // The Gameplay tab (our own controls, src/ui/controls.ts): its first row a checkbox, A toggles it; down to a list,
-  // right steps its value in place (no popup)
+  // The Gameplay tab (our own controls, src/ui/controls.ts): its first row a checkbox, A toggles it; down past free play's
+  // goals (another checkbox) to a list, right steps its value in place (no popup)
   await tap(page, [RB]);
   await tap(page, [RB]);
   await expect(tabs.nth(3)).toHaveClass(/\bactive\b/);
@@ -209,6 +209,8 @@ test("the settings with a pad: the bumpers step the tabs (stopping at the ends),
   await expect(boost).toHaveAttribute("aria-checked", "true");
   await tap(page, [A]);
   await expect(settings.locator('[data-option="unlimitedBoost"]')).toHaveAttribute("aria-checked", "false");
+  await tap(page, [DOWN]);
+  await expect(settings.locator('[data-setting="freePlayGoals"]')).toHaveClass(/pad-focus/);
   await tap(page, [DOWN]);
   const level = settings.locator('[data-setting="statDisplayLevel"]');
   await expect(level).toHaveClass(/pad-focus/);

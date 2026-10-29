@@ -951,9 +951,11 @@ async function main(): Promise<void> {
       // (none in a build without bots: its setup's chunk left out, RV-541)
       botMatch: (choices) => {
         if (!__CARBALL_BOTS__) return;
+        // (its player named once the account's read: a Start pressed before keeps the signed-in name, RV-1191)
         const go = (): void => {
-          void import("./local/botMatch").then(({ botMatchSetup, storeBotMatch }) => {
-            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff), account?.name));
+          void import("./local/botMatch").then(async ({ botMatchSetup, playerNameOnceKnown, storeBotMatch }) => {
+            const playerName = await playerNameOnceKnown(accountsReady, () => account);
+            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff), playerName));
             location.assign(pageUrl("bots", location));
           });
         };

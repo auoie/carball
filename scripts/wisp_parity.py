@@ -1,7 +1,7 @@
 """Wisp v2's model parity: the TypeScript port's decisions (recorded by client/src/bots/wispRecord.test.ts, WISP_RECORD)
 against the reference, the network as its model.py rebuilds it (Linear, LayerNorm with torch's default epsilon, ReLU) in
-eager PyTorch with the weights read from its archives (scripts/wisp_package.py's whitelisting unpickler: nothing of the
-original runs), picked as its ModelSet.get_action does deterministically (the rows the mask leaves out at -1e10, none
+eager PyTorch with the weights read from its archives (scripts/wisp_package.py's gate and whitelisting unpickler: nothing
+of the original runs), picked as its ModelSet.get_action does deterministically (the rows the mask leaves out at -1e10, none
 allowed meaning all; argmax). For each decision: the port's logits (onnxruntime-web) against the reference's on the same
 observation, the port's pick against the reference's, its row against the table's (or that row mirrored).
 
@@ -44,11 +44,12 @@ def pick(logits: np.ndarray, allowed: np.ndarray) -> int:
 
 
 def main() -> None:
-    src, record = Path(sys.argv[1]), Path(sys.argv[2])
+    # (the source checked as the package's: its pinned files, RV-1189)
+    src, record = wisp_package.verified(Path(sys.argv[1])), Path(sys.argv[2])
     model = reference(src)
     table = wisp_package.action_table()
     f32 = lambda s: np.frombuffer(base64.b64decode(s), dtype="<f4")  # noqa: E731
-    rows = [json.loads(line) for line in record.read_text().splitlines() if line]
+    rows = [r for r in (json.loads(line) for line in record.read_text().splitlines() if line) if r.get("kind") == "decision"]
     obs = np.stack([f32(r["obs"]) for r in rows])
     ours = np.stack([f32(r["logits"]) for r in rows])
     ref = model(torch.from_numpy(obs.copy())).numpy()

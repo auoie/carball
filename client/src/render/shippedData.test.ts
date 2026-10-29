@@ -350,11 +350,11 @@ describe("what ships carries no game data (RV-99)", () => {
     for (const path of shipped) {
       const at = relative(join(DIST, "bots"), path).split("\\").join("/");
       const [bot = "", file = ""] = at.split("/");
-      const manifest = JSON.parse(readFileSync(join(BOTS, bot, "bot.json"), "utf8")) as { policy: { files: Record<string, { file: string; sha256: string }> } };
-      const pinned = Object.values(manifest.policy.files).find((f) => f.file === file);
+      const manifest = JSON.parse(readFileSync(join(BOTS, bot, "bot.json"), "utf8")) as { policy: { file: string; sha256: string } };
       const bytes = readFileSync(path);
+      expect(file, at).toBe(manifest.policy.file);
       expect(bytes.equals(readFileSync(join(BOTS, at))), at).toBe(true);
-      expect(createHash("sha256").update(bytes).digest("hex"), at).toBe(pinned?.sha256);
+      expect(createHash("sha256").update(bytes).digest("hex"), at).toBe(manifest.policy.sha256);
     }
   });
 

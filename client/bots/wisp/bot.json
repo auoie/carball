@@ -7,7 +7,7 @@
  "licence": "MIT",
  "licenceSpdx": "MIT",
  "licenceFile": "LICENSE.txt",
- "credit": "Wisp v2 by Nicolaj 'Eastvillage' Jensen (github.com/NicEastvillage), MIT. Its network converted to ONNX with its weights unchanged; its observation and actions re-implemented. No warranty.",
+ "credit": "Wisp v2 by Nicolaj 'Eastvillage' Jensen, https://github.com/NicEastvillage, MIT. Its network converted to ONNX with its weights unchanged; its observation and actions re-implemented. No warranty.",
  "source": "https://github.com/NicEastvillage",
  "sourceCommit": "58d4ab18fd0c92529b5ae6582ecf1713a6b1887a",
  "sourceFiles": [

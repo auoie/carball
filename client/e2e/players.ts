@@ -16,21 +16,23 @@ export async function join(page: Page, server: string, errors: string[]): Promis
 
 /** Another player in a context of their own (drawn small: every page renders in software, and a third page under the
  *  suite's load otherwise starves) */
-export async function newPlayer(browser: Browser, server: string, errors: string[], name?: string): Promise<Page> {
+export async function newPlayer(browser: Browser, server: string, errors: string[]): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
   await hideGamepads(context);
   const page = await context.newPage();
-  if (name !== undefined) await named(page, name);
   await join(page, server, errors);
   return page;
 }
 
-/** The page's player name, in its saved settings */
-export async function named(page: Page, name: string): Promise<void> {
-  await page.addInitScript((n) => {
-    // (not on about:blank, where leaving takes the page: no storage there)
-    if (location.protocol.startsWith("http")) localStorage.setItem("carball.settings.v1", JSON.stringify({ chat: { name: n } }));
-  }, name);
+/** The page's own player's name, as the server gave it (a development server's "Player N": the page names none) */
+export async function ownName(page: Page): Promise<string> {
+  const read = (): Promise<string> =>
+    page.evaluate(() => {
+      const o = (window as unknown as { carballOnline: () => { cars: { id: number; name: string }[]; localCar: number } }).carballOnline();
+      return o.cars.find((c) => c.id === o.localCar)?.name ?? "";
+    });
+  await expect.poll(read, { timeout: 30_000 }).not.toBe("");
+  return read();
 }
 
 /** The match ends the page saw: each one's winner and whether by forfeit */

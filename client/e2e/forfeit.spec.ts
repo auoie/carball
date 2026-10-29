@@ -5,12 +5,12 @@
 // end is read from the phases it recorded, which outlast its 8.3 s podium.)
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { ends, join as joinServer, leave, leaveAll, named, newPlayer as newServerPlayer } from "./players";
+import { ends, join as joinServer, leave, leaveAll, newPlayer as newServerPlayer, ownName } from "./players";
 import type { Browser } from "@playwright/test";
 
 const SERVER = "127.0.0.1:14438";
 const join = (page: Page, errors: string[]): Promise<void> => joinServer(page, SERVER, errors);
-const newPlayer = (browser: Browser, errors: string[], name?: string): Promise<Page> => newServerPlayer(browser, SERVER, errors, name);
+const newPlayer = (browser: Browser, errors: string[]): Promise<Page> => newServerPlayer(browser, SERVER, errors);
 /** The menu's match button (shown upper-case) */
 const button = (page: Page, label: string) => page.getByRole("button", { name: new RegExp(`^${label}$`, "i") });
 
@@ -103,20 +103,22 @@ test("a team votes to concede: the tally, a failed vote's lockout, a teammate's 
 test("quick chat: the two presses, to all and to the team, names and comings and goings in the log", async ({ page, browser }) => {
   test.setTimeout(300_000); // (two pages, eight chat lines, the menu's mute and block)
   const errors: string[] = [];
-  await named(page, "Merc");
   await join(page, errors);
   await expect(page.locator("#net")).toContainText("1 cars", { timeout: 30_000 }); // (alone: blue)
-  const other = await newPlayer(browser, errors, "Ziggy"); // (orange)
+  const other = await newPlayer(browser, errors); // (orange)
   others.push(other);
+  // (each named by the server: the page names none)
+  const [merc, ziggy] = [await ownName(page), await ownName(other)];
+  const MERC = merc.toUpperCase();
   const log = page.locator("#chat-log");
-  await expect(log).toContainText("Ziggy joined the match", { timeout: 30_000 });
+  await expect(log).toContainText(`${ziggy} joined the match`, { timeout: 30_000 });
 
   // 2 then 1: Compliments' first, "Nice shot!", to all; both see it, the sender as YOU, the clock before it
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await category(page, "Digit2", "Compliments");
   await page.keyboard.press("Digit1");
   await expect(log).toContainText(/\[\d:\d\d\] YOU: Nice shot!/, { timeout: 15_000 });
-  await expect(other.locator("#chat-log")).toContainText(/\[\d:\d\d\] MERC: Nice shot!/, { timeout: 30_000 });
+  await expect(other.locator("#chat-log")).toContainText(new RegExp(`\\[\\d:\\d\\d\\] ${MERC}: Nice shot!`), { timeout: 30_000 });
   // 1 then 1: Informational's first, "I got it!", to the team only (orange doesn't see it). (Each press seen by its own
   // frame: two inside one frame are one press)
   await category(page, "Digit1", "Informational");
@@ -125,17 +127,17 @@ test("quick chat: the two presses, to all and to the team, names and comings and
   // (then a line to all, and once orange has it, the team line before it hasn't come: RV-258)
   await category(page, "Digit2", "Compliments");
   await page.keyboard.press("Digit2");
-  await expect(other.locator("#chat-log")).toContainText("MERC: Great pass!", { timeout: 30_000 });
+  await expect(other.locator("#chat-log")).toContainText(`${MERC}: Great pass!`, { timeout: 30_000 });
   await expect(other.locator("#chat-log")).not.toContainText("I got it!");
 
   // Blocking from the menu's player list: the button turns to Unblock, a toast confirms, and Ziggy's lines no longer
   // show here (they still do on Ziggy's page)
   await page.keyboard.press("Escape");
   await page.locator(".players-toggle").click();
-  const row = page.locator(".player-row", { hasText: "Ziggy" });
+  const row = page.locator(".player-row", { hasText: ziggy });
   await row.locator("button[data-action=block]").click();
   await expect(row.locator("button[data-action=block]")).toHaveText("Unblock");
-  await expect(page.locator("#toast")).toContainText("You have blocked Ziggy.");
+  await expect(page.locator("#toast")).toContainText(`You have blocked ${ziggy}.`);
   await page.keyboard.press("Escape");
   await other.locator("#game").click({ button: "right" }); // (its centre: this page is drawn small)
   await category(other, "Digit2", "Compliments");
@@ -146,8 +148,8 @@ test("quick chat: the two presses, to all and to the team, names and comings and
   // Muting from Ziggy's side: the server keeps Merc's lines from Ziggy (a positive control: Merc's own line arrives)
   await other.keyboard.press("Escape");
   await other.locator(".players-toggle").click();
-  await other.locator(".player-row", { hasText: "Merc" }).locator("button[data-action=mute]").click();
-  await expect(other.locator(".player-row", { hasText: "Merc" }).locator("button[data-action=mute]")).toHaveText("Unmute");
+  await other.locator(".player-row", { hasText: merc }).locator("button[data-action=mute]").click();
+  await expect(other.locator(".player-row", { hasText: merc }).locator("button[data-action=mute]")).toHaveText("Unmute");
   await other.keyboard.press("Escape");
   await page.waitForTimeout(3000); // (Merc's spam bucket drains)
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
@@ -156,20 +158,20 @@ test("quick chat: the two presses, to all and to the team, names and comings and
   const line = (p: typeof page, text: string) => p.locator("#chat-log > div > div", { hasText: text });
   await expect(line(page, "YOU: Nice shot!")).toHaveCount(2, { timeout: 15_000 });
   await other.waitForTimeout(1500);
-  await expect(line(other, "MERC: Nice shot!")).toHaveCount(1);
+  await expect(line(other, `${MERC}: Nice shot!`)).toHaveCount(1);
   // The other leaves: the log says so
   await leave(other);
-  await expect(log).toContainText("Ziggy left the match", { timeout: 30_000 });
+  await expect(log).toContainText(`${ziggy} left the match`, { timeout: 30_000 });
   expect(errors).toEqual([]);
 });
 
 test("the match's end: the winner banner, the podium with the winner's tag, the end screen, ready for the next match", async ({ page, browser }) => {
   test.setTimeout(240_000); // (two pages joining under the suite's load)
   const errors: string[] = [];
-  await named(page, "Merc");
   await join(page, errors);
   await expect(page.locator("#net")).toContainText("1 cars", { timeout: 30_000 }); // (alone: blue)
-  const orange = await newPlayer(browser, errors, "Ziggy"); // (orange, alone: its vote passes at once)
+  const merc = await ownName(page);
+  const orange = await newPlayer(browser, errors); // (orange, alone: its vote passes at once)
   others.push(orange);
   await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
   // Orange concedes once votes are allowed (this server: as soon as the clock runs)
@@ -182,7 +184,7 @@ test("the match's end: the winner banner, the podium with the winner's tag, the 
   await expect(banner.locator(".winner-team")).toHaveText("BLUE");
   await expect(page.locator("#score-blue")).toBeHidden(); // (the HUD's match parts go: MIO-17; #score the board's 0 x 0 anchor)
   // The podium: the winner's car on it, its name under it (MIO-22); the banner raised
-  await expect(page.locator(".podium-tag", { hasText: "Merc" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".podium-tag", { hasText: merc })).toBeVisible({ timeout: 15_000 });
   await expect(banner.locator(".winner")).toHaveClass(/raised/);
   await page.screenshot({ path: "test-results/podium.png" });
   // The end screen (MIO-26, 31): the scoreboard with the winner stamp, the countdown, Ready; both ready: the next match

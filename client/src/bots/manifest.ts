@@ -1,27 +1,17 @@
-// A bot package's manifest (bot.json: the packages' FORMAT.md, version 1, from the static session's ports): who made it
-// and under what licence, its policy (ONNX, one file per team size where the entity count differs), the observation
-// builder, action parser, timing schedule, kickoff script and difficulty it names (each ours, in TypeScript, from the
-// first package's SPEC.md: nothing of the original runs), its team sizes and test vectors. Packages are local and
-// git-ignored (out/bsim/assets_local/bots/packages) unless a build is told to include them.
+// A bot package's manifest (bot.json, format 1): who made it and under what licence, its policy (one ONNX file for
+// every team size it plays), the observation builder, action parser, mask, mirror, timing schedule and moments it names
+// (each ours, in TypeScript: nothing of the original runs), its team sizes. The packages: client/bots/ (Wisp's built by
+// scripts/wisp_package.py).
 
 export type Controls8 = readonly [number, number, number, number, number, number, number, number];
 
-/** beta 1: argmax (ties to the lowest), -1: argmin, 0: uniform, else drawn from softmax(logits · log₃((1 + β) / (1 − β)));
- *  the overrides in order, a later one winning */
-export interface BetaPick {
-  readonly mode: "beta";
-  readonly beta: number;
-  readonly overrides: readonly { readonly when: "kickoffPause" | "matchEnded"; readonly beta: number }[];
-}
-
 export interface PolicySpec {
   readonly opset: number;
-  readonly file?: string;
-  readonly files?: Readonly<Partial<Record<"1" | "2" | "3", { readonly file: string; readonly entities?: number }>>>;
-  /** "N": the team size's entity count */
-  readonly inputs: readonly { readonly name: string; readonly shape: readonly (number | "N")[] }[];
+  readonly file: string;
+  readonly inputs: readonly { readonly name: string; readonly shape: readonly number[] }[];
   readonly outputs: readonly { readonly name: string; readonly shape: readonly number[] }[];
-  readonly pick: "argmax" | "sample" | BetaPick;
+  /** argmax: the likeliest row (ties to the lowest); sample: drawn from the softmax */
+  readonly pick: "argmax" | "sample";
   readonly state?: unknown;
 }
 
@@ -33,23 +23,6 @@ export interface LookupAction {
   readonly mask?: { readonly rule: string; readonly groundRows: number };
   /** The row picked in a mirrored view turned back (a rule of ours by name) */
   readonly mirror?: string;
-}
-
-export interface MultiDiscreteAction {
-  readonly parser: "multidiscrete-v1";
-  readonly heads: readonly number[];
-  readonly columns: readonly string[];
-  /** Each control: the product of its factors' values at their heads' picks (none: 0) */
-  readonly controls: Readonly<Record<string, readonly { readonly head: number; readonly values: readonly number[] }[]>>;
-}
-
-export interface KickoffScript {
-  readonly script: "rows-v1";
-  readonly phases: readonly (readonly [number, Controls8])[];
-  readonly totalTicks: number;
-  readonly taker: "nearest-left-v1";
-  readonly takerToleranceUu: number;
-  readonly setsPrevAction: boolean;
 }
 
 export interface BotManifest {
@@ -64,25 +37,19 @@ export interface BotManifest {
   readonly source?: string;
   readonly policy: PolicySpec;
   readonly observation: { readonly builder: string } & Readonly<Record<string, unknown>>;
-  readonly action: LookupAction | MultiDiscreteAction;
+  readonly action: LookupAction;
   readonly tickSkip: number;
   readonly timing?: { readonly schedule: string; readonly applyAtCounter: number };
   readonly teamSizes: readonly number[];
-  readonly kickoff?: KickoffScript;
   /** Scripted controls for the moments it doesn't play (a goal's aftermath, the match's end: a rule of ours by name),
    *  its schedule held meanwhile */
   readonly moments?: string;
-  /** random-controls-v1: its default strength, and Nexto's own easier level where its package defines it */
-  readonly difficulty?: { readonly kind: string; readonly defaultStrength: number; readonly nextoEzStrength?: number };
-  readonly vectors?: string;
 }
 
 /** A bot's id (a package's folder, the built-in brains'): checked before any fetch names it */
 export const BOT_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const isFiles = (v: unknown): boolean => isRecord(v) && Object.entries(v).every(([k, f]) => ["1", "2", "3"].includes(k) && isRecord(f) && typeof f["file"] === "string");
-const isPick = (v: unknown): boolean => v === "argmax" || v === "sample" || (isRecord(v) && v["mode"] === "beta" && typeof v["beta"] === "number" && Array.isArray(v["overrides"]));
 
 /** A licence file's name: one file beside bot.json (no folders) */
 const LICENCE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -96,30 +63,21 @@ export function parseManifest(json: unknown): BotManifest | string {
   if (typeof licence !== "string") return "its licence";
   const { licenceFile } = json;
   if (licenceFile !== undefined && (typeof licenceFile !== "string" || !LICENCE_FILE.test(licenceFile))) return "its licence file";
-  if (!isRecord(policy) || !(typeof policy["file"] === "string" || isFiles(policy["files"])) || !Array.isArray(policy["inputs"]) || !Array.isArray(policy["outputs"]) || !isPick(policy["pick"])) return "its policy";
+  if (!isRecord(policy) || typeof policy["file"] !== "string" || !Array.isArray(policy["inputs"]) || !Array.isArray(policy["outputs"]) || !(policy["pick"] === "argmax" || policy["pick"] === "sample")) return "its policy";
   if (!isRecord(observation) || typeof observation["builder"] !== "string") return "its observation builder";
   if (!isRecord(action) || typeof action["parser"] !== "string") return "its action parser";
   if (action["parser"] === "lookup-v1" && typeof action["table"] !== "string") return "its action table";
-  if (action["parser"] === "multidiscrete-v1" && (!Array.isArray(action["heads"]) || !isRecord(action["controls"]))) return "its action heads";
   if (typeof tickSkip !== "number" || !Number.isInteger(tickSkip) || tickSkip < 1 || tickSkip > 120) return "its tick skip";
   if (!Array.isArray(teamSizes) || !teamSizes.every((n) => n === 1 || n === 2 || n === 3)) return "its team sizes";
   return json as unknown as BotManifest;
 }
 
-/** The policy's file and entity count for a team size (null: the package doesn't play it) */
-export function policyFile(manifest: BotManifest, teamSize: number): { readonly file: string; readonly entities: number | null } | null {
-  if (!manifest.teamSizes.includes(teamSize)) return null;
-  const { file, files } = manifest.policy;
-  const own = files?.[String(teamSize) as "1" | "2" | "3"];
-  if (own) return { file: own.file, entities: own.entities ?? null };
-  return file === undefined ? null : { file, entities: null };
+/** The policy's file for a team size (null: the package doesn't play it) */
+export function policyFile(manifest: BotManifest, teamSize: number): string | null {
+  return manifest.teamSizes.includes(teamSize) ? manifest.policy.file : null;
 }
 
-/** The pick's beta for the moment (argmax: 1; sample: 0.5, plain softmax) */
-export function pickBeta(pick: PolicySpec["pick"], moment: { readonly kickoffPause: boolean; readonly matchEnded: boolean }): number {
-  if (pick === "argmax") return 1;
-  if (pick === "sample") return 0.5;
-  let beta = pick.beta;
-  for (const o of pick.overrides) if (moment[o.when]) beta = o.beta;
-  return beta;
+/** The pick's beta (bots/actions.ts pickIndex): argmax 1; sample 0.5, the plain softmax */
+export function pickBeta(pick: PolicySpec["pick"]): number {
+  return pick === "argmax" ? 1 : 0.5;
 }

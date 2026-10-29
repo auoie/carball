@@ -5,10 +5,10 @@
  *  play mode and editor kept */
 export const CUSTOM_TRAINING = false as boolean;
 
-/** Play vs Bots (Necto's and Nexto's licence, the Wisp port queued): off, a build has no bots unless CARBALL_BOTS=1 (none
- *  of their packages, onnxruntime or the match host: vite.config.ts), so no menu entry, no ?bots match, nothing of theirs
- *  downloaded; on, a build has them unless CARBALL_BOTS=0 */
-export const PLAY_VS_BOTS = false as boolean;
+/** Play vs Bots (Wisp, MIT, since 2026-10-29; Necto's and Nexto's non-commercial licence had it off): on, a build has
+ *  the bots unless CARBALL_BOTS=0 (their packages, onnxruntime and the match host: vite.config.ts); off, none of them, so
+ *  no menu entry, no ?bots match, nothing of theirs downloaded */
+export const PLAY_VS_BOTS = true as boolean;
 
 /** Whether a build has the bots: CARBALL_BOTS when given ("0" none), else PLAY_VS_BOTS (vite.config.ts; the bots' tests) */
 export function botsBuilt(flag: string | undefined): boolean {

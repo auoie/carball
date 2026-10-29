@@ -36,9 +36,8 @@ export const BALL_PREDICTION_TICKS = 720;
 export const BALL_SLICE = 6;
 
 /** The match after a tick as the bots see it: every car in index order (the match's, by car id), the ball, the pads in
- *  our arena's order; the teams' goals (blue, orange) and the arena's tick count; the kickoff's pause (from "go" until the
- *  ball's first touch: the packages' SPEC §6), a goal's aftermath (its explosion and replay) and the match's end (the
- *  winner shown, the podium, the end screen); the ball's path from now (alone in the arena, no goal scored: worked out
+ *  our arena's order; the teams' goals (blue, orange) and the arena's tick count; a goal's aftermath (its explosion and
+ *  replay) and the match's end (the winner shown, the podium, the end screen); the ball's path from now (alone in the arena, no goal scored: worked out
  *  once a tick, the first time a bot asks) */
 export interface BotState {
   readonly cars: readonly BotCar[];
@@ -46,7 +45,6 @@ export interface BotState {
   readonly pads: readonly { readonly pos: Vec3; readonly active: boolean; readonly cooldown: number }[];
   readonly score: readonly [number, number];
   readonly tickCount: number;
-  readonly kickoffPause: boolean;
   readonly goalScored: boolean;
   readonly matchEnded: boolean;
   readonly ballPrediction: () => Float32Array;
@@ -65,23 +63,13 @@ export interface BotBrain {
 }
 
 /** The match's phases (protocol's Phase numbers) a brain reads */
-const PHASE_ACTIVE = 1;
 const GOAL_PHASES: ReadonlySet<number> = new Set([2, 5]);
 const ENDED_PHASES: ReadonlySet<number> = new Set([4, 7, 8]);
 
-/** The match's moments a brain reads, from its phase and the ball: the kickoff's pause while play is on and the ball
- *  hasn't been touched (it rests on its spot, still, until then; not the countdown's), a goal's aftermath (post-goal and
- *  its replay), the match's end (its pre-podium, podium and after) */
-export function matchMoments(
-  phase: number | null,
-  ball: Pick<BotState["ball"], "pos" | "vel">,
-): { readonly kickoffPause: boolean; readonly goalScored: boolean; readonly matchEnded: boolean } {
-  const untouched = ball.pos.x === 0 && ball.pos.y === 0 && ball.vel.x === 0 && ball.vel.y === 0 && ball.vel.z === 0;
-  return {
-    kickoffPause: phase === PHASE_ACTIVE && untouched,
-    goalScored: phase !== null && GOAL_PHASES.has(phase),
-    matchEnded: phase !== null && ENDED_PHASES.has(phase),
-  };
+/** The match's moments a brain reads, from its phase: a goal's aftermath (post-goal and its replay), the match's end
+ *  (its pre-podium, podium and after) */
+export function matchMoments(phase: number | null): { readonly goalScored: boolean; readonly matchEnded: boolean } {
+  return { goalScored: phase !== null && GOAL_PHASES.has(phase), matchEnded: phase !== null && ENDED_PHASES.has(phase) };
 }
 
 /** The bots' state from the world after a tick, the match's phase (matchMoments) and score */
@@ -101,7 +89,7 @@ export function botState(
     pads: world.boostPads(),
     score,
     tickCount: world.tick,
-    ...matchMoments(phase, ball),
+    ...matchMoments(phase),
     ballPrediction: () => (path ??= world.predictBall(BALL_PREDICTION_TICKS)),
   };
   return { state, ids };

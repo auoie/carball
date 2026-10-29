@@ -36,8 +36,8 @@ namespace Layout {
 		BALL_SPAWN_COUNT = 19 /* placements by a reset (wraps at 65536): a correction that changes it is a new ball */,
 		BALL_SIZE = 20;
 
-	// A ball prediction's slice (predictBall): position, velocity
-	constexpr int PREDICT_POS = 0, PREDICT_VEL = 3, PREDICT_SIZE = 6;
+	// A ball prediction's slice (predictBall): position, velocity; its ticks at most (10 s)
+	constexpr int PREDICT_POS = 0, PREDICT_VEL = 3, PREDICT_SIZE = 6, PREDICT_MAX_TICKS = 1200;
 
 	// Car: as the ball, then boost (0-100) and flags (0/1)
 	constexpr int
@@ -324,17 +324,18 @@ public:
 	}
 
 	// The ball's path from now with nothing else in the arena and no goal scored (a bot's ball prediction, as RLBot's:
-	// the ball alone, through the goals' nets): `ticks` slices of PREDICT_SIZE floats, slice i the ball after i + 1
-	// ticks, on an arena of its own (made the first time) that this one never sees
+	// the ball alone, through the goals' nets): `ticks` slices (PREDICT_MAX_TICKS at most) of PREDICT_SIZE floats, slice
+	// i the ball after i + 1 ticks, on an arena of its own (made the first time) that this one never sees, with this
+	// one's rules (its ball's among them) but goals never scored
 	Float32ArrayVal PredictBall(int ticks) {
-		if (!_predictor) {
+		ticks = std::clamp(ticks, 0, Layout::PREDICT_MAX_TICKS);
+		if (!_predictor)
 			_predictor = Arena::Create(GameMode::SOCCAR);
-			MutatorConfig config = _predictor->GetMutatorConfig();
-			config.goalBaseThresholdY = 1e9f;
-			_predictor->SetMutatorConfig(config);
-		}
+		MutatorConfig config = _arena->GetMutatorConfig();
+		config.goalBaseThresholdY = 1e9f;
+		_predictor->SetMutatorConfig(config);
 		_predictor->ball->SetState(_arena->ball->GetState());
-		_floats.assign((size_t)std::max(ticks, 0) * Layout::PREDICT_SIZE, 0);
+		_floats.assign((size_t)ticks * Layout::PREDICT_SIZE, 0);
 		for (int i = 0; i < ticks; i++) {
 			_predictor->Step(1);
 			const RocketSim::BallState s = _predictor->ball->GetState();

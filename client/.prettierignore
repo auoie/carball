@@ -1,6 +1,6 @@
-# Not Prettier's: built and test output; the bots' packages (generated, their model data and vectors among them); the
-# cars' models; public/ (fonts, notices and data as their sources ship them); the server-generated test vectors;
-# Markdown (hand-wrapped prose); npm's lockfile. node_modules/ and what .gitignore lists are skipped already.
+# Not Prettier's: built and test output; the bots' packages (generated, their model data among them); the cars' models;
+# public/ (fonts, notices and data as their sources ship them); the generated test vectors (the server's, Wisp's golden
+# ones); Markdown (hand-wrapped prose); npm's lockfile. node_modules/ and what .gitignore lists are skipped already.
 dist/
 test-results/
 playwright-report/

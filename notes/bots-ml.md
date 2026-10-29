@@ -1,5 +1,10 @@
 # Offline vs-bots: ML bot licensing and port notes (BOT1, 2026-10-17)
 
+> **Historical (2026-10-29, WISP2):** Necto and Nexto were removed from Carball: their packages, the entity perceiver,
+> Nexto's kickoff script, the EZ difficulty, Necto's multi-discrete parser, the beta pick, their tests and their notices.
+> §1–§4 and "Port status" below describe them as they were (git history before WISP2). Wisp v2 (MIT) is the only bot
+> now: §5.
+
 Research for a possible scope revision: an **offline single-player "vs bots" mode** only. Online matchmaking stays bot-free
 (decision 2026-10-14). The user stopped the research on 2026-10-17. This file keeps what was found; the next step (whether and
 how to bring in Nexto's code and model) is the user's. Web research only: nothing was downloaded, no weights were fetched.
@@ -305,11 +310,11 @@ and none the config's activation, ReLU.
   - the pads' cooldowns;
   - "ball touched this step" = the car's last ball hit within the last 8 ticks.
   
-  Its RLBot adapter approximates or loses these: a 1-tick touch window, a handbrake ramp of ±5/s, and an `is_jumping`
-  compared against the enum class.
+  Its RLBot adapter approximates or loses these: a 1-tick touch window, a handbrake ramp of ±5/s, an `is_jumping`
+  compared against the enum class, and a demolished car's respawn timer never set (always 0; ours the engine's, RX73).
 - **Ball prediction:** the engine's new `predictBall` (WASM bindings only; web deploy). It simulates the ball alone on its
-  own arena with goal scoring off, 720 slices of 1 tick (as RLBot's: slice i is the ball after i + 1 ticks), worked out
-  once a tick for all bots.
+  own arena, with the bots' arena's own rules but goal scoring off, 720 slices of 1 tick (as RLBot's: slice i is the ball
+  after i + 1 ticks; at most 1,200), worked out once a tick for all bots.
 - **Score:** from the local host's new `host_score` export.
 
 ### Parity (2026-10-29)
@@ -342,6 +347,20 @@ and `backend/`) ran on the recorded states.
   - The ETA cache feeds the next decision, so a flip lasts a few decisions.
   - The original itself depends on its platform here (numba calls the platform's libm).
   - **End to end** (its own observation and mask through the reference): the same pick in 5,380 / 5,412 (99.4%).
+
+**Kept in the repo** (RX73's RV-1188..1190):
+- `src/testing/wisp.vectors.json`: 20 of the recorded decisions (across team sizes, teams, mirrored or not, in the air,
+  pads down, a car demolished) with Wisp's own observation and mask from the sandboxed run. `wisp.test.ts` holds our
+  builder to them: every feature within 1e-6 except the ETAs (history-dependent), the mask exactly.
+- `scripts/wisp_package.py`'s gate, shared by `wisp_parity.py`: every file read is a regular one inside the source (no
+  symlinks); the archives and LICENSE are pinned by sha256; archive members over 16 MiB are refused before reading.
+  `scripts/wisp_package_test.py` tests it on made-up trees.
+
+### Cost (RX73)
+One Wisp policy run is 0.93 ms (onnxruntime-web in Node, one thread; the model is 13.7 MB against Nexto's 1.8 MB). In a
+3v3 against five bots that's 5 runs plus one ball prediction (about 1.1 ms), so about 6 ms on one tick in 8, in the host's
+worker. That fits within the 8.3 ms tick here; a slow device needs a real device to check. **Not done, noted:** the bots
+deciding on the same tick could run as one [N, 432] batch.
 
 ### Strength (2026-10-29)
 Full matches in the local host (`wispRecord.test.ts`, WISP_MATCHES), Wisp's goals first:

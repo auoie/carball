@@ -1,9 +1,8 @@
-// The action parsers a bot package can name (ours, from FORMAT.md): the policy's logits picked (bots/manifest.ts's beta)
-// and read as controls [throttle, steer, pitch, yaw, roll, jump, boost, handbrake], buttons pressed past 0.
-// lookup-v1: one pick over the rows of the package's table; multidiscrete-v1: one pick per head (the logits the heads
-// concatenated), each control the product of its factors' values at their heads' picks.
+// The action parser a bot package can name (ours): lookup-v1, the policy's logits (its mask's rows alone) picked
+// (bots/manifest.ts's beta) over the rows of the package's table, each [throttle, steer, pitch, yaw, roll, jump, boost,
+// handbrake], buttons pressed past 0.
 import type { BotControls } from "../local/host";
-import type { Controls8, MultiDiscreteAction } from "./manifest";
+import type { Controls8 } from "./manifest";
 
 /** A pick of `logits[from, from + count)` at `beta` (1 argmax, ties to the lowest; -1 argmin; 0 uniform; else drawn from
  *  the softmax of logits · log₃((1 + β) / (1 − β))), `random` in [0, 1) */
@@ -34,9 +33,9 @@ export function rowControls(row: Controls8): BotControls {
   return { throttle, steer, pitch, yaw, roll, jump: jump > 0, boost: boost > 0, handbrake: handbrake > 0 };
 }
 
-/** What a parser makes of the logits: its pick (a row, or one per head) and the controls' row */
+/** What a parser makes of the logits: its pick (a row of the table) and the controls' row */
 export interface Parsed {
-  readonly pick: number | readonly number[];
+  readonly pick: number;
   readonly row: Controls8;
 }
 
@@ -59,27 +58,6 @@ export function lookupParser(table: readonly Controls8[]): ActionParser {
     const row = table[pick];
     if (!row) throw new Error(`action ${String(pick)} outside its table of ${String(table.length)}`);
     return { pick, row };
-  };
-}
-
-const COLUMNS = ["throttle", "steer", "pitch", "yaw", "roll", "jump", "boost", "handbrake"] as const;
-
-/** multidiscrete-v1: a pick per head, each control its factors' product */
-export function multiDiscreteParser(action: MultiDiscreteAction): ActionParser {
-  return (logits, beta, random) => {
-    const picks: number[] = [];
-    let from = 0;
-    for (const size of action.heads) {
-      picks.push(pickIndex(logits, beta, random(), from, size));
-      from += size;
-    }
-    const value = (column: string): number => {
-      const factors = action.controls[column] ?? [];
-      if (factors.length === 0) return 0;
-      return factors.reduce((product, f) => product * (f.values[picks[f.head] ?? 0] ?? 0), 1);
-    };
-    const row = COLUMNS.map(value) as unknown as Controls8;
-    return { pick: picks, row };
   };
 }
 

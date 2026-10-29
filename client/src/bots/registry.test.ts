@@ -1,46 +1,30 @@
-// The bot packages: their manifests checked, listed playable only with our observation builder and action parser for
-// them; the parsers' choices from a policy's output
+// The bot packages: their manifests checked, listed playable only with our observation builder, parser, mask, mirror and
+// moments for them; the parser's choice from a policy's output; the schedule's decisions and its moments
 import { describe, expect, it } from "vitest";
 import type { BotView } from "../local/bots";
-import { lookupParser, multiDiscreteParser, parseTable, pickIndex, rowControls } from "./actions";
-import { randomControls, tickSkipDriver } from "./driver";
-import { type Controls8, type MultiDiscreteAction, parseManifest, pickBeta, policyFile } from "./manifest";
-import { botLevels, listBots } from "./listing";
+import { lookupParser, parseTable, pickIndex, rowControls } from "./actions";
+import { tickSkipDriver } from "./driver";
+import { type Controls8, parseManifest, pickBeta, policyFile } from "./manifest";
+import { listBots } from "./listing";
 
 const MANIFEST = {
   format: 1,
-  id: "nexto",
-  name: "Nexto",
-  licence: "CC BY-NC-SA 4.0",
-  credit: "Rolv-Arild and the Nexto authors",
+  id: "wisp",
+  name: "Wisp",
+  licence: "MIT",
+  credit: "Wisp v2 by its author, MIT",
   policy: {
     opset: 17,
-    files: { "1": { file: "policy-1v1.onnx", entities: 37 }, "2": { file: "policy-2v2.onnx", entities: 39 } },
-    inputs: [{ name: "q", shape: [1, 1, 32] }, { name: "kv", shape: [1, "N", 24] }],
+    file: "policy.onnx",
+    inputs: [{ name: "obs", shape: [1, 432] }],
     outputs: [{ name: "logits", shape: [1, 90] }],
-    pick: { mode: "beta", beta: 1, overrides: [{ when: "matchEnded", beta: 0 }, { when: "kickoffPause", beta: 0.5 }] },
+    pick: "argmax",
   },
-  observation: { builder: "entity-perceiver-v1" },
-  action: { parser: "lookup-v1", table: "actions.json" },
+  observation: { builder: "wisp-v1" },
+  action: { parser: "lookup-v1", table: "actions.json", mask: { rule: "wisp-v1", groundRows: 24 }, mirror: "wisp-x-v1" },
   tickSkip: 8,
   teamSizes: [1, 2],
-};
-
-/** Necto's heads (FORMAT.md): throttle and pitch one head, steer/yaw/roll another with the handbrake switching yaw to roll */
-const NECTO_ACTION: MultiDiscreteAction = {
-  parser: "multidiscrete-v1",
-  heads: [3, 3, 2, 2, 2],
-  columns: ["throttle", "steer", "pitch", "yaw", "roll", "jump", "boost", "handbrake"],
-  controls: {
-    throttle: [{ head: 0, values: [-1, 0, 1] }],
-    steer: [{ head: 1, values: [-1, 0, 1] }],
-    pitch: [{ head: 0, values: [-1, 0, 1] }],
-    yaw: [{ head: 1, values: [-1, 0, 1] }, { head: 4, values: [1, 0] }],
-    roll: [{ head: 1, values: [-1, 0, 1] }, { head: 4, values: [0, 1] }],
-    jump: [{ head: 2, values: [0, 1] }],
-    boost: [{ head: 3, values: [0, 1] }],
-    handbrake: [{ head: 4, values: [0, 1] }],
-  },
+  moments: "wisp-celebrate-v1",
 };
 
 /** A fetch over these files (others 404) */
@@ -56,30 +40,37 @@ describe("the bot packages", () => {
   it("checks a manifest's fields, and its policy for a team size", () => {
     const m = parseManifest(MANIFEST);
     if (typeof m === "string") throw new Error(m);
-    expect(policyFile(m, 1)).toEqual({ file: "policy-1v1.onnx", entities: 37 });
+    expect(policyFile(m, 1)).toBe("policy.onnx");
     expect(policyFile(m, 3)).toBeNull();
-    // (beta: 1, 0.5 in a kickoff's pause, 0 at the match's end, the later override winning)
-    expect([pickBeta(m.policy.pick, { kickoffPause: false, matchEnded: false }), pickBeta(m.policy.pick, { kickoffPause: true, matchEnded: false }), pickBeta(m.policy.pick, { kickoffPause: true, matchEnded: true })]).toEqual([1, 0.5, 0.5]);
+    expect([pickBeta("argmax"), pickBeta("sample")]).toEqual([1, 0.5]);
     expect(parseManifest({ ...MANIFEST, id: "../x" })).toBe("its id");
     expect(parseManifest({ ...MANIFEST, tickSkip: 0 })).toBe("its tick skip");
     expect(parseManifest({ ...MANIFEST, policy: { file: 3 } })).toBe("its policy");
+    expect(parseManifest({ ...MANIFEST, policy: { ...MANIFEST.policy, pick: { mode: "beta", beta: 1 } } })).toBe("its policy");
     // (its licence file: one file beside bot.json, RV-558)
     expect(parseManifest({ ...MANIFEST, licenceFile: "../LICENSE" })).toBe("its licence file");
     expect(parseManifest({ ...MANIFEST, licenceFile: "a/LICENSE" })).toBe("its licence file");
     expect(parseManifest({ ...MANIFEST, licenceFile: "COPYING.md" })).toMatchObject({ licenceFile: "COPYING.md" });
   });
 
-  it("lists none without an index; a package playable with our builder and parser for it, else not, with why", async () => {
+  it("lists none without an index; a package playable with every rule it names ours, else not, with why", async () => {
     expect(await listBots("/bots/", files({}))).toEqual([]);
     const seer = { ...MANIFEST, id: "seer", name: "Seer", observation: { builder: "seer-v1" } };
-    const listed = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["nexto", "seer", "gone"] }, "/bots/nexto/bot.json": MANIFEST, "/bots/seer/bot.json": seer }));
-    expect(listed[0]).toMatchObject({ id: "nexto", name: "Nexto", teamSizes: [1, 2], playable: true, credit: MANIFEST.credit, licence: "CC BY-NC-SA 4.0" });
+    const listed = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["wisp", "seer", "gone"] }, "/bots/wisp/bot.json": MANIFEST, "/bots/seer/bot.json": seer }));
+    expect(listed[0]).toMatchObject({ id: "wisp", name: "Wisp", teamSizes: [1, 2], playable: true, credit: MANIFEST.credit, licence: "MIT" });
     // (the licence's text: LICENSE.txt unless the manifest names its own, RV-558)
     expect(listed[0]?.licenceFile).toBe("LICENSE.txt");
-    const named = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["nexto"] }, "/bots/nexto/bot.json": { ...MANIFEST, licenceFile: "COPYING.md" } }));
+    const named = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["wisp"] }, "/bots/wisp/bot.json": { ...MANIFEST, licenceFile: "COPYING.md" } }));
     expect(named[0]?.licenceFile).toBe("COPYING.md");
     expect(listed[1]).toMatchObject({ id: "seer", playable: false, why: "its observation builder seer-v1 isn't written yet" });
     expect(listed[2]).toMatchObject({ id: "gone", playable: false });
+    // (a mask, mirror or moments not ours: refused, not run without them)
+    const unknown = async (over: Record<string, unknown>): Promise<string | undefined> =>
+      (await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["x"] }, "/bots/x/bot.json": { ...MANIFEST, id: "x", ...over } })))[0]?.why;
+    expect(await unknown({ action: { ...MANIFEST.action, mask: { rule: "other-v1", groundRows: 24 } } })).toBe("its action mask other-v1 isn't written yet");
+    expect(await unknown({ action: { ...MANIFEST.action, mirror: "other-v1" } })).toBe("its mirror other-v1 isn't written yet");
+    expect(await unknown({ moments: "other-v1" })).toBe("its moments other-v1 aren't written yet");
+    expect(await unknown({ action: { parser: "multidiscrete-v1" } })).toBe("its action parser multidiscrete-v1 isn't written yet");
     // (a recurrent policy's state: refused, not run without it, RV-546; null as the packages write none)
     const recurrent = { ...MANIFEST, id: "lstm", policy: { ...MANIFEST.policy, state: { kind: "lstm-v1" } } };
     const stateless = { ...MANIFEST, id: "plain", policy: { ...MANIFEST.policy, state: null } };
@@ -88,34 +79,27 @@ describe("the bot packages", () => {
     expect(more[1]).toMatchObject({ id: "plain", playable: true });
   });
 
-  it("offers full strength, and the package's own easier level where it defines one (Nexto's EZ)", () => {
-    const nexto = parseManifest({ ...MANIFEST, difficulty: { kind: "random-controls-v1", defaultStrength: 1, nextoEzStrength: 0.8 } });
-    const necto = parseManifest(MANIFEST);
-    if (typeof nexto === "string" || typeof necto === "string") throw new Error("manifest");
-    expect(botLevels(nexto)).toEqual([{ id: "full", name: "Full", strength: 1 }, { id: "ez", name: "EZ", strength: 0.8 }]);
-    expect(botLevels(necto)).toEqual([{ id: "full", name: "Full", strength: 1 }]);
-  });
-
   it("picks at beta: 1 the likeliest (ties to the lowest), -1 the least, 0 uniform, else from the scaled softmax", () => {
     expect(pickIndex([0.1, 2, -1, 2], 1, 0.9)).toBe(1);
     expect(pickIndex([0.1, 2, -1, 2], -1, 0.9)).toBe(2);
     expect(pickIndex([5, 0, 1, 9], 1, 0, 1, 2)).toBe(1);
     expect([0, 0.3, 0.6, 0.99].map((r) => pickIndex([9, 0, 0], 0, r))).toEqual([0, 0, 1, 2]);
-    // (beta 0.5: log₃(3) = 1, the softmax of the logits themselves, p₀ = 1 / (1 + e) ≈ 0.2689: drawn either side of it;
-    // RV-538 BM30)
+    // (beta 0.5, "sample": log₃(3) = 1, the softmax of the logits themselves, p₀ = 1 / (1 + e) ≈ 0.2689: drawn either side
+    // of it; RV-538 BM30)
     expect([0.268, 0.27].map((r) => pickIndex([0, 1], 0.5, r))).toEqual([0, 1]);
-    // (beta 0.5: log3(3) = 1, the plain softmax: weights 1 and 3)
     expect(pickIndex([0, Math.log(3)], 0.5, 0.2)).toBe(0);
     expect(pickIndex([0, Math.log(3)], 0.5, 0.3)).toBe(1);
   });
 
-  it("parses a table's row, or a pick per head as the controls' products; buttons pressed over 0", () => {
-    const table: Controls8[] = [[1, 0, 0, 0, 0, 0, 0, 0], [1, -1, 0, 0.5, 0, 1, 0, 1]];
+  it("parses a table's row, buttons pressed over 0", () => {
+    const table: Controls8[] = [
+      [1, 0, 0, 0, 0, 0, 0, 0],
+      [1, -1, 0, 0.5, 0, 1, 0, 1],
+    ];
     expect(lookupParser(table)([0, 3], 1, Math.random)).toEqual({ pick: 1, row: table[1] });
+    // (a mask's rows alone: the likelier row left out)
+    expect(lookupParser(table)([0, 3], 1, Math.random, [true, false])).toEqual({ pick: 0, row: table[0] });
     expect(rowControls([1, -1, 0, 0.5, 0, 1, 0, 1])).toEqual({ throttle: 1, steer: -1, pitch: 0, yaw: 0.5, roll: 0, jump: true, boost: false, handbrake: true });
-    // (heads 3,3,2,2,2: throttle/pitch 1, steer -1 as roll with the handbrake, jump, no boost)
-    const logits = [0, 0, 5, 5, 0, 0, 0, 5, 5, 0, 0, 5];
-    expect(multiDiscreteParser(NECTO_ACTION)(logits, 1, Math.random)).toEqual({ pick: [2, 0, 1, 0, 1], row: [1, -1, 1, -0, -1, 1, 0, 1] });
     expect(parseTable([[1, 0, 0, 0, 0, 0, 0, 0]])).toHaveLength(1);
     expect(parseTable([[1, 0]])).toBe("a row not 8 numbers");
   });
@@ -137,25 +121,25 @@ describe("the bot packages", () => {
     expect(throttles).toEqual([0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 9, 9, 9, 9, 9]);
   });
 
-  it("Nexto's EZ: with probability 1 − strength an update is random axes over the current buttons, else the new row (RV-535)", async () => {
-    const draws = (...values: number[]): (() => number) => () => values.shift() ?? Number.NaN;
-    const jumping: Controls8 = [1, 0, 0, 0, 0, 1, 0, 1];
-    const row: Controls8 = [0.5, 1, 0, 0, 0, 0, 1, 0];
-    // (strength 0.8: random under 0.2; its axes the next five draws, throttle U[0, 1), the rest U[−1, 1))
-    expect(randomControls(0.8, draws(0.19, 0.5, 0.25, 0.75, 0, 0.999))(row, jumping)).toEqual([0.5, -0.5, 0.5, -1, 0.998, 1, 0, 1]);
-    expect(randomControls(0.8, draws(0.2))(row, jumping)).toEqual(row);
-    expect(randomControls(1, draws(0))(row, jumping)).toEqual(row);
-    // (in the driver: the jump held from the last update stays through a random one whose row lets go)
+  it("a moment's script plays instead of the schedule, which waits for it: no decision, its counter held", async () => {
+    const decided: number[] = [];
+    let held = false;
     const driver = tickSkipDriver({
       tickSkip: 8,
       applyAtCounter: 7,
-      decide: (view) => Promise.resolve(view.tick === 0 ? jumping : row),
-      onApply: randomControls(0.5, draws(0.9, 0.1, 0.5, 0.5, 0.5, 0.5, 0.5)),
+      decide: (view) => {
+        decided.push(view.tick);
+        return Promise.resolve([1, 0, 0, 0, 0, 0, 0, 0]);
+      },
+      moment: () => (held ? [-1, 0.5, 0, 0, 0, 0, 0, 0] : null),
     });
-    const at: { jump: boolean; boost: boolean; throttle: number }[] = [];
-    for (let tick = 0; tick < 8; tick++) at.push(await driver.tick({ tick } as unknown as BotView));
-    expect(at[0]).toMatchObject({ jump: true, boost: false, throttle: 1 });
-    // (the old row's buttons, not the new row's boost)
-    expect(at[7]).toMatchObject({ jump: true, boost: false, throttle: 0.5 });
+    await driver.tick({ tick: 0 } as unknown as BotView);
+    held = true;
+    const during = await driver.tick({ tick: 1 } as unknown as BotView);
+    expect([during.throttle, during.steer]).toEqual([-1, 0.5]);
+    expect(decided).toEqual([0]);
+    held = false;
+    await driver.tick({ tick: 2 } as unknown as BotView);
+    expect(decided).toEqual([0, 2]);
   });
 });

@@ -5,13 +5,11 @@
 /** The page's player in the local match (the bots are 2 and on) */
 export const PAGE_PLAYER = 1;
 
-/** A bot in the local match: its team, its name on the scoreboard, its brain (a bot package's id, or a built-in one), its
- *  difficulty's strength (a level its package offers; none: full) */
+/** A bot in the local match: its team, its name on the scoreboard, its brain (a bot package's id, or a built-in one) */
 export interface BotSlot {
   readonly team: 0 | 1;
   readonly name: string;
   readonly brain: string;
-  readonly strength?: number;
 }
 
 /** The match to host (on Night, the one map): `teamSize` a side, the kickoff orders from `seed` */
