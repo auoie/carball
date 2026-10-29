@@ -157,11 +157,13 @@ class Menu {
   tabs: Tab[] | null = null;
   constructor(readonly id: string) {}
   querySelectorAll(q: string): unknown[] {
+    // (its tab list, shown, when it has tabs)
+    const tabs = this.tabs;
+    if (q === "[data-pad-tabs]") return tabs ? [{ querySelectorAll: () => tabs, closest: () => null, hidden: false }] : [];
     return q === "[data-pad-page]" ? this.pages : this.controls;
   }
-  querySelector(q: string): unknown {
-    const tabs = this.tabs;
-    return q === "[data-pad-tabs]" && tabs ? { querySelectorAll: () => tabs } : null;
+  querySelector(): unknown {
+    return null;
   }
   hasAttribute(): boolean {
     return false;

@@ -28,6 +28,12 @@ func allowed(name string) bool {
 	return !filter.IsProfane(filterForm(name))
 }
 
+// Allowed is whether a text passes the word filter as a name does (a shared training pack's name and description:
+// internal/packs; spaces and punctuation its separators as underscores are)
+func Allowed(text string) bool {
+	return allowed(text)
+}
+
 // filterForm is the name as the filter reads it: underscores separators (spaces), every run of three digits or more (a
 // number, not leetspeak) taken out
 func filterForm(name string) string {

@@ -2581,13 +2581,15 @@ body {
   background: rgba(20, 60, 110, 0.9);
 }
 
-.main-menu-board-state {
+.main-menu-board-state,
+.main-menu-shared-state {
   padding: 6px 2px;
   font: 15px/1.4 var(--hud-small);
   color: rgba(255, 255, 255, 0.75);
 }
 
-.main-menu-board-state[hidden] {
+.main-menu-board-state[hidden],
+.main-menu-shared-state[hidden] {
   display: none;
 }
 
@@ -2681,6 +2683,97 @@ body {
   font-size: 0.7em;
   color: rgba(255, 255, 255, 0.6);
   white-space: nowrap;
+}
+
+/* Custom Training's shared packs (ours: ui/sharedPacks.ts): its tabs (the leaderboard's look), Browse's search and order,
+   Enter Code's field, a pack's row (its name and line, Play, Save, Report), My Packs' shared section */
+.main-menu-training-tabs[hidden],
+.main-menu-training-panel[hidden] {
+  display: none;
+}
+
+.main-menu-training-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.main-menu-shared {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.main-menu-shared-search-row,
+.main-menu-shared-sorts {
+  display: flex;
+  gap: 6px;
+}
+
+.main-menu-shared-search-row .main-menu-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.main-menu-shared-sorts .main-menu-button {
+  flex: 1;
+  text-align: center;
+}
+
+.main-menu-shared-sorts [aria-checked="true"] {
+  border-color: #43afff;
+  background: rgba(20, 60, 110, 0.9);
+}
+
+.main-menu-input {
+  font: 16px var(--hud-header);
+  padding: 6px 8px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.main-menu-shared-row .main-menu-shared-about {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  cursor: default;
+}
+
+.main-menu-shared-about .main-menu-pack-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-menu-shared-row > .main-menu-button {
+  flex: none;
+  font-size: 0.8em;
+}
+
+.main-menu-shared-hidden {
+  font-size: 0.7em;
+  color: #ffb36b;
+}
+
+.main-menu-shared-heading {
+  margin-top: 8px;
+  font: calc(15px * var(--hud-header-scale, 1)) / 18px var(--hud-header);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.main-menu-shared-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* The account's page (ours: notes/accounts.md §5): sign in, the sign-up's name and check, the account */
@@ -3352,7 +3445,7 @@ body {
    value's thumb white; fading in over 0.2 s, out over 0.3 s. The row kept 20 px clear of its scroll box's edges. (The
    way out a transition on every row and button, not on the classes the focus takes away; a focused button's ice an
    overlay faded by its opacity, as a gradient can't be: RV-479) */
-body.pad-mode :where(label, tr > td, [data-pad-row], .control-cycle, input[type="text"]) {
+body.pad-mode :where(label, tr > td, [data-pad-row], .control-cycle, input[type="text"], input[type="search"], .main-menu-input) {
   transition:
     background 0.3s,
     box-shadow 0.3s,

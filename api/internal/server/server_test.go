@@ -877,11 +877,18 @@ func TestEveryWriteGuarded(t *testing.T) {
 		edit(req)
 		return e.do(b, req).StatusCode
 	}
-	routes := [][2]string{
+	routes := [][]string{
 		{http.MethodPost, "/api/signup"}, {http.MethodPut, "/api/me/name"}, {http.MethodDelete, "/api/me"},
 		{http.MethodPost, "/api/signout"}, {http.MethodPost, "/api/signout-everywhere"}, {http.MethodPost, "/api/ticket"},
+		{http.MethodDelete, "/api/packs/0A1B-2C3D-4E5F-6071"}, {http.MethodPost, "/api/packs/0A1B-2C3D-4E5F-6071/report"},
+		// (a shared pack's: its body up to 64 KiB, so past that)
+		{http.MethodPost, "/api/packs", "65"},
 	}
 	for _, r := range routes {
+		over := 17
+		if len(r) > 2 {
+			over = 65
+		}
 		for name, c := range map[string]struct {
 			body string
 			edit func(*http.Request)
@@ -891,7 +898,7 @@ func TestEveryWriteGuarded(t *testing.T) {
 			"a sibling's Origin": {"{}", func(r *http.Request) { r.Header.Set("Origin", "https://other.example") }, http.StatusForbidden},
 			"no custom header":   {"{}", func(r *http.Request) { r.Header.Del("X-Carball") }, http.StatusForbidden},
 			"a form's body":      {"a=b", func(r *http.Request) { r.Header.Set("Content-Type", "application/x-www-form-urlencoded") }, http.StatusUnsupportedMediaType},
-			"17 KiB":             {`{"name":"` + strings.Repeat("x", 17<<10) + `"}`, func(*http.Request) {}, http.StatusRequestEntityTooLarge},
+			"over its size":      {`{"name":"` + strings.Repeat("x", over<<10) + `"}`, func(*http.Request) {}, http.StatusRequestEntityTooLarge},
 		} {
 			if got := call(r[0], r[1], c.body, c.edit); got != c.want {
 				t.Errorf("%s %s, %s: %d, want %d", r[0], r[1], name, got, c.want)

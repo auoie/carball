@@ -48,6 +48,13 @@ type keptBody struct {
 	reading  singleflight.Group
 }
 
+// forget drops the kept answer (a change it would hide: a pack shared or deleted), the next ask reading again
+func (k *keptBody) forget() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.body, k.until = nil, time.Time{}
+}
+
 // kept is the answer, or the error, kept at now (ok false: neither)
 func (k *keptBody) kept(now time.Time) (body []byte, ok bool, err error) {
 	k.mu.Lock()
@@ -110,10 +117,12 @@ func recovered(ctx context.Context, fill func(context.Context) ([]byte, error)) 
 	return fill(ctx)
 }
 
-// publicReads are the public reads' kept answers: the counts, and each playlist's leaderboard
+// publicReads are the public reads' kept answers: the counts, each playlist's leaderboard, and the shared packs' first
+// pages (newest, most downloaded: packs.go)
 type publicReads struct {
 	stats  keptBody
 	boards [3]keptBody
+	browse [2]keptBody
 }
 
 type playlistCount struct {

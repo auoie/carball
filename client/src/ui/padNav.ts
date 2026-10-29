@@ -510,7 +510,8 @@ export class PadMenuNav {
 
   /** A tabbed page's previous or next tab (its `data-pad-tabs` list; the active one marked so), stopping at the ends */
   #switchTab(menu: HTMLElement, by: 1 | -1): void {
-    const list = menu.querySelector<HTMLElement>("[data-pad-tabs]");
+    // (the shown page's list: a hidden page's never, Custom Training's tabs beside the leaderboard's)
+    const list = [...menu.querySelectorAll<HTMLElement>("[data-pad-tabs]")].find((l) => !l.closest("[hidden]") && !l.hidden);
     if (!list) return;
     const tabs = [...list.querySelectorAll<HTMLElement>("button")].filter((t) => !t.closest("[hidden]"));
     const active = tabs.findIndex((t) => t.classList.contains("active") || t.getAttribute("aria-selected") === "true");

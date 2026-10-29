@@ -49,6 +49,13 @@ export const EDITOR_TEXT = {
   tooBig: "the file is over 1 MB",
   exportPack: "Export",
   importPack: "Import",
+  share: "Share",
+  sharing: "Sharing…",
+  sharedTitle: "PACK SHARED",
+  sharedBody: (code: string): string => `Its share code is ${code}. Anyone with it can play your pack, and it's listed in Browse.`,
+  copyCode: "COPY CODE",
+  ok: "OK",
+  notSharedTitle: "NOT SHARED",
   exit: "Exit",
   hint: "Drag to turn the camera · wheel to zoom",
   unsaved: "Unsaved changes",
@@ -98,6 +105,8 @@ export interface EditorActions {
   readonly project: (p: Vec3) => { readonly x: number; readonly y: number } | null;
   /** A menu over the editor: the free-camera mode takes no input */
   readonly blocked: () => boolean;
+  /** The pack shared (where packs are: none, no Share): its code, or what went wrong in words */
+  readonly share?: (pack: TrainingPack) => Promise<{ readonly code: string } | { readonly problem: string }>;
 }
 
 /** The editor's two modes: the panel (ours) or the free camera (the game's), the player's last choice kept */
@@ -807,6 +816,13 @@ export class TrainingEditor {
         button(T.exportPack, () => {
           this.#export();
         }),
+        ...(this.#actions.share
+          ? [
+              button(T.share, () => {
+                void this.#share();
+              }),
+            ]
+          : []),
         button(T.importPack, () => {
           file.click();
         }),
@@ -850,6 +866,35 @@ export class TrainingEditor {
   #edited(): void {
     this.#dirty = true;
     this.#status = "";
+  }
+
+  /** The pack saved, then shared: its code shown with Copy Code, else why not */
+  async #share(): Promise<void> {
+    const share = this.#actions.share;
+    if (!share || !this.#save()) return;
+    const p = this.pack;
+    if (!p) return;
+    this.#status = EDITOR_TEXT.sharing;
+    this.#render();
+    const shared = await share(p);
+    this.#status = "";
+    this.#render();
+    if ("problem" in shared) {
+      this.#actions.notice(EDITOR_TEXT.notSharedTitle, shared.problem);
+      return;
+    }
+    const copy = (): void => {
+      void navigator.clipboard.writeText(shared.code).catch(() => {
+        this.#actions.notice(EDITOR_TEXT.sharedTitle, shared.code);
+      });
+    };
+    this.#actions.choose(
+      EDITOR_TEXT.sharedTitle,
+      EDITOR_TEXT.sharedBody(shared.code),
+      [{ label: EDITOR_TEXT.copyCode, act: copy }, { label: EDITOR_TEXT.ok }],
+      0,
+      1,
+    );
   }
 
   /** The pack as a file to download */

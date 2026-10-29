@@ -95,6 +95,13 @@ func commands() []command {
 		{"ratings", "--top [N] [--playlist 1v1|2v2|3v3]", "a playlist's leaderboard (1v1, the top 20 by default) by the " +
 			"rating as shown, provisional ones marked \"?\"", ratingsBoard},
 		{"queue-bans", "", "the leave bans in force: account, name, ladder step, until when", queueBans},
+		{"packs", "--recent [N] | --reported", "the shared training packs: the N newest (20 by default), hidden ones too, or " +
+			"the reported ones, the most reported first; each with its code, name, owner, creator, shots, downloads, when " +
+			"shared, reports and any hide", packList},
+		{"pack", "ACCOUNT", "an account's shared packs, newest first, hidden ones too", packsOf},
+		{"pack-hide", "CODE --reason TEXT --by NAME", "a pack hidden from browse, search and its code (its owner still " +
+			"lists it, hidden, with the reason); a hidden one's hide replaced", packHide},
+		{"pack-unhide", "CODE", "a hidden pack shown again", packUnhide},
 		{"healthcheck", "", "the container's check: GET /healthz on HEALTH_ADDR", healthcheck},
 		{"ticket-key", "KID", "a new ticket key: its seed (TICKET_SIGNING_KEY_FILE's) on stdout, its public line (the game " +
 			"server's TICKET_PUBLIC_KEYS) on stderr", ticketKey},

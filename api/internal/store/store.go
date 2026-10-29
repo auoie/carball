@@ -885,8 +885,12 @@ func cutColon(s string) (string, string, bool) {
 // NameChangesKept is how long a rename is kept (moderation's year: the privacy page's)
 const NameChangesKept = 365 * 24 * time.Hour
 
+// PackRecordsKept is how long a pack's download records and an account's uploads are kept: the once-a-day count's and the
+// day's limit's window, with a day to spare
+const PackRecordsKept = 2 * 24 * time.Hour
+
 // purges are Purge's statements, each by its time ($1: `at`'s of now and the deletions' cut), each on its index
-// (migrations 00003, 00004, 00005)
+// (migrations 00003, 00004, 00005, 00006)
 var purges = []struct {
 	sql string
 	at  func(now, deletionsBefore time.Time) time.Time
@@ -899,13 +903,17 @@ var purges = []struct {
 	{`DELETE FROM deletions WHERE deleted_at <= $1`, func(_, deletionsBefore time.Time) time.Time { return deletionsBefore }},
 	{`DELETE FROM name_changes WHERE changed_at <= $1`, func(now, _ time.Time) time.Time { return now.Add(-NameChangesKept) }},
 	{`UPDATE accounts SET renames_locked_until = NULL WHERE renames_locked_until <= $1`, atNow},
+	{`DELETE FROM pack_downloads WHERE day < ($1::timestamptz AT TIME ZONE 'UTC')::date`, packRecordsCut},
+	{`DELETE FROM pack_uploads WHERE uploaded_at <= $1`, packRecordsCut},
 }
+
+func packRecordsCut(now, _ time.Time) time.Time { return now.Add(-PackRecordsKept) }
 
 func atNow(now, _ time.Time) time.Time { return now }
 
 // Purge removes what has run out by now: sessions past their end, flows, sign-ups and Steam nonces past theirs, the
 // delete/re-create rule's records from before deletionsBefore (their 30 days over), renames older than NameChangesKept,
-// renames' locks ended
+// renames' locks ended, packs' download records and uploads older than PackRecordsKept
 func (s *Store) Purge(ctx context.Context, now, deletionsBefore time.Time) error {
 	for _, q := range purges {
 		if _, err := s.pool.Exec(ctx, q.sql, q.at(now, deletionsBefore)); err != nil {

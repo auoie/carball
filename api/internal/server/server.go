@@ -24,6 +24,7 @@ import (
 
 	"carball/api/internal/google"
 	"carball/api/internal/matchmaker"
+	"carball/api/internal/packs"
 	"carball/api/internal/ratelimit"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
@@ -84,6 +85,12 @@ type Store interface {
 	ChangeQueueBan(ctx context.Context, accountID string, spend *store.SpentTicket, now time.Time, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
 	RecordResult(ctx context.Context, r store.Result, rate func(current map[string]*store.Rating) map[string]store.Rating, now time.Time) (bool, error)
 	BoardRatings(ctx context.Context, playlist int, after *store.Rated, n int, now time.Time) ([]store.Rated, error)
+	CreatePack(ctx context.Context, owner string, p store.NewPack, now time.Time, perDay, total int) (string, error)
+	PackByCode(ctx context.Context, code string, viewer []byte, now time.Time) (store.SharedPack, []byte, bool, error)
+	BrowsePacks(ctx context.Context, search string, byDownloads bool, after *store.PackCursor, n int, now time.Time) ([]store.SharedPack, error)
+	OwnPacks(ctx context.Context, owner string) ([]store.SharedPack, error)
+	DeletePack(ctx context.Context, code, owner string) (bool, error)
+	ReportPack(ctx context.Context, code, account string, now time.Time) (bool, error)
 }
 
 // Turnstile checks a sign-up's token (turnstile.Verifier)
@@ -133,6 +140,10 @@ type Server struct {
 	gameServerFleet      *ratelimit.Limiter
 	rejoinQuestions      *ratelimit.Limiter
 	rejoinCeiling        *ratelimit.Limiter
+	// (shared packs: an address's uploads and reads, each with its network's; an account's deletes and reports)
+	packUploads, packUploadsWide *ratelimit.Limiter
+	packReads, packReadsWide     *ratelimit.Limiter
+	packWrites                   *ratelimit.Limiter
 	// (the log's request lines per client address, and the ones not written since its last: RV-963)
 	requestLines    *ratelimit.Limiter
 	requestLinesAll *ratelimit.Limiter
@@ -171,6 +182,10 @@ type Limits struct {
 	// not written, so that a flood can't push the abuse trail out of the log's rotation or fill the disk (RV-963); none
 	// (0): every line. RequestLinesAll is everyone's together above them, a flood from many addresses too (RV-1027)
 	RequestLines, RequestLinesAll Limit
+	// PackUploads is each address's packs shared (a day's, with its network's wider: the account's own day is kept in
+	// the database, PacksPerDay); PackReads each address's reads of packs and browse pages; PackWrites each account's
+	// deletes and reports of packs
+	PackUploads, PackUploadsWide, PackReads, PackReadsWide, PackWrites Limit
 	// Keys is each limit's most keys at once (past it the longest idle is forgotten)
 	Keys int
 	// OpenFlows and OpenSignups are the ceilings on sign-ins in progress and sign-ups waiting, everyone's (AP-2)
@@ -194,6 +209,11 @@ func DefaultLimits() Limits {
 		// (a LAN party's 64 players' polls, about one each 25 s, and their pages, well inside)
 		RequestLines:    Limit{600, time.Minute},
 		RequestLinesAll: Limit{6000, time.Minute},
+		PackUploads:     Limit{PacksPerDay, 24 * time.Hour},
+		PackUploadsWide: Limit{5 * PacksPerDay, 24 * time.Hour},
+		PackReads:       Limit{120, 10 * time.Minute},
+		PackReadsWide:   Limit{600, 10 * time.Minute},
+		PackWrites:      Limit{30, 10 * time.Minute},
 		Keys:            200_000,
 		OpenFlows:       20_000,
 		OpenSignups:     5_000,
@@ -210,6 +230,9 @@ func (s *Server) SetLimits(l Limits) {
 	s.searchStarts = limiter(l.Searches)
 	s.gameServerCalls, s.gameServerFleet = limiter(l.GameServer), limiter(l.GameServerFleet)
 	s.rejoinQuestions, s.rejoinCeiling = limiter(l.RejoinQuestions), limiter(l.RejoinCeiling)
+	s.packUploads, s.packUploadsWide = limiter(l.PackUploads), limiter(l.PackUploadsWide)
+	s.packReads, s.packReadsWide = limiter(l.PackReads), limiter(l.PackReadsWide)
+	s.packWrites = limiter(l.PackWrites)
 	s.requestLines, s.requestLinesAll = nil, nil
 	if l.RequestLines.Burst > 0 {
 		s.requestLines = limiter(l.RequestLines)
@@ -221,7 +244,8 @@ func (s *Server) SetLimits(l Limits) {
 
 // Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
 func (s *Server) Sweep(now time.Time) {
-	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls, s.gameServerFleet, s.rejoinQuestions, s.rejoinCeiling} {
+	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls,
+		s.gameServerFleet, s.rejoinQuestions, s.rejoinCeiling, s.packUploads, s.packUploadsWide, s.packReads, s.packReadsWide, s.packWrites} {
 		l.Sweep(now)
 	}
 	if s.requestLines != nil {
@@ -317,6 +341,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/fleet/rejoin", s.gameServerAsking(s.rejoinCheck))
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/leaderboard", s.leaderboard)
+	mux.HandleFunc("POST /api/packs", s.writeSized(s.sharePack, packs.MaxBytes))
+	mux.HandleFunc("GET /api/packs", s.browse)
+	mux.HandleFunc("GET /api/packs/{code}", s.pack)
+	mux.HandleFunc("DELETE /api/packs/{code}", s.write(s.deletePack))
+	mux.HandleFunc("POST /api/packs/{code}/report", s.write(s.reportPack))
+	mux.HandleFunc("GET /api/me/packs", s.myPacks)
 	s.e2eRoutes(mux)
 	return s.logged(headers(mux))
 }
@@ -442,6 +472,11 @@ const maxBody = 16 << 10
 
 // write guards a write (AC-7): Origin the site's, JSON when there's a body, the custom header; the body capped
 func (s *Server) write(next http.HandlerFunc) http.HandlerFunc {
+	return s.writeSized(next, maxBody)
+}
+
+// writeSized: write's guard, the body capped at `most` (a shared pack's: packs.MaxBytes)
+func (s *Server) writeSized(next http.HandlerFunc, most int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != s.Origin || r.Header.Get(WriteHeader) != "1" {
 			writeError(w, http.StatusForbidden, "forbidden")
@@ -453,11 +488,11 @@ func (s *Server) write(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		if r.ContentLength > maxBody {
+		if r.ContentLength > most {
 			writeError(w, http.StatusRequestEntityTooLarge, "too-large")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		r.Body = http.MaxBytesReader(w, r.Body, most)
 		next(w, r)
 	}
 }

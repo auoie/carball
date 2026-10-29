@@ -4,6 +4,7 @@
 // loader only where import.meta.env.DEV holds, so a build has neither the loader nor the path.
 import { type TrainingPack, parsePack } from "./pack";
 import { storedPacks } from "./myPacks";
+import { SHARED, sharedPackOf } from "./shared";
 
 /** A pack as the menu lists it: its name, type, difficulty and shots, and where it's read from */
 export interface PackListing {
@@ -65,8 +66,26 @@ export async function listPacks(fetcher: typeof fetch = fetch): Promise<PackList
   }
 }
 
-/** A listed pack, read and checked (else what's wrong) */
+/** How long a shared pack's read waits (ms) */
+const SHARED_TIMEOUT_MS = 10_000;
+
+/** A listed pack, read and checked (else what's wrong): a shared one through the API (its download counted there) */
 export async function loadPack(listing: PackListing, fetcher: typeof fetch = fetch): Promise<TrainingPack | string> {
+  if (listing.url.startsWith(SHARED)) {
+    const code = listing.url.slice(SHARED.length);
+    try {
+      const r = await fetcher(`/api/packs/${encodeURIComponent(code)}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: AbortSignal.timeout(SHARED_TIMEOUT_MS),
+      });
+      if (!r.ok) return r.status === 404 ? `no shared pack ${code}` : `HTTP ${String(r.status)}`;
+      const body = (await r.json()) as { pack?: unknown; creator?: unknown };
+      return sharedPackOf(body.pack, typeof body.creator === "string" ? body.creator : "");
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
   if (listing.url.startsWith(MINE)) {
     const id = listing.url.slice(MINE.length);
     return storedPacks().find((p) => p.id === id) ?? `no pack ${id}`;

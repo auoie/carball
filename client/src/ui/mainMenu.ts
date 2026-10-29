@@ -12,6 +12,7 @@ import type { BotChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
 import type { BotsPage } from "./botsPage";
 import type { PackListing } from "../training/packs";
+import { SHARE_TEXT, SharedPacksPage, type SharedPacksActions } from "./sharedPacks";
 import { type BoardRow, type LiveStats, type ShownRating, ratingText } from "../account/api";
 import { queueBanText } from "../net/tickets";
 
@@ -81,6 +82,9 @@ const PLAYLIST_KEY = "carball.playlist";
 /** The menu's pages: the top (Play, Garage, the leaderboard, Settings, the account's entry), Play's, the bots' setup,
  *  custom training's packs, the garage, the leaderboard, the account (ui/accountPages.ts) */
 export type MenuView = "top" | "play" | "bots" | "training" | "garage" | "leaderboard" | "account";
+
+/** Custom Training's tabs (its shared packs': ui/sharedPacks.ts) */
+type TrainingTab = "mine" | "browse" | "code";
 
 /** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play, the garage, the
  *  leaderboard and the account to the top; the top stays */
@@ -153,6 +157,13 @@ export class MainMenu {
   readonly #training: HTMLDivElement;
   readonly #trainingList: HTMLDivElement;
   readonly #trainingAction: ((pack: PackListing) => void) | undefined;
+  /** Custom Training's tabs (My Packs, Browse, Enter Code: shown where packs are shared, setPackSharing), their panels,
+   *  the one shown, and the shared packs' views */
+  readonly #trainingTabs: HTMLDivElement;
+  readonly #trainingTabButtons: Readonly<Record<TrainingTab, HTMLButtonElement>>;
+  readonly #trainingPanels: Readonly<Record<TrainingTab, HTMLDivElement>>;
+  #trainingTab: TrainingTab = "mine";
+  #shared: SharedPacksPage | null = null;
   readonly #editAction: ((pack: PackListing | null) => void) | undefined;
   /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
   #botsPage: BotsPage | null = null;
@@ -335,7 +346,31 @@ export class MainMenu {
     trainingHeading.textContent = TRAINING_MENU_TEXT.customTraining;
     this.#trainingList = document.createElement("div");
     this.#trainingList.className = "main-menu-training";
-    this.#training.append(trainingHeading, this.#trainingList);
+    // (its tabs, the bumpers stepping through them, hidden while no packs are shared here)
+    this.#trainingTabs = document.createElement("div");
+    this.#trainingTabs.className = "main-menu-board-tabs main-menu-training-tabs";
+    this.#trainingTabs.setAttribute("role", "tablist");
+    this.#trainingTabs.dataset["padTabs"] = "";
+    this.#trainingTabs.hidden = true;
+    const tabButton = (tab: TrainingTab): HTMLButtonElement => {
+      const b = button(this.#trainingTabs, SHARE_TEXT.tabs[tab], () => {
+        this.#showTrainingTab(tab);
+      });
+      b.setAttribute("role", "tab");
+      b.dataset["trainingTab"] = tab;
+      return b;
+    };
+    this.#trainingTabButtons = { mine: tabButton("mine"), browse: tabButton("browse"), code: tabButton("code") };
+    const panel = (tab: TrainingTab): HTMLDivElement => {
+      const d = document.createElement("div");
+      d.className = "main-menu-training-panel";
+      d.dataset["trainingPanel"] = tab;
+      d.hidden = tab !== "mine";
+      return d;
+    };
+    this.#trainingPanels = { mine: panel("mine"), browse: panel("browse"), code: panel("code") };
+    this.#trainingPanels.mine.append(this.#trainingList);
+    this.#training.append(trainingHeading, this.#trainingTabs, this.#trainingPanels.mine, this.#trainingPanels.browse, this.#trainingPanels.code);
     this.#trainingAction = actions.training;
     this.#editAction = actions.editTraining;
     button(this.#training, BACK_TEXT, () => {
@@ -647,6 +682,38 @@ export class MainMenu {
     );
   }
 
+  /** Packs shared here (the deployment's accounts service): Custom Training's tabs, Browse and Enter Code with My Packs'
+   *  shared section; null, none (a development page: My Packs alone) */
+  setPackSharing(actions: SharedPacksActions | null): void {
+    this.#trainingTabs.hidden = actions === null;
+    for (const p of Object.values(this.#trainingPanels)) p.replaceChildren();
+    this.#trainingPanels.mine.append(this.#trainingList);
+    this.#shared = actions === null ? null : new SharedPacksPage(actions);
+    if (this.#shared) {
+      this.#trainingPanels.mine.append(this.#shared.mine);
+      this.#trainingPanels.browse.append(this.#shared.browse);
+      this.#trainingPanels.code.append(this.#shared.code);
+    }
+    // (its tab read at once if the page shows already: sharing known after it was opened)
+    this.#showTrainingTab(this.#shared ? this.#trainingTab : "mine", !this.#training.hidden);
+  }
+
+  /** The account changed (signed in or out, renamed): My Packs' shared ones read again if they show */
+  accountChanged(): void {
+    if (!this.#training.hidden && this.#trainingTab === "mine") void this.#shared?.refreshMine();
+  }
+
+  /** A tab of Custom Training's shown: Browse's first page read, Enter Code's field, My Packs' shared ones read again */
+  #showTrainingTab(tab: TrainingTab, read = true): void {
+    this.#trainingTab = tab;
+    for (const [t, b] of Object.entries(this.#trainingTabButtons)) b.setAttribute("aria-selected", String(t === tab));
+    for (const [t, p] of Object.entries(this.#trainingPanels)) p.hidden = t !== tab;
+    if (!read || !this.#shared) return;
+    if (tab === "browse") this.#shared.showBrowse();
+    else if (tab === "code") this.#shared.showCode();
+    else void this.#shared.refreshMine();
+  }
+
   /** Back on the training packs' page (from the editor) */
   showTraining(): void {
     this.open();
@@ -750,8 +817,11 @@ export class MainMenu {
     if (view === "garage") this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
     // (the bots' Start focused: Enter, or the pad's A, starts it at once)
     if (view === "bots") this.#botsView?.start.focus();
-    // (the first pack focused)
-    if (view === "training") this.#trainingList.querySelector("button")?.focus();
+    // (its tab shown again (My Packs' shared ones read again), the first pack focused)
+    if (view === "training") {
+      this.#showTrainingTab(this.#trainingTab);
+      if (this.#trainingTab === "mine") this.#trainingList.querySelector("button")?.focus();
+    }
   }
 }
 

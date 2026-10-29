@@ -60,12 +60,19 @@
       <li>Your sessions: a cookie that keeps you signed in, for up to 90 days, and a short-lived cookie while a sign-in or sign-up is under way.</li>
       <li>A ban, if one is ever given, with its reason and end.</li>
       <li>A lock on changing your name, if one is ever given, with its end: cleared when it ends.</li>
+      <li>
+        The training packs you share: each pack's name, description and shots, its share code and when it was shared, how
+        many times it was downloaded, and your uploads of the last two days (for the daily limit). A shared pack shows your
+        display name publicly as its creator, to anyone who browses or enters its code. It is kept until you delete it, or
+        a moderator hides it, and is deleted with your account.
+      </li>
+      <li>Your reports of other players' shared packs.</li>
     </ul>
 
     <h2>What it doesn't store</h2>
     <ul>
       <li>E-mail addresses, or the access tokens Google and Steam hand us at sign-in (used once, then dropped).</li>
-      <li>IP addresses, in the account's records. The service holds them in memory to limit how many sign-ins and sign-ups one network can make, and the game server to limit how many connections one network can open.</li>
+      <li>IP addresses, in the account's records. The service holds them in memory to limit how many sign-ins and sign-ups one network can make, and the game server to limit how many connections one network can open. A shared pack's downloads are counted once a day per account or per address: for an address, only a keyed hash of it is kept, for two days.</li>
     </ul>
 
     <h2>Logs</h2>
@@ -85,7 +92,7 @@
 
     <h2>Deleting your account</h2>
     <p>
-      Account → Delete Account removes the account at once: its sign-ins, sessions and ratings. Ranked results you played in stay for the other players,
+      Account → Delete Account removes the account at once: its sign-ins, sessions, ratings and shared training packs. Ranked results you played in stay for the other players,
       without your account in them. Lines the logs already hold (its id and names among them) stay until the rotation overwrites them. A keyed hash of the sign-in's id is kept for 30 days, so that the same sign-in can't make a new account in that time,
       then removed; a ban stays with the sign-in it was given to.
     </p>

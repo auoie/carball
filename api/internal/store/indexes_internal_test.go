@@ -154,6 +154,15 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 			$1::timestamptz - (substr(id::text, 25)::int % 367) * interval '1 day' FROM accounts`,
 		`INSERT INTO bans (provider, subject, reason, until, banned_by, created_at) SELECT 'steam', 'sub-' || g, 'made up',
 			CASE WHEN g % 500 = 0 THEN NULL ELSE $1::timestamptz - interval '1 day' END, 'test', $1 FROM generate_series(1, 5000) g`,
+		// (a pack each for the first 500 accounts, their downloads' records over 3 days and their uploads over the last 3:
+		// a day's past the two days kept, as between two hourly sweeps a day apart)
+		`INSERT INTO training_packs (code, owner_id, name, description, type, difficulty, shots, pack, created_at)
+			SELECT upper(lpad(to_hex(g), 4, '0') || '-0000-0000-0000'), id, 'Pack ' || g, '', 'striker', 'easy', 1, '{}', $1
+			FROM (SELECT id, row_number() OVER (ORDER BY id) g FROM accounts) a WHERE g <= 500`,
+		`INSERT INTO pack_downloads (code, viewer, day) SELECT code, sha256(g::text::bytea), (($1::timestamptz AT TIME ZONE 'UTC')::date - g % 3)
+			FROM training_packs, generate_series(1, 10) g`,
+		`INSERT INTO pack_uploads (account_id, uploaded_at) SELECT id, $1::timestamptz - (substr(id::text, 25)::int % 3) * interval '1 day'
+			- interval '1 hour' FROM accounts`,
 		`ANALYZE`,
 	} {
 		args := []any{now}
@@ -176,7 +185,7 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 		return strings.Join(lines, "\n")
 	}
 	indexes := []string{"sessions_expires", "sessions_previous_until", "auth_flows_expires", "pending_signups_expires", "steam_nonces_expires",
-		"deletions_deleted", "name_changes_changed", "accounts_renames_locked"}
+		"deletions_deleted", "name_changes_changed", "accounts_renames_locked", "pack_downloads_day", "pack_uploads_at"}
 	for i, q := range purges {
 		p := plan(q.sql, q.at(now, now.Add(-30*24*time.Hour)))
 		t.Logf("%s\n%s", q.sql, p)

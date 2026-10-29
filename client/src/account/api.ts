@@ -72,18 +72,52 @@ export type ApiError =
   | "taken"
   | "busy"
   | "unavailable"
-  | "server";
+  | "server"
+  | "pack-invalid"
+  | "pack-name"
+  | "pack-name-not-allowed"
+  | "pack-description"
+  | "pack-description-not-allowed"
+  | "pack-uploads"
+  | "pack-limit"
+  | "too-large"
+  | "not-found";
 
 /** How long the page waits for each accounts call, and for config.json (ms), before it says they can't be reached: one
  *  that hangs isn't a button that does nothing (RX31) */
 export const REQUEST_TIMEOUT_MS = 10_000;
 
+/** A shared training pack as listed (browse, the account's own, one read by its code): its code, name, description,
+ *  creator (its owner's display name), type, difficulty, shots, downloads, when shared; on its owner's list whether an
+ *  admin hid it, and why */
+export interface SharedPack {
+  readonly code: string;
+  readonly name: string;
+  readonly description: string;
+  readonly creator: string;
+  readonly type: string;
+  readonly difficulty: string;
+  readonly shots: number;
+  readonly downloads: number;
+  readonly createdAt: string;
+  readonly hidden: boolean;
+  readonly hiddenReason: string;
+}
+
+/** A browse's page: its packs, and the next page's cursor (null: the last) */
+export interface PackPage {
+  readonly packs: readonly SharedPack[];
+  readonly next: string | null;
+}
+
 /** A call the API refused, or couldn't answer */
 export class AccountError extends Error {
-  /** `seconds`: a refusal's time left (rename-locked's, the admin's lock), when it says one */
+  /** `seconds`: a refusal's time left (rename-locked's, the admin's lock; pack-uploads' day), when it says one; `detail`:
+   *  what in a shared pack it refused (pack-invalid's: "shot 3: its ball") */
   constructor(
     readonly code: ApiError,
     readonly seconds: number | null = null,
+    readonly detail: string | null = null,
   ) {
     super(code);
     this.name = "AccountError";
@@ -109,6 +143,15 @@ const CODES: readonly ApiError[] = [
   "taken",
   "busy",
   "unavailable",
+  "pack-invalid",
+  "pack-name",
+  "pack-name-not-allowed",
+  "pack-description",
+  "pack-description-not-allowed",
+  "pack-uploads",
+  "pack-limit",
+  "too-large",
+  "not-found",
 ];
 
 /** Where a sign-in starts: a page load (the API sets its flow's cookie and sends the browser to the provider) */
@@ -181,6 +224,45 @@ export class AccountsApi {
     return rows;
   }
 
+  /** A training pack shared (its file, as the page keeps it: training/myPacks.ts packFile); its share code */
+  async sharePack(file: unknown): Promise<string> {
+    const body = (await this.#ok(await this.#send("POST", "/api/packs", file))) as { code?: unknown } | null;
+    if (typeof body?.code !== "string") throw new AccountError("server");
+    return body.code;
+  }
+
+  /** A shared pack by its code (no sign-in): its listing and its file (as given: the page checks it) */
+  async pack(code: string): Promise<{ readonly pack: SharedPack; readonly file: unknown }> {
+    const body = (await this.#ok(await this.#send("GET", `/api/packs/${encodeURIComponent(code)}`))) as { pack?: unknown } | null;
+    const pack = sharedPack(body);
+    if (!pack || body?.pack === undefined) throw new AccountError("server");
+    return { pack, file: body.pack };
+  }
+
+  /** A page of the shared packs (no sign-in): `search` a part of their names, newest or the most downloaded first, after
+   *  `cursor` (a page's next) */
+  async browsePacks(search: string, sort: "new" | "downloads", cursor: string | null = null): Promise<PackPage> {
+    const q = new URLSearchParams({ sort });
+    if (search !== "") q.set("search", search);
+    if (cursor !== null) q.set("cursor", cursor);
+    return packPage(await this.#ok(await this.#send("GET", `/api/packs?${q.toString()}`)));
+  }
+
+  /** The signed-in account's own shared packs (hidden ones too), and the most it may have */
+  async myPacks(): Promise<{ readonly packs: readonly SharedPack[]; readonly most: number }> {
+    const body = await this.#ok(await this.#send("GET", "/api/me/packs"));
+    const most = (body as { most?: unknown } | null)?.most;
+    return { packs: packPage(body).packs, most: count(most) ? most : 0 };
+  }
+
+  async deletePack(code: string): Promise<void> {
+    await this.#ok(await this.#send("DELETE", `/api/packs/${encodeURIComponent(code)}`));
+  }
+
+  async reportPack(code: string): Promise<void> {
+    await this.#ok(await this.#send("POST", `/api/packs/${encodeURIComponent(code)}/report`));
+  }
+
   async #send(method: string, path: string, body?: unknown): Promise<Response> {
     const write = method !== "GET";
     const headers: Record<string, string> = write ? { [WRITE_HEADER]: "1" } : {};
@@ -204,20 +286,50 @@ export class AccountsApi {
     if (response.ok) return response.status === 204 ? null : ((await response.json()) as unknown);
     let code: ApiError = response.status === 503 || response.status === 502 || response.status === 504 ? "unavailable" : "server";
     let seconds: number | null = null;
+    let detail: string | null = null;
+    if (response.status === 413) code = "too-large";
     try {
-      const said = (await response.json()) as { error?: unknown; seconds?: unknown };
+      const said = (await response.json()) as { error?: unknown; seconds?: unknown; detail?: unknown };
       code = CODES.find((c) => c === said.error) ?? code;
       if (typeof said.seconds === "number" && Number.isFinite(said.seconds) && said.seconds >= 0) seconds = said.seconds;
+      if (typeof said.detail === "string") detail = said.detail.slice(0, 120);
     } catch {
       // (not the API's JSON: a proxy's page)
     }
-    throw new AccountError(code, seconds);
+    throw new AccountError(code, seconds, detail);
   }
 }
 
 /** A count the API sent: a whole number, 0 or more */
 function count(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
+/** A shared pack the API listed, checked (null: not one) */
+function sharedPack(v: unknown): SharedPack | null {
+  const x = (v ?? {}) as Partial<Record<keyof SharedPack, unknown>>;
+  const text = (t: unknown): t is string => typeof t === "string";
+  if (!text(x.code) || !text(x.name) || !text(x.creator) || !text(x.type) || !text(x.difficulty) || !count(x.shots) || !count(x.downloads)) return null;
+  return {
+    code: x.code,
+    name: x.name,
+    description: text(x.description) ? x.description : "",
+    creator: x.creator,
+    type: x.type,
+    difficulty: x.difficulty,
+    shots: x.shots,
+    downloads: x.downloads,
+    createdAt: text(x.createdAt) ? x.createdAt : "",
+    hidden: x.hidden === true,
+    hiddenReason: text(x.hiddenReason) ? x.hiddenReason : "",
+  };
+}
+
+function packPage(body: unknown): PackPage {
+  const b = (body ?? {}) as { packs?: unknown; next?: unknown };
+  if (!Array.isArray(b.packs)) throw new AccountError("server");
+  const packs = (b.packs as unknown[]).map(sharedPack).filter((p): p is SharedPack => p !== null);
+  return { packs, next: typeof b.next === "string" ? b.next : null };
 }
 
 function liveStats(body: unknown): LiveStats {

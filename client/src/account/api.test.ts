@@ -178,3 +178,61 @@ describe("a sign-in's return", () => {
     expect(withoutSignInReturn(new URL("https://carball.example/?bots&signup=#x"))).toBe("/?bots=#x");
   });
 });
+
+describe("the shared packs' calls", () => {
+  const PACK = {
+    code: "0A1B-2C3D-4E5F-6071",
+    name: "Made Up",
+    description: "",
+    creator: "Some_Creator",
+    type: "striker",
+    difficulty: "easy",
+    shots: 2,
+    downloads: 4,
+    createdAt: "2026-10-29T12:00:00Z",
+  };
+
+  it("shares a pack (a write: the API's header, JSON), its code back; a refusal's code, seconds and detail", async () => {
+    const { call, api: a } = api(
+      reply(201, { code: PACK.code }),
+      reply(400, { error: "pack-invalid", detail: "shot 3: its ball" }),
+      reply(429, { error: "pack-uploads", seconds: 3600 }),
+      reply(413, { error: "too-large" }),
+      reply(413),
+    );
+    expect(await a.sharePack({ format: 1 })).toBe(PACK.code);
+    const init = call.mock.calls[0]?.[1];
+    expect([call.mock.calls[0]?.[0], init?.method, (init?.headers as Record<string, string>)["X-Carball"]]).toEqual(["/api/packs", "POST", "1"]);
+    await expect(a.sharePack({})).rejects.toMatchObject({ code: "pack-invalid", detail: "shot 3: its ball" });
+    await expect(a.sharePack({})).rejects.toMatchObject({ code: "pack-uploads", seconds: 3600 });
+    await expect(a.sharePack({})).rejects.toMatchObject({ code: "too-large" });
+    // (a proxy's 413, no JSON: too large still)
+    await expect(a.sharePack({})).rejects.toMatchObject({ code: "too-large" });
+  });
+
+  it("reads a pack by its code, a page of packs (its search, order and cursor in the query), the account's own", async () => {
+    const { call, api: a } = api(
+      reply(200, { ...PACK, pack: { format: 1 } }),
+      reply(200, { packs: [PACK, { name: "not a pack" }], next: "abc" }),
+      reply(200, { packs: [{ ...PACK, hidden: true, hiddenReason: "made up" }], most: 100 }),
+      reply(404, { error: "not-found" }),
+    );
+    expect(await a.pack(PACK.code)).toEqual({ pack: { ...PACK, hidden: false, hiddenReason: "" }, file: { format: 1 } });
+    const page = await a.browsePacks("drill 1", "downloads", "abc");
+    expect(call.mock.calls[1]?.[0]).toBe("/api/packs?sort=downloads&search=drill+1&cursor=abc");
+    expect([page.packs.length, page.next]).toEqual([1, "abc"]);
+    const mine = await a.myPacks();
+    expect([mine.most, mine.packs[0]?.hidden, mine.packs[0]?.hiddenReason]).toEqual([100, true, "made up"]);
+    await expect(a.pack("0000-0000-0000-0000")).rejects.toBeInstanceOf(AccountError);
+  });
+
+  it("deletes and reports a pack (writes)", async () => {
+    const { call, api: a } = api(reply(204), reply(204));
+    await a.deletePack(PACK.code);
+    await a.reportPack(PACK.code);
+    expect(call.mock.calls.map((c) => [c[0], c[1]?.method])).toEqual([
+      ["/api/packs/0A1B-2C3D-4E5F-6071", "DELETE"],
+      ["/api/packs/0A1B-2C3D-4E5F-6071/report", "POST"],
+    ]);
+  });
+});

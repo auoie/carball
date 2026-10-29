@@ -32,6 +32,9 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "--lock", "-1h"},
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "extra"},
 		{"unlock-renames", "--account", "nope", "--by", "Mod", "--reason", "x"}, {"unlock-renames", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod"},
+		{"packs"}, {"packs", "--recent", "0"}, {"packs", "--recent", "--reported"}, {"packs", "--reported", "5"},
+		{"pack"}, {"pack", "nope"}, {"pack-hide", "0A1B-2C3D-4E5F-6071", "--by", "Mod"}, {"pack-hide", "nope", "--by", "Mod", "--reason", "x"},
+		{"pack-hide", "--by", "Mod", "--reason", "x"}, {"pack-unhide"}, {"pack-unhide", "0A1B-2C3D-4E5F-607"},
 	} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 1 || strings.Contains(errs.String(), "DATABASE_URL") {
@@ -44,6 +47,8 @@ func TestReportArgumentsAndHelp(t *testing.T) {
 		{"queue-bans"}, {"names", "0F0E0D0C-0B0A-4908-8706-050403020100"}, {"names", "--recent"}, {"names", "--recent", "5"},
 		{"rename", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x", "--lock", "720h"},
 		{"unlock-renames", "--account", "0f0e0d0c-0b0a-4908-8706-050403020100", "--by", "Mod", "--reason", "x"},
+		{"packs", "--recent"}, {"packs", "--recent", "5"}, {"packs", "--reported"}, {"pack", "0F0E0D0C-0B0A-4908-8706-050403020100"},
+		{"pack-hide", "0a1b-2c3d-4e5f-6071", "--reason", "x", "--by", "Mod"}, {"pack-unhide", "0A1B-2C3D-4E5F-6071"},
 	} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {

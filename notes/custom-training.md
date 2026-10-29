@@ -595,6 +595,41 @@ random picks without repetition, a ball cannon, velocities from aim points (`Get
 (`TotalGameEventRoundsToWin`) [A]. Shared pieces only: the TrainingView HUD, the retry-penalty modal flag and
 `IsBallMovingTowardsGoal`. A clone could ship its own Psyonix-style packs as ordinary custom packs instead [I].
 
+## 9. Shared packs (Carball's, the user's request of 2026-10-29)
+The game shares packs by a server-assigned code (`XXXX-XXXX-XXXX-XXXX`, §1.3) and 1–50 shots (§1.3). Carball's own
+sharing goes through its accounts service (api/, migration 00006); packs are pure data, never evaluated.
+
+- **Sharing:** the editor's Share saves the pack, then uploads its file (`POST /api/packs`, signed in). The service checks
+  it strictly (`api/internal/packs`):
+  - the page's format 1 exactly, with no unknown field;
+  - 1–50 shots;
+  - every position within the arena's box (|x| ≤ 4096, |y| ≤ 6000, 0 ≤ z ≤ 2044);
+  - speeds within the game's (the ball 0–6000, the car 0–2300), time limits 0–59;
+  - rotators in whole Unreal units (pitch within a quarter turn, yaw [0, 65536), roll within half a turn);
+  - the name 3–30 and the description 0–200 characters, printable ASCII, past the word filter (`names.Allowed`);
+  - the body at most 64 KiB.
+  
+  It keeps the pack's canonical file (never the bytes as sent; its id `shared-<code>`, its creator filled in at each
+  read with the owner's display name now) and answers with a fresh code (64 bits from crypto/rand).
+- **Limits:** 10 uploads a day per account, counted in the database (a pack deleted since still counts), and 10 per
+  address (50 per wider network) in memory; 100 packs an account at a time. Reads: 120 per address in 10 minutes.
+  Deletes and reports: 30 per account in 10 minutes, one report per account per pack.
+- **Finding packs:** Custom Training has three tabs on the deployment's page (a development page has My Packs alone):
+  - **My Packs:** the player's own packs (local), and "My Shared Packs" with each one's code, Copy Code and Delete (one a
+    moderator hid says so, and why).
+  - **Browse:** a search (a part of the name, any case), newest or most downloaded, 30 a page (keyset paging), each pack
+    with its name, creator, shots and downloads, and Play, Save and Report.
+  - **Enter Code:** a code typed in any case, with or without its dashes.
+  
+  Play reads the pack through the API (`GET /api/packs/{code}`: its downloads counted once a day per account or
+  address, an address kept only as a keyed hash for two days). Save keeps a copy among the player's own packs, with an id
+  of its own.
+- **Moderation:**
+  - hidden packs and those of owners with a ban in force are out of browse and the code's read;
+  - the admin's `packs --recent [N] | --reported`, `pack ACCOUNT`, `pack-hide CODE --reason --by` and `pack-unhide CODE`;
+  - packs are deleted with their account (the privacy page says so).
+- **Not done:** a name-change history for packs (a hide's reason is kept instead), tags in browse, favourites.
+
 ---------------------------------------------------------------------------------------------------------------------
 
 ## Summary (CTR-n)

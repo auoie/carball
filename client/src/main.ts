@@ -80,7 +80,9 @@ import { DisplayMode } from "./ui/displayMode";
 import { browserNotice, browserNoticeDismissed, currentBrowserLimits, dismissBrowserNotice } from "./ui/browserNotice";
 import { type PackListing, listPacks, loadPack } from "./training/packs";
 import { type TrainingPack, parsePack } from "./training/pack";
-import { newPack } from "./training/myPacks";
+import { newPack, packFile, storePack } from "./training/myPacks";
+import { savedCopy, sharedPackOf } from "./training/shared";
+import { SHARE_TEXT, sharedErrorText } from "./ui/sharedPacks";
 import type { TrainingEditor } from "./ui/trainingEditor";
 import { ShotSelect } from "./ui/shotSelect";
 import { hasModifiers } from "./training/settings";
@@ -786,6 +788,20 @@ async function main(): Promise<void> {
         mainMenu?.setTrainingPacks(packs);
       });
     };
+    // (custom training: the pack read and checked (a shared one through the API), then played here at once, free play's
+    // session its stage; one that can't be, said)
+    const playPack = (listing: PackListing): void => {
+      void loadPack(listing).then((pack) => {
+        if (typeof pack === "string") {
+          console.error(`training pack ${listing.id}: ${pack}`);
+          modal.show(SHARE_TEXT.notPlayableTitle, SHARE_TEXT.notPlayable);
+          return;
+        }
+        mainMenu?.close();
+        playtesting = null;
+        freeplay.startTraining(pack);
+      });
+    };
     // (the editor's code a chunk of its own, loaded when it first opens)
     let editor: TrainingEditor | null = null;
     const openEditor = async (pack: TrainingPack, shot = 0, resume = false): Promise<void> => {
@@ -823,6 +839,17 @@ async function main(): Promise<void> {
           playtesting: () => playtesting !== null,
           project: (p) => renderer.project(p),
           blocked: () => menusOpen(),
+          // (Share: the deployment's accounts, the player signed in; its code, else why not in words)
+          share: async (shared) => {
+            await accountsReady;
+            if (!accountsOn) return { problem: SHARE_TEXT.sharingOff };
+            if (!account) return { problem: SHARE_TEXT.signInToShare };
+            try {
+              return { code: await accountsApi.sharePack(packFile(shared)) };
+            } catch (e) {
+              return { problem: sharedErrorText(e) };
+            }
+          },
         });
       }
       editor.open(pack, shot, resume);
@@ -867,8 +894,10 @@ async function main(): Promise<void> {
     let deploymentDown = false;
     let accountUnknown = false;
     const setAccount = (a: Account | null): void => {
+      const changed = (account?.id ?? null) !== (a?.id ?? null) || account?.name !== a?.name;
       account = a;
       freeplay.accountName = a?.name ?? null;
+      if (changed) mainMenu?.accountChanged();
       mainMenu?.setAccountEntry(accountsOn ? (a?.name ?? ACCOUNT_TEXT.entrySignedOut) : null);
       mainMenu?.setRatings(a?.ratings ?? null);
       mainMenu?.setQueueBan(a?.queueBanUntil ?? null);
@@ -968,18 +997,7 @@ async function main(): Promise<void> {
       settings: () => {
         panel.open();
       },
-      // (custom training: the pack read and checked, then played here at once, free play's session its stage)
-      training: (listing: PackListing) => {
-        void loadPack(listing).then((pack) => {
-          if (typeof pack === "string") {
-            console.error(`training pack ${listing.id}: ${pack}`);
-            return;
-          }
-          mainMenu?.close();
-          playtesting = null;
-          freeplay.startTraining(pack);
-        });
-      },
+      training: playPack,
       // (the editor: a pack of the player's own, or a new one)
       editTraining: (listing: PackListing | null) => {
         void (listing ? loadPack(listing) : Promise.resolve(newPack())).then(async (pack) => {
@@ -1034,6 +1052,30 @@ async function main(): Promise<void> {
     void accountsReady.then(() => {
       if (!accountsOn) return;
       mainMenu?.setLeaderboard(async (playlist) => accountsApi.leaderboard(playlist));
+      // (the shared training packs: Browse, Enter Code and the player's own; Save a copy among the player's packs)
+      mainMenu?.setPackSharing({
+        api: accountsApi,
+        signedIn: () => account !== null,
+        play: playPack,
+        save: async (code) => {
+          try {
+            const { pack, file } = await accountsApi.pack(code);
+            const shared = sharedPackOf(file, pack.creator);
+            if (typeof shared === "string") return SHARE_TEXT.notPlayable;
+            if (!storePack(savedCopy(shared))) return SHARE_TEXT.notSaved;
+            refreshPacks();
+            return null;
+          } catch (e) {
+            return sharedErrorText(e);
+          }
+        },
+        ask: (title, body, yes) => {
+          modal.ask(title, body, yes);
+        },
+        notice: (title, body) => {
+          modal.show(title, body);
+        },
+      });
       const poller = new LiveStatsPoller(
         async () => accountsApi.stats(),
         (stats) => {

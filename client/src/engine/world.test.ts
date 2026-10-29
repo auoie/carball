@@ -472,3 +472,73 @@ describe("a car's wheels as its vehicle has them (carWheels: the drawn wheels)",
     world.dispose();
   });
 });
+
+describe("a ball prediction (predictBall: the bots', RV-1192, RV-1193)", () => {
+  const twin = (): World => {
+    const w = World.create(engine);
+    w.addCar(0);
+    w.addCar(1);
+    w.resetKickoff(7);
+    w.setKickoffCountdown(0);
+    w.setBall({ pos: vec3(500, 2000, 300), vel: vec3(300, 2600, 400), angVel: vec3(2, -3, 1) });
+    return w;
+  };
+  const drive = (w: World, i: number): void => {
+    for (const id of w.carIds()) w.setControls(id, { ...NO_CONTROLS, throttle: 1, steer: Math.sin(i / 40 + id), jump: i % 97 < 5, boost: i % 50 < 30 });
+  };
+  const bytes = (a: Uint8Array | Float32Array): string => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString("base64");
+
+  it("1200 ticks at most, none for fewer than one; each slice the ball after another tick", () => {
+    const w = twin();
+    const { size, pos, vel } = w.predictLayout;
+    expect([size, pos, vel]).toEqual([6, 0, 3]);
+    expect(w.predictBall(5000)).toHaveLength(1200 * size);
+    expect(w.predictBall(-3)).toHaveLength(0);
+    const path = w.predictBall(2);
+    w.step();
+    expect(Array.from(path.subarray(0, 3))).toEqual([w.ball().pos.x, w.ball().pos.y, w.ball().pos.z].map(Math.fround));
+    w.dispose();
+  });
+
+  it("leaves the world as it was: a twin stepped without it the same, bit for bit (cars, ball, pads, events)", () => {
+    const a = twin();
+    const b = twin();
+    for (let i = 0; i < 600; i++) {
+      drive(a, i);
+      drive(b, i);
+      a.predictBall(720);
+      a.step();
+      b.step();
+      expect(a.takeEvents()).toEqual(b.takeEvents());
+    }
+    expect(bytes(a.saveState())).toBe(bytes(b.saveState()));
+    a.dispose();
+    b.dispose();
+  });
+
+  it("goes on through a net with the world's goals scored (no goal in the path), and the world's ball isn't scored by it", () => {
+    const w = twin();
+    w.setGoalScoring(true);
+    w.setBall({ pos: vec3(0, 4600, 300), vel: vec3(0, 2400, 0), angVel: vec3(0, 0, 0) });
+    const path = w.predictBall(240);
+    let deepest = 0;
+    for (let i = 0; i < 240; i++) deepest = Math.max(deepest, Math.abs(path[i * 6 + 1] ?? 0));
+    expect(deepest).toBeGreaterThan(5124.25 + 91.25);
+    expect(w.ballExploded()).toBe(false);
+    w.dispose();
+  });
+
+  it("the same path from a predictor used before as from a fresh one", () => {
+    const a = twin();
+    for (let i = 0; i < 30; i++) {
+      drive(a, i);
+      a.step();
+      a.predictBall(720);
+    }
+    const fresh = World.create(engine);
+    fresh.loadState(a.saveState());
+    expect(bytes(a.predictBall(720))).toBe(bytes(fresh.predictBall(720)));
+    a.dispose();
+    fresh.dispose();
+  });
+});

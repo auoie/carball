@@ -62,8 +62,12 @@ export function nameProblem(asked: string): ApiError | null {
   return null;
 }
 
-/** A refusal in our words */
-export function accountErrorText(code: ApiError, seconds: number | null = null): string {
+/** A shared pack's rules (the API's: api/internal/packs): its name 3 to 30 characters, its description 200 at most,
+ *  printable ASCII; the packs an account may have (the API says it with pack-limit) */
+export const PACK_TEXT_RULES = { nameMin: 3, nameMax: 30, descriptionMax: 200, most: 100, perDay: 10 } as const;
+
+/** A refusal in our words (`detail`: what in a shared pack, pack-invalid's) */
+export function accountErrorText(code: ApiError, seconds: number | null = null, detail: string | null = null): string {
   switch (code) {
     case "name-empty":
       return "Enter a name.";
@@ -95,6 +99,26 @@ export function accountErrorText(code: ApiError, seconds: number | null = null):
       return "Accounts aren't reachable right now. Try again later.";
     case "server":
       return "Something went wrong. Try again.";
+    case "pack-invalid":
+      return detail === null ? "This pack can't be shared." : `This pack can't be shared: ${detail}.`;
+    case "pack-name":
+      return `A shared pack's name is ${String(PACK_TEXT_RULES.nameMin)} to ${String(PACK_TEXT_RULES.nameMax)} characters: letters, numbers, spaces and punctuation, no accents or emoji.`;
+    case "pack-name-not-allowed":
+      return "That pack name isn't allowed. Rename the pack to share it.";
+    case "pack-description":
+      return `A shared pack's description is ${String(PACK_TEXT_RULES.descriptionMax)} characters at most: letters, numbers, spaces and punctuation.`;
+    case "pack-description-not-allowed":
+      return "That description isn't allowed.";
+    case "pack-uploads":
+      return seconds === null
+        ? `You've shared ${String(PACK_TEXT_RULES.perDay)} packs today. Try again tomorrow.`
+        : `You've shared ${String(PACK_TEXT_RULES.perDay)} packs today. You can share again in ${lockLeftText(seconds)}.`;
+    case "pack-limit":
+      return `You have ${String(PACK_TEXT_RULES.most)} shared packs, the most there can be. Delete one to share another.`;
+    case "too-large":
+      return "This pack is too large to share.";
+    case "not-found":
+      return "No shared pack has that code.";
   }
 }
 

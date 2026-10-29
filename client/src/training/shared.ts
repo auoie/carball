@@ -1,0 +1,36 @@
+// Shared training packs (the accounts service's: notes/custom-training.md §9): a share code as typed made the API's
+// shape; a shared pack as the menu lists it (its url "shared:CODE": read through the API when played, its download
+// counted there) and as played or saved (its file checked as any pack is, its creator the uploader's display name)
+import type { SharedPack } from "../account/api";
+import { newPackId } from "./myPacks";
+import { type TrainingPack, parsePack } from "./pack";
+import type { PackListing } from "./packs";
+
+/** A shared pack's listing url: SHARED and its code */
+export const SHARED = "shared:";
+
+/** A share code as the API takes it (XXXX-XXXX-XXXX-XXXX, upper case) from one typed (any case, its dashes and spaces
+ *  optional); null: not one */
+export function shareCode(typed: string): string | null {
+  const hex = typed.replace(/[\s-]/g, "").toUpperCase();
+  if (!/^[0-9A-F]{16}$/.test(hex)) return null;
+  return `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12)}`;
+}
+
+/** A shared pack's listing in the menu (its type and difficulty as the page knows them) */
+export function sharedListing(p: SharedPack): PackListing {
+  const type = p.type === "goalie" || p.type === "aerial" ? p.type : "striker";
+  const difficulty = p.difficulty === "medium" || p.difficulty === "hard" ? p.difficulty : "easy";
+  return { id: `shared-${p.code.toLowerCase()}`, name: p.name, type, difficulty, shots: p.shots, creator: p.creator, url: `${SHARED}${p.code}` };
+}
+
+/** A shared pack's file as played: checked as any pack (else what's wrong), its creator the uploader's display name */
+export function sharedPackOf(file: unknown, creator: string): TrainingPack | string {
+  const pack = parsePack(file);
+  return typeof pack === "string" ? pack : { ...pack, creator };
+}
+
+/** A shared pack saved among the player's own: a copy, an id of its own (editable; its creator kept) */
+export function savedCopy(pack: TrainingPack, random: () => number = Math.random): TrainingPack {
+  return { ...pack, id: newPackId(random) };
+}

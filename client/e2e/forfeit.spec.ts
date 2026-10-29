@@ -134,7 +134,7 @@ test("quick chat: the two presses, to all and to the team, names and comings and
   // show here (they still do on Ziggy's page)
   await page.keyboard.press("Escape");
   await page.locator(".players-toggle").click();
-  const row = page.locator(".player-row", { hasText: ziggy });
+  const row = page.locator(".player-row", { has: page.getByText(ziggy, { exact: true }) });
   await row.locator("button[data-action=block]").click();
   await expect(row.locator("button[data-action=block]")).toHaveText("Unblock");
   await expect(page.locator("#toast")).toContainText(`You have blocked ${ziggy}.`);
@@ -148,8 +148,11 @@ test("quick chat: the two presses, to all and to the team, names and comings and
   // Muting from Ziggy's side: the server keeps Merc's lines from Ziggy (a positive control: Merc's own line arrives)
   await other.keyboard.press("Escape");
   await other.locator(".players-toggle").click();
-  await other.locator(".player-row", { hasText: merc }).locator("button[data-action=mute]").click();
-  await expect(other.locator(".player-row", { hasText: merc }).locator("button[data-action=mute]")).toHaveText("Unmute");
+  await other
+    .locator(".player-row", { has: other.getByText(merc, { exact: true }) })
+    .locator("button[data-action=mute]")
+    .click();
+  await expect(other.locator(".player-row", { has: other.getByText(merc, { exact: true }) }).locator("button[data-action=mute]")).toHaveText("Unmute");
   await other.keyboard.press("Escape");
   await page.waitForTimeout(3000); // (Merc's spam bucket drains)
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
@@ -184,7 +187,7 @@ test("the match's end: the winner banner, the podium with the winner's tag, the 
   await expect(banner.locator(".winner-team")).toHaveText("BLUE");
   await expect(page.locator("#score-blue")).toBeHidden(); // (the HUD's match parts go: MIO-17; #score the board's 0 x 0 anchor)
   // The podium: the winner's car on it, its name under it (MIO-22); the banner raised
-  await expect(page.locator(".podium-tag", { hasText: merc })).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".podium-tag", { has: page.getByText(merc, { exact: true }) })).toBeVisible({ timeout: 15_000 });
   await expect(banner.locator(".winner")).toHaveClass(/raised/);
   await page.screenshot({ path: "test-results/podium.png" });
   // The end screen (MIO-26, 31): the scoreboard with the winner stamp, the countdown, Ready; both ready: the next match
