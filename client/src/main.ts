@@ -1062,7 +1062,8 @@ async function main(): Promise<void> {
             const { pack, file } = await accountsApi.pack(code);
             const shared = sharedPackOf(file, pack.creator);
             if (typeof shared === "string") return SHARE_TEXT.notPlayable;
-            if (!storePack(savedCopy(shared, new Set(storedPacks().map((p) => p.id))))) return SHARE_TEXT.notSaved;
+            const copy = savedCopy(shared, new Set(storedPacks().map((p) => p.id)));
+            if (!copy || !storePack(copy)) return SHARE_TEXT.notSaved;
             refreshPacks();
             return null;
           } catch (e) {

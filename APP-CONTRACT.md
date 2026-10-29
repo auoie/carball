@@ -372,7 +372,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   now, so many idle former top players would make it read more pages (5 s at most, then a 503 kept 5 s): fine at today's
   scale (RV-1167). For later: the idle growth in the SQL itself (ranked.Idle's formula) with `FETCH FIRST 100 ROWS WITH
   TIES`, or a cap on the pages read as a band-aid.
-- **Shared training packs** (`api/internal/server/packs.go`, `api/internal/packs`; migration 00006; notes/custom-training.md
+- **Shared training packs** (`api/internal/server/packs.go`, `api/internal/packs`; migrations 00006, and 00007 an index for an account's deletion; notes/custom-training.md
   §9). `POST /api/packs` (signed in; a write, its body up to 64 KiB): the page's pack file, checked strictly (no unknown
   field, no key twice or in another case, 1–50 shots, every number within the arena's box and the speeds, rotators whole units; its name 3–30 and its
   description 0–200 printable ASCII characters, past the word filter), kept in canonical form; 201 `{code}`

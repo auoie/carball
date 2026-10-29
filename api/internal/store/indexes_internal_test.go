@@ -161,6 +161,9 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 			FROM (SELECT id, row_number() OVER (ORDER BY id) g FROM accounts) a WHERE g <= 500`,
 		`INSERT INTO pack_downloads (code, viewer, day) SELECT code, sha256(g::text::bytea), (($1::timestamptz AT TIME ZONE 'UTC')::date - g % 3)
 			FROM training_packs, generate_series(1, 10) g`,
+		// (and the first 100 accounts' records, signed in: each pack opened today)
+		`INSERT INTO pack_downloads (code, viewer, day) SELECT p.code, uuid_send(a.id), ($1::timestamptz AT TIME ZONE 'UTC')::date
+			FROM training_packs p, (SELECT id FROM accounts ORDER BY id LIMIT 100) a`,
 		`INSERT INTO pack_uploads (account_id, uploaded_at) SELECT id, $1::timestamptz - (substr(id::text, 25)::int % 3) * interval '1 day'
 			- interval '1 hour' FROM accounts`,
 		`ANALYZE`,
@@ -205,6 +208,7 @@ func TestPurgesAndAdminReadsUseTheirIndexes(t *testing.T) {
 		{"bans in force (bans)", `SELECT provider, subject, reason, until, banned_by, created_at FROM bans
 			WHERE until IS NULL OR until > $1 ORDER BY created_at DESC`, "bans_until", []any{now}},
 		{"open sign-ins (count)", `SELECT count(*) FROM auth_flows WHERE expires_at > $1`, "", []any{now}},
+		{"an account's download records (its deletion)", deleteAccountDownloads, "pack_downloads_viewer", []any{"00000000-0000-4000-8000-000000000001"}},
 	} {
 		p := plan(c.sql, c.args...)
 		t.Logf("%s\n%s", c.name, p)

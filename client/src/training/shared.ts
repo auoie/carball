@@ -31,10 +31,15 @@ export function sharedPackOf(file: unknown, creator: string): TrainingPack | str
   return typeof pack === "string" ? pack : { ...pack, creator };
 }
 
+/** How many ids a saved copy draws before giving up (each taken: a broken random source, never chance) */
+const ID_DRAWS = 8;
+
 /** A shared pack saved among the player's own: a copy, an id of its own, none of `taken` (editable; its creator kept;
- *  a pack stored with a taken id would replace that one, RV-1202) */
-export function savedCopy(pack: TrainingPack, taken: ReadonlySet<string>, random: () => number = Math.random): TrainingPack {
-  let id = newPackId(random);
-  while (taken.has(id)) id = newPackId(random);
-  return { ...pack, id };
+ *  a pack stored with a taken id would replace that one, RV-1202); null: no free id in ID_DRAWS draws (RV-1204) */
+export function savedCopy(pack: TrainingPack, taken: ReadonlySet<string>, random: () => number = Math.random): TrainingPack | null {
+  for (let i = 0; i < ID_DRAWS; i++) {
+    const id = newPackId(random);
+    if (!taken.has(id)) return { ...pack, id };
+  }
+  return null;
 }

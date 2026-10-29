@@ -65,7 +65,8 @@ export const FLY_TEXT = {
   accept: "ACCEPT",
   cancel: "CANCEL",
   types: { striker: "Striker", goalie: "Goalie", aerial: "Aerial" },
-  difficulties: { easy: "Rookie", medium: "Pro", hard: "All-Star" },
+  // (the user's words, as the menu's and the panel editor's: not the game's Rookie / Pro / All-Star, 2026-10-29)
+  difficulties: { easy: "Easy", medium: "Medium", hard: "Hard" },
   panel: "Panel",
   freeCamera: "Free camera",
 } as const;
@@ -152,7 +153,7 @@ export function hudRows(selection: Selection): readonly { readonly action: Actio
   ];
 }
 
-/** The shot list's heading: "<DIFFICULTY> <TYPE>" (ROOKIE STRIKER) */
+/** The shot list's heading: "<DIFFICULTY> <TYPE>" (EASY STRIKER) */
 export function packHeading(pack: Pick<TrainingPack, "type" | "difficulty">): string {
   return `${FLY_TEXT.difficulties[pack.difficulty]} ${FLY_TEXT.types[pack.type]}`.toUpperCase();
 }

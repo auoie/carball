@@ -168,23 +168,23 @@ test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a sh
   await expect(panel).toBeHidden();
   const list = fly.locator(".fly-list");
   await expect(list).toBeVisible();
-  await expect(list.locator(".fly-heading")).toHaveText("ROOKIE STRIKER");
+  await expect(list.locator(".fly-heading")).toHaveText("EASY STRIKER");
   await expect(list.locator(".fly-shot-button")).toHaveCount(1);
   await expect(list.locator(".fly-shot-button").first()).toContainText("SHOT 1");
   await expect(list.locator(".fly-legend-item")).toHaveText([/SEQUENCE SETTINGS$/, /TEST SEQUENCE$/, /OPEN MENU$/]);
-  // SEQUENCE SETTINGS: named, Pro
+  // SEQUENCE SETTINGS: named, Medium
   await list.getByRole("button", { name: /SEQUENCE SETTINGS$/ }).click();
   const settings = fly.locator(".fly-settings");
   await expect(settings.locator(".fly-settings-name")).toBeFocused();
   await settings.locator(".fly-settings-name").fill("Fly Pack");
-  // (the difficulty a cycler: Right from Rookie, Pro)
+  // (the difficulty a cycler: Right from Easy, Medium)
   const difficulty = settings.getByRole("spinbutton", { name: "Difficulty" });
   await difficulty.focus();
   await page.keyboard.press("ArrowRight");
   await expect(difficulty).toHaveAttribute("data-value", "medium");
   await settings.getByRole("button", { name: "ACCEPT" }).click();
   await expect(settings).toBeHidden();
-  await expect(list.locator(".fly-heading")).toHaveText("PRO STRIKER");
+  await expect(list.locator(".fly-heading")).toHaveText("MEDIUM STRIKER");
   await expect(list.locator(".fly-pack-name")).toHaveText("Fly Pack");
   // CREATE NEW SHOT: a second shot, selected; edited
   await list.getByRole("button", { name: "CREATE NEW SHOT" }).click();

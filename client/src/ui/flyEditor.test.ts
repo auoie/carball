@@ -20,7 +20,7 @@ describe("the shot editor's HUD rows (TE1 §6.1)", () => {
     ]);
   });
 
-  it("the game's words elsewhere: the list's, the dialog's, the difficulties as Rookie, Pro and All-Star", () => {
+  it("the game's words elsewhere: the list's, the dialog's; the difficulties Easy, Medium and Hard (the user's, as the menu's)", () => {
     expect([FLY_TEXT.shot, FLY_TEXT.timeLimit, FLY_TEXT.strength, FLY_TEXT.shotRow(3), FLY_TEXT.create]).toEqual([
       "SHOT",
       "TIME LIMIT",
@@ -40,8 +40,8 @@ describe("the shot editor's HUD rows (TE1 §6.1)", () => {
       "ACCEPT",
       "CANCEL",
     ]);
-    expect(packHeading({ type: "striker", difficulty: "easy" })).toBe("ROOKIE STRIKER");
-    expect(packHeading({ type: "goalie", difficulty: "hard" })).toBe("ALL-STAR GOALIE");
+    expect(packHeading({ type: "striker", difficulty: "easy" })).toBe("EASY STRIKER");
+    expect(packHeading({ type: "goalie", difficulty: "hard" })).toBe("HARD GOALIE");
     expect(tagLabel("AirDribbles")).toBe("Air Dribbles");
   });
 });

@@ -54,13 +54,20 @@ describe("shared training packs", () => {
     expect(pack.creator).toBe("Some_Creator");
     expect(typeof sharedPackOf({ format: 1, id: "x", shots: [] }, "Some_Creator")).toBe("string");
     const copy = savedCopy(pack, new Set());
-    expect(copy.id).not.toBe(pack.id);
-    expect(copy.id).toMatch(/^mine-/);
-    expect(copy.shots).toEqual(pack.shots);
-    // (an id taken drawn again: never one of the player's)
+    expect(copy?.id).not.toBe(pack.id);
+    expect(copy?.id).toMatch(/^mine-/);
+    expect(copy?.shots).toEqual(pack.shots);
+    // (an id taken drawn again: never one of the player's; a source that only gives taken ones: given up, RV-1204)
     const draws = [0.25, 0.25, 0.5];
     const taken = savedCopy(pack, new Set([newPackId(() => 0.25)]), () => draws.shift() ?? 0.75);
-    expect(taken.id).toBe(newPackId(() => 0.5));
+    expect(taken?.id).toBe(newPackId(() => 0.5));
+    let calls = 0;
+    const stuck = (): number => {
+      calls++;
+      return 0;
+    };
+    expect(savedCopy(pack, new Set([newPackId(() => 0)]), stuck)).toBeNull();
+    expect(calls).toBe(8);
   });
 
   it("loads a shared listing through the API (its pack checked, its creator the API's); a missing code says so", async () => {

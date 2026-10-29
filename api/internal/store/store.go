@@ -633,7 +633,7 @@ func (s *Store) DeleteAccount(ctx context.Context, id string, hmacOf func(Identi
 		}
 		// (its shared packs' downloads counted for it: no foreign key, its viewer the account id's bytes (RV-1203); its
 		// packs, uploads and reports go with the account by their keys)
-		if _, err := tx.Exec(ctx, `DELETE FROM pack_downloads WHERE viewer = uuid_send($1::uuid)`, id); err != nil {
+		if _, err := tx.Exec(ctx, deleteAccountDownloads, id); err != nil {
 			return err
 		}
 		tag, err := tx.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, id)
@@ -643,6 +643,10 @@ func (s *Store) DeleteAccount(ctx context.Context, id string, hmacOf func(Identi
 		return err
 	})
 }
+
+// deleteAccountDownloads deletes the download records counted for an account (its id's 16 bytes): on the
+// pack_downloads_viewer index (its predicate repeated so the planner may use it; RV-1205)
+const deleteAccountDownloads = `DELETE FROM pack_downloads WHERE viewer = uuid_send($1::uuid) AND length(viewer) = 16`
 
 func identitiesOf(ctx context.Context, tx pgx.Tx, accountID string, lock bool) ([]Identity, error) {
 	q := `SELECT provider, subject FROM identities WHERE account_id = $1 ORDER BY provider`
