@@ -26,7 +26,10 @@ describe("shared training packs", () => {
     expect(shareCode("0a1b-2c3d-4e5f-6071")).toBe("0A1B-2C3D-4E5F-6071");
     expect(shareCode(" 0A1B 2C3D 4E5F 6071 ")).toBe("0A1B-2C3D-4E5F-6071");
     expect(shareCode("0a1b2c3d4e5f6071")).toBe("0A1B-2C3D-4E5F-6071");
-    for (const bad of ["", "0A1B-2C3D-4E5F-607", "0A1B-2C3D-4E5F-60712", "GA1B-2C3D-4E5F-6071", "0A1B_2C3D_4E5F_6071"]) expect(shareCode(bad)).toBeNull();
+    // (as the game reads one: any letters, anything else dropped)
+    expect(shareCode("GA1B-2C3D-4E5F-6071")).toBe("GA1B-2C3D-4E5F-6071");
+    expect(shareCode("0A1B_2C3D/4E5F.6071")).toBe("0A1B-2C3D-4E5F-6071");
+    for (const bad of ["", "0A1B-2C3D-4E5F-607", "0A1B-2C3D-4E5F-60712", "not a code"]) expect(shareCode(bad)).toBeNull();
   });
 
   it("lists a shared pack with the API's url, its type and difficulty as the page knows them", () => {

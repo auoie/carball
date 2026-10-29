@@ -13,6 +13,7 @@ import { CLAMPS, GOAL_BACK, clampTo, editorPack } from "../training/editorContro
 import type { TestKind } from "../training/run";
 import { cycler, slider } from "./controls";
 import { FLY_TEXT, FlyEditor, type PackDetails } from "./flyEditor";
+import { COPIED_MS } from "./sharedPacks";
 
 /** The editor's words (ours) */
 export const EDITOR_TEXT = {
@@ -51,9 +52,11 @@ export const EDITOR_TEXT = {
   importPack: "Import",
   share: "Share",
   sharing: "Sharing…",
-  sharedTitle: "PACK SHARED",
+  /** The game's code panel, verbatim (notes/custom-training.md §9, PACKS1): "COPIED TO CLIPBOARD" shown 5 s */
+  sharedTitle: "DOWNLOAD CODE",
   sharedBody: (code: string): string => `Its share code is ${code}. Anyone with it can play your pack, and it's listed in Browse.`,
   copyCode: "COPY CODE",
+  copied: "COPIED TO CLIPBOARD",
   ok: "OK",
   notSharedTitle: "NOT SHARED",
   exit: "Exit",
@@ -526,7 +529,11 @@ export class TrainingEditor {
     });
     const type = cycler<TrainingType>({
       label: T.type,
-      options: Object.entries(T.types) as [TrainingType, string][],
+      // (Striker and Goalie, the game's (TE-8); a pack's Aerial kept as it is, as the free-camera editor's)
+      options: (pack.type === "aerial" ? (["striker", "goalie", "aerial"] as const) : (["striker", "goalie"] as const)).map((t): [TrainingType, string] => [
+        t,
+        T.types[t],
+      ]),
       value: pack.type,
       data: { editor: "type" },
       onChange: (v) => {
@@ -884,9 +891,20 @@ export class TrainingEditor {
       return;
     }
     const copy = (): void => {
-      void navigator.clipboard.writeText(shared.code).catch(() => {
-        this.#actions.notice(EDITOR_TEXT.sharedTitle, shared.code);
-      });
+      navigator.clipboard.writeText(shared.code).then(
+        () => {
+          this.#status = EDITOR_TEXT.copied;
+          this.#render();
+          setTimeout(() => {
+            if (this.#status !== EDITOR_TEXT.copied) return;
+            this.#status = "";
+            this.#render();
+          }, COPIED_MS);
+        },
+        () => {
+          this.#actions.notice(EDITOR_TEXT.sharedTitle, shared.code);
+        },
+      );
     };
     this.#actions.choose(
       EDITOR_TEXT.sharedTitle,

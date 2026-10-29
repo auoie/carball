@@ -9,12 +9,13 @@ import type { PackListing } from "./packs";
 /** A shared pack's listing url: SHARED and its code */
 export const SHARED = "shared:";
 
-/** A share code as the API takes it (XXXX-XXXX-XXXX-XXXX, upper case) from one typed (any case, its dashes and spaces
- *  optional); null: not one */
+/** A share code as the API takes it (XXXX-XXXX-XXXX-XXXX, upper case) from one typed, as the game reads it
+ *  (notes/custom-training.md §9, PACKS1): everything but letters and digits dropped, 16 left, in fours, upper case
+ *  (any letters: one the service never made just isn't found); null: not 16 */
 export function shareCode(typed: string): string | null {
-  const hex = typed.replace(/[\s-]/g, "").toUpperCase();
-  if (!/^[0-9A-F]{16}$/.test(hex)) return null;
-  return `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12)}`;
+  const code = typed.replace(/[^0-9a-zA-Z]/g, "").toUpperCase();
+  if (code.length !== 16) return null;
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}-${code.slice(12)}`;
 }
 
 /** A shared pack's listing in the menu (its type and difficulty as the page knows them) */

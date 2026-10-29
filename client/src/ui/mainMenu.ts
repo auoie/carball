@@ -84,7 +84,7 @@ const PLAYLIST_KEY = "carball.playlist";
 export type MenuView = "top" | "play" | "bots" | "training" | "garage" | "leaderboard" | "account";
 
 /** Custom Training's tabs (its shared packs': ui/sharedPacks.ts) */
-type TrainingTab = "mine" | "browse" | "code";
+type TrainingTab = "mine" | "starter" | "browse" | "code";
 
 /** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play, the garage, the
  *  leaderboard and the account to the top; the top stays */
@@ -156,8 +156,10 @@ export class MainMenu {
   readonly #playTraining: HTMLButtonElement;
   readonly #training: HTMLDivElement;
   readonly #trainingList: HTMLDivElement;
+  /** Carball's starter packs (their own tab) */
+  readonly #starterList: HTMLDivElement;
   readonly #trainingAction: ((pack: PackListing) => void) | undefined;
-  /** Custom Training's tabs (My Packs, Browse, Enter Code: shown where packs are shared, setPackSharing), their panels,
+  /** Custom Training's tabs (My Packs, Starter Packs; Browse and Enter Code where packs are shared, setPackSharing), their panels,
    *  the one shown, and the shared packs' views */
   readonly #trainingTabs: HTMLDivElement;
   readonly #trainingTabButtons: Readonly<Record<TrainingTab, HTMLButtonElement>>;
@@ -346,12 +348,13 @@ export class MainMenu {
     trainingHeading.textContent = TRAINING_MENU_TEXT.customTraining;
     this.#trainingList = document.createElement("div");
     this.#trainingList.className = "main-menu-training";
-    // (its tabs, the bumpers stepping through them, hidden while no packs are shared here)
+    this.#starterList = document.createElement("div");
+    this.#starterList.className = "main-menu-training";
+    // (its tabs, the bumpers stepping through them; Browse and Enter Code hidden while no packs are shared here)
     this.#trainingTabs = document.createElement("div");
     this.#trainingTabs.className = "main-menu-board-tabs main-menu-training-tabs";
     this.#trainingTabs.setAttribute("role", "tablist");
     this.#trainingTabs.dataset["padTabs"] = "";
-    this.#trainingTabs.hidden = true;
     const tabButton = (tab: TrainingTab): HTMLButtonElement => {
       const b = button(this.#trainingTabs, SHARE_TEXT.tabs[tab], () => {
         this.#showTrainingTab(tab);
@@ -360,7 +363,9 @@ export class MainMenu {
       b.dataset["trainingTab"] = tab;
       return b;
     };
-    this.#trainingTabButtons = { mine: tabButton("mine"), browse: tabButton("browse"), code: tabButton("code") };
+    this.#trainingTabButtons = { mine: tabButton("mine"), starter: tabButton("starter"), browse: tabButton("browse"), code: tabButton("code") };
+    this.#trainingTabButtons.browse.hidden = true;
+    this.#trainingTabButtons.code.hidden = true;
     const panel = (tab: TrainingTab): HTMLDivElement => {
       const d = document.createElement("div");
       d.className = "main-menu-training-panel";
@@ -368,9 +373,10 @@ export class MainMenu {
       d.hidden = tab !== "mine";
       return d;
     };
-    this.#trainingPanels = { mine: panel("mine"), browse: panel("browse"), code: panel("code") };
+    this.#trainingPanels = { mine: panel("mine"), starter: panel("starter"), browse: panel("browse"), code: panel("code") };
     this.#trainingPanels.mine.append(this.#trainingList);
-    this.#training.append(trainingHeading, this.#trainingTabs, this.#trainingPanels.mine, this.#trainingPanels.browse, this.#trainingPanels.code);
+    this.#trainingPanels.starter.append(this.#starterList);
+    this.#training.append(trainingHeading, this.#trainingTabs, ...Object.values(this.#trainingPanels));
     this.#trainingAction = actions.training;
     this.#editAction = actions.editTraining;
     button(this.#training, BACK_TEXT, () => {
@@ -639,7 +645,8 @@ export class MainMenu {
   }
 
   /** The training packs there are: Custom Training shown with one to play (or the editor to make one), each a button on
-   *  its page, the player's own with Edit beside it; Create Training first */
+   *  its page: Carball's starter packs on their own tab, the rest on My Packs (the player's own with Edit beside it),
+   *  Create Training first */
   setTrainingPacks(packs: readonly PackListing[]): void {
     const edit = this.#editAction;
     this.#playTraining.hidden = !CUSTOM_TRAINING || (packs.length === 0 && !edit);
@@ -650,44 +657,46 @@ export class MainMenu {
       edit?.(null);
     });
     create.hidden = !edit;
-    this.#trainingList.replaceChildren(
-      create,
-      ...packs.map((pack) => {
-        const b = document.createElement("button");
-        b.className = "main-menu-button main-menu-pack";
-        b.dataset["pack"] = pack.id;
-        const name = document.createElement("span");
-        name.className = "main-menu-pack-name";
-        name.textContent = pack.name;
-        const about = document.createElement("span");
-        about.className = "main-menu-pack-about";
-        about.textContent = `${TRAINING_MENU_TEXT.shots(pack.shots)} · ${TRAINING_MENU_TEXT.difficulties[pack.difficulty]}`;
-        b.append(name, about);
-        b.addEventListener("click", () => {
-          this.#trainingAction?.(pack);
-        });
-        if (!pack.mine || !edit) return b;
-        const editButton = document.createElement("button");
-        editButton.className = "main-menu-button main-menu-pack-edit";
-        editButton.textContent = TRAINING_MENU_TEXT.edit;
-        editButton.dataset["edit"] = pack.id;
-        editButton.addEventListener("click", () => {
-          edit(pack);
-        });
-        const row = document.createElement("div");
-        row.className = "main-menu-pack-row";
-        row.append(b, editButton);
-        return row;
-      }),
-    );
+    // (one pack's row: its button, the player's own with Edit beside it)
+    const packRow = (pack: PackListing): HTMLElement => {
+      const b = document.createElement("button");
+      b.className = "main-menu-button main-menu-pack";
+      b.dataset["pack"] = pack.id;
+      const name = document.createElement("span");
+      name.className = "main-menu-pack-name";
+      name.textContent = pack.name;
+      const about = document.createElement("span");
+      about.className = "main-menu-pack-about";
+      about.textContent = `${TRAINING_MENU_TEXT.shots(pack.shots)} · ${TRAINING_MENU_TEXT.difficulties[pack.difficulty]}`;
+      b.append(name, about);
+      b.addEventListener("click", () => {
+        this.#trainingAction?.(pack);
+      });
+      if (!pack.mine || !edit) return b;
+      const editButton = document.createElement("button");
+      editButton.className = "main-menu-button main-menu-pack-edit";
+      editButton.textContent = TRAINING_MENU_TEXT.edit;
+      editButton.dataset["edit"] = pack.id;
+      editButton.addEventListener("click", () => {
+        edit(pack);
+      });
+      const row = document.createElement("div");
+      row.className = "main-menu-pack-row";
+      row.append(b, editButton);
+      return row;
+    };
+    this.#trainingList.replaceChildren(create, ...packs.filter((p) => !p.starter).map(packRow));
+    this.#starterList.replaceChildren(...packs.filter((p) => p.starter).map(packRow));
   }
 
-  /** Packs shared here (the deployment's accounts service): Custom Training's tabs, Browse and Enter Code with My Packs'
-   *  shared section; null, none (a development page: My Packs alone) */
+  /** Packs shared here (the deployment's accounts service): Custom Training's Browse and Enter Code tabs with My Packs'
+   *  shared section; null, none (a development page: My Packs and Starter Packs alone) */
   setPackSharing(actions: SharedPacksActions | null): void {
-    this.#trainingTabs.hidden = actions === null;
+    this.#trainingTabButtons.browse.hidden = actions === null;
+    this.#trainingTabButtons.code.hidden = actions === null;
     for (const p of Object.values(this.#trainingPanels)) p.replaceChildren();
     this.#trainingPanels.mine.append(this.#trainingList);
+    this.#trainingPanels.starter.append(this.#starterList);
     this.#shared = actions === null ? null : new SharedPacksPage(actions);
     if (this.#shared) {
       this.#trainingPanels.mine.append(this.#shared.mine);
@@ -695,7 +704,8 @@ export class MainMenu {
       this.#trainingPanels.code.append(this.#shared.code);
     }
     // (its tab read at once if the page shows already: sharing known after it was opened)
-    this.#showTrainingTab(this.#shared ? this.#trainingTab : "mine", !this.#training.hidden);
+    const shown = this.#shared || this.#trainingTab === "starter" ? this.#trainingTab : "mine";
+    this.#showTrainingTab(shown, !this.#training.hidden);
   }
 
   /** The account changed (signed in or out, renamed): My Packs' shared ones read again if they show */
@@ -703,7 +713,8 @@ export class MainMenu {
     if (!this.#training.hidden && this.#trainingTab === "mine") void this.#shared?.refreshMine();
   }
 
-  /** A tab of Custom Training's shown: Browse's first page read, Enter Code's field, My Packs' shared ones read again */
+  /** A tab of Custom Training's shown: Browse's first page read, Enter Code's field, My Packs' shared ones read again
+   *  (Starter Packs: nothing to read) */
   #showTrainingTab(tab: TrainingTab, read = true): void {
     this.#trainingTab = tab;
     for (const [t, b] of Object.entries(this.#trainingTabButtons)) b.setAttribute("aria-selected", String(t === tab));
@@ -711,7 +722,7 @@ export class MainMenu {
     if (!read || !this.#shared) return;
     if (tab === "browse") this.#shared.showBrowse();
     else if (tab === "code") this.#shared.showCode();
-    else void this.#shared.refreshMine();
+    else if (tab === "mine") void this.#shared.refreshMine();
   }
 
   /** Back on the training packs' page (from the editor) */
@@ -821,6 +832,7 @@ export class MainMenu {
     if (view === "training") {
       this.#showTrainingTab(this.#trainingTab);
       if (this.#trainingTab === "mine") this.#trainingList.querySelector("button")?.focus();
+      else if (this.#trainingTab === "starter") this.#starterList.querySelector("button")?.focus();
     }
   }
 }

@@ -303,7 +303,9 @@ so Test Shot works in play) [S `OnActiveBindingsChanged`].
 - Disk writes happen at pack creation, at the first shot of an empty pack, and on **save from the pause menu**
   ("SAVE AND EXIT", or "CHANGE MODE/MATCH" → Yes). There is no autosave on shot switch or test; edits live in
   memory until then. While saving: a processing modal "Saving" [L TrainingMode.SavingTrainingMessage].
-- On save (`SaveInternal`, TA:35815): `UpdatedAt` = now for own packs; success clears the unsaved flag and re-inits
+- On save (`SaveInternal`, TA:35815): `UpdatedAt` = **0** for own packs (the raw bytes 0x59 + 8 zero bytes: "local
+  changes not uploaded", which shows "LOCAL VERSION MODIFIED" and "UPLOAD CHANGES" on an uploaded pack; corrected by
+  PACKS1 2026-10-29, [S] inferred strongly; this note said "now" before); success clears the unsaved flag and re-inits
   the pack's progress.
 
 ### 5.3 Confirmations (verbatim) [G MGM, TBM; L]

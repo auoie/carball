@@ -1,7 +1,7 @@
 // Custom Training's shared packs (src/ui/sharedPacks.ts; notes/custom-training.md §9) on the deployment's page: its tabs;
 // Browse's list, search, order and next page, a pack played and saved; Enter Code's checks and its find; signed in, the
 // player's own shared packs (a hidden one says why) and Delete, a report, the editor's Share (its code shown, a refusal in
-// words); a development page has no tabs. The accounts service and config.json are the browser's fakes (page.route):
+// words); a development page has My Packs and Starter Packs alone. The accounts service and config.json are the browser's fakes (page.route):
 // made-up packs and codes, no network. Nothing drawn.
 import type { Page, Route } from "@playwright/test";
 import { expect, fakeGamepad, padTap, test } from "./fixtures";
@@ -101,7 +101,7 @@ test("Browse lists, searches, orders and pages the shared packs; one played and 
   await customTraining(page);
   const menu = page.locator("#main-menu");
   const tabs = menu.locator(".main-menu-training-tabs");
-  await expect(tabs.getByRole("tab")).toHaveText(["My Packs", "Browse", "Enter Code"]);
+  await expect(tabs.getByRole("tab")).toHaveText(["My Packs", "Starter Packs", "Browse", "Enter Code"]);
   // (My Packs signed out: the line to sign in for the shared ones)
   await expect(menu.locator(".main-menu-shared-mine .main-menu-shared-state")).toHaveText(/sign in to share packs/i);
   await tabs.getByRole("tab", { name: "Browse" }).click();
@@ -124,16 +124,25 @@ test("Browse lists, searches, orders and pages the shared packs; one played and 
   // (Save: a copy among My Packs, editable)
   await rows.nth(1).getByRole("button", { name: "Save" }).click();
   await expect(rows.nth(1).getByRole("button", { name: "Saved" })).toBeVisible();
-  // Enter Code: a bad one, an unknown one, one found (typed in lower case without its dashes)
+  // Enter Code, read as the game reads one: a bad one (the game's words), unknown ones (any letters, spaces for dashes),
+  // one found (typed in lower case without its dashes)
   await tabs.getByRole("tab", { name: "Enter Code" }).click();
   const code = menu.locator(".main-menu-shared-code-input");
   const state = menu.locator(".main-menu-shared-code .main-menu-shared-state");
+  await expect(code).toHaveAttribute("placeholder", "0000-0000-0000-0000");
+  await expect(code).toHaveAttribute("maxlength", "19");
   await code.fill("not a code");
   await code.press("Enter");
-  await expect(state).toHaveText(/16 letters and digits/);
+  await expect(modal).toContainText("INVALID CODE");
+  await expect(modal).toContainText("The code you entered was invalid.");
+  await modal.getByRole("button", { name: /^ok$/i }).click();
   await code.fill("0000-0000-0000-0000");
   await code.press("Enter");
-  await expect(state).toHaveText("No shared pack has that code.");
+  await expect(state).toHaveText("The training mode could not be found. Ensure the code is correct and try again.");
+  await code.fill("zzzz zzzz zzzz zzzz");
+  await code.press("Enter");
+  await expect(code).toHaveValue("ZZZZ-ZZZZ-ZZZZ-ZZZZ");
+  await expect(state).toHaveText(/^The training mode could not be found/);
   await code.fill("0a1b2c3d4e5f6003");
   await code.press("Enter");
   await expect(menu.locator(".main-menu-shared-code .main-menu-pack-name")).toHaveText("Drill 03");
@@ -152,7 +161,9 @@ test("Browse lists, searches, orders and pages the shared packs; one played and 
 
 test("signed in: My Shared Packs (a hidden one says why) and Delete; a report sent; the editor's Share shows its code, a refusal in words", async ({
   page,
+  context,
 }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const fake: Fake = {
@@ -192,22 +203,41 @@ test("signed in: My Shared Packs (a hidden one says why) and Delete; a report se
   await expect(editor).toBeVisible();
   await editor.getByRole("button", { name: /^share$/i }).click();
   await expect(modal).toContainText("NOT SHARED");
-  await expect(modal).toContainText("That pack name isn't allowed. Rename the pack to share it.");
+  await expect(modal).toContainText("Training name is not valid.");
   await modal.getByRole("button", { name: /^ok$/i }).click();
   await editor.getByRole("button", { name: /^share$/i }).click();
-  await expect(modal).toContainText("PACK SHARED");
+  await expect(modal).toContainText("DOWNLOAD CODE");
   await expect(modal).toContainText("9F8E-7D6C-5B4A-3928");
+  await modal.getByRole("button", { name: /^copy code$/i }).click();
+  await expect(editor.locator(".editor-status")).toHaveText("COPIED TO CLIPBOARD");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("9F8E-7D6C-5B4A-3928");
+  // (gone after its 5 s)
+  await expect(editor.locator(".editor-status")).not.toHaveText("COPIED TO CLIPBOARD", { timeout: 8000 });
+  // (the editor's types: Striker and Goalie, the game's)
+  await expect(editor.locator('[data-editor="type"]')).toHaveAttribute("aria-valuemax", "1");
   const shared = fake.calls.filter((c) => c.method === "POST" && c.path === "/api/packs");
   expect(shared).toHaveLength(2);
   expect(JSON.parse(shared[1]?.body ?? "{}")).toMatchObject({ format: 1, name: "My Training", type: "striker" });
   expect(errors).toEqual([]);
 });
 
-test("a development page has no shared packs: My Packs alone, no tabs", async ({ page }) => {
+test("a development page has no shared packs: My Packs and Starter Packs alone, the starters on their own tab", async ({ page }) => {
   await customTraining(page);
   const menu = page.locator("#main-menu");
-  await expect(menu.locator(".main-menu-pack-name").first()).toBeVisible();
-  await expect(menu.locator(".main-menu-training-tabs")).toBeHidden();
+  const tabs = menu.locator(".main-menu-training-tabs");
+  await expect(tabs.getByRole("tab")).toHaveText(["My Packs", "Starter Packs"]);
+  // (My Packs: Create Training, none of Carball's)
+  await expect(menu.getByRole("button", { name: /^create training$/i })).toBeVisible();
+  await expect(menu.locator('[data-training-panel="mine"] .main-menu-pack')).toHaveCount(0);
+  await tabs.getByRole("tab", { name: "Starter Packs" }).click();
+  await expect(menu.locator('[data-training-panel="starter"] .main-menu-pack-name')).toHaveText([
+    "First Touches",
+    "Open Net",
+    "Bounce Shots",
+    "Air Starters",
+    "Keeper Basics",
+  ]);
+  await expect(menu.locator('[data-training-panel="starter"] .main-menu-pack-edit')).toHaveCount(0);
 });
 
 test("with a pad: the bumpers step Custom Training's tabs, stopping at the ends (the leaderboard's beside it, hidden, never taken)", async ({
@@ -223,11 +253,15 @@ test("with a pad: the bumpers step Custom Training's tabs, stopping at the ends 
   const selected = tabs.locator('[aria-selected="true"]');
   await expect(selected).toHaveText("My Packs");
   await padTap(page, [RB]);
+  await expect(selected).toHaveText("Starter Packs");
+  await expect(page.locator('#main-menu [data-training-panel="starter"] .main-menu-pack')).toHaveCount(5);
+  await padTap(page, [RB]);
   await expect(selected).toHaveText("Browse");
   await expect(page.locator("#main-menu .main-menu-shared-browse .main-menu-shared-row")).toHaveCount(30);
   await padTap(page, [RB]);
   await padTap(page, [RB]);
   await expect(selected).toHaveText("Enter Code");
   await padTap(page, [LB]);
-  await expect(selected).toHaveText("Browse");
+  await padTap(page, [LB]);
+  await expect(selected).toHaveText("Starter Packs");
 });

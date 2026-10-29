@@ -50,7 +50,7 @@ test("a pack shared from the editor: its code found and played in another browse
   await editor.locator(".editor-name").blur();
   await editor.getByRole("button", { name: /^share$/i }).click();
   const modal = page.locator("#modal");
-  await expect(modal).toContainText("PACK SHARED", { timeout: 30_000 });
+  await expect(modal).toContainText("DOWNLOAD CODE", { timeout: 30_000 });
   const code = /[0-9A-F]{4}(?:-[0-9A-F]{4}){3}/.exec((await modal.textContent()) ?? "")?.[0];
   expect(code).toBeDefined();
   await modal.getByRole("button", { name: /^ok$/i }).click();
@@ -81,6 +81,11 @@ test("a pack shared from the editor: its code found and played in another browse
   await againMenu.locator(".main-menu-training-tabs").getByRole("tab", { name: "Enter Code" }).click();
   await againMenu.locator(".main-menu-shared-code-input").fill(code ?? "");
   await againMenu.locator(".main-menu-shared-code-input").press("Enter");
-  await expect(againMenu.locator(".main-menu-shared-code .main-menu-shared-state")).toHaveText("No shared pack has that code.", { timeout: 30_000 });
+  await expect(againMenu.locator(".main-menu-shared-code .main-menu-shared-state")).toHaveText(
+    "The training mode could not be found. Ensure the code is correct and try again.",
+    {
+      timeout: 30_000,
+    },
+  );
   expect(errors).toEqual([]);
 });

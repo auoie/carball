@@ -134,7 +134,9 @@ test("a striker's goal after the car's touch completes the shot (CTR-8)", async 
   await expect(page.locator(".training-pips i.done")).toHaveCount(1);
 });
 
-test("a build offers Carball's starter packs: Custom Training lists them, one starts at its first shot", async ({ page }) => {
+test("a build offers Carball's starter packs: Custom Training's Starter Packs tab lists them (My Packs doesn't), one starts at its first shot", async ({
+  page,
+}) => {
   // (the menu's way in: none while it's switched off; the play mode above runs through the test hook still)
   test.skip(!CUSTOM_TRAINING, "Custom Training is switched off (src/features.ts CUSTOM_TRAINING)");
   await page.goto("/?render=off");
@@ -142,8 +144,11 @@ test("a build offers Carball's starter packs: Custom Training lists them, one st
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click();
   await menu.getByRole("button", { name: /^custom training$/i }).click();
-  await expect(menu.locator(".main-menu-pack-name")).toHaveText(["First Touches", "Open Net", "Bounce Shots", "Air Starters", "Keeper Basics"]);
-  await menu.locator(".main-menu-pack", { hasText: "Keeper Basics" }).click();
+  await expect(menu.locator('[data-training-panel="mine"] .main-menu-pack')).toHaveCount(0);
+  await menu.locator(".main-menu-training-tabs").getByRole("tab", { name: "Starter Packs" }).click();
+  const starters = menu.locator('[data-training-panel="starter"]');
+  await expect(starters.locator(".main-menu-pack-name")).toHaveText(["First Touches", "Open Net", "Bounce Shots", "Air Starters", "Keeper Basics"]);
+  await starters.locator(".main-menu-pack", { hasText: "Keeper Basics" }).click();
   await expect(menu).toBeHidden();
   await expect(page.locator(".training-type")).toHaveText(/^goalie$/i);
   await expect(page.locator(".training-shot")).toHaveText(/^shot 1 \/ 8$/i);

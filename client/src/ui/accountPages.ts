@@ -62,9 +62,9 @@ export function nameProblem(asked: string): ApiError | null {
   return null;
 }
 
-/** A shared pack's rules (the API's: api/internal/packs): its name 3 to 30 characters, its description 200 at most,
- *  printable ASCII; the packs an account may have (the API says it with pack-limit) */
-export const PACK_TEXT_RULES = { nameMin: 3, nameMax: 30, descriptionMax: 200, most: 100, perDay: 10 } as const;
+/** A shared pack's rules (the API's: api/internal/packs): its description 200 characters at most, printable ASCII; the
+ *  packs an account may have (the API says it with pack-limit), and share a day (its name refused in the game's words) */
+export const PACK_TEXT_RULES = { descriptionMax: 200, most: 100, perDay: 10 } as const;
 
 /** A refusal in our words (`detail`: what in a shared pack, pack-invalid's) */
 export function accountErrorText(code: ApiError, seconds: number | null = null, detail: string | null = null): string {
@@ -101,10 +101,10 @@ export function accountErrorText(code: ApiError, seconds: number | null = null, 
       return "Something went wrong. Try again.";
     case "pack-invalid":
       return detail === null ? "This pack can't be shared." : `This pack can't be shared: ${detail}.`;
+    // (the game's, verbatim: notes/custom-training.md §9, PACKS1)
     case "pack-name":
-      return `A shared pack's name is ${String(PACK_TEXT_RULES.nameMin)} to ${String(PACK_TEXT_RULES.nameMax)} characters: letters, numbers, spaces and punctuation, no accents or emoji.`;
     case "pack-name-not-allowed":
-      return "That pack name isn't allowed. Rename the pack to share it.";
+      return "Training name is not valid.";
     case "pack-description":
       return `A shared pack's description is ${String(PACK_TEXT_RULES.descriptionMax)} characters at most: letters, numbers, spaces and punctuation.`;
     case "pack-description-not-allowed":
@@ -118,7 +118,7 @@ export function accountErrorText(code: ApiError, seconds: number | null = null, 
     case "too-large":
       return "This pack is too large to share.";
     case "not-found":
-      return "No shared pack has that code.";
+      return "The training mode could not be found. Ensure the code is correct and try again.";
   }
 }
 

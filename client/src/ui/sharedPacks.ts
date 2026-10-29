@@ -9,7 +9,7 @@ import { accountErrorText } from "./accountPages";
 
 /** The shared packs' words (ours) */
 export const SHARE_TEXT = {
-  tabs: { mine: "My Packs", browse: "Browse", code: "Enter Code" },
+  tabs: { mine: "My Packs", starter: "Starter Packs", browse: "Browse", code: "Enter Code" },
   search: "Search packs",
   find: "Search",
   newest: "Newest",
@@ -22,16 +22,19 @@ export const SHARE_TEXT = {
   reported: "Reported",
   loading: "Loading…",
   none: "No packs found.",
-  codePlaceholder: "XXXX-XXXX-XXXX-XXXX",
+  /** The game's code entry (notes/custom-training.md §9, PACKS1: verbatim) */
+  codePlaceholder: "0000-0000-0000-0000",
   findCode: "Find",
-  badCode: "A share code is 16 letters and digits: XXXX-XXXX-XXXX-XXXX.",
+  badCodeTitle: "INVALID CODE",
+  badCode: "The code you entered was invalid.",
   meta: (p: SharedPack): string =>
     `by ${p.creator} · ${String(p.shots)} shot${p.shots === 1 ? "" : "s"} · ${String(p.downloads)} download${p.downloads === 1 ? "" : "s"}`,
   mineHeading: "My Shared Packs",
   signInToShare: "Sign in to share packs and see the ones you've shared.",
   noneShared: "You haven't shared a pack yet: Share in the Training Editor.",
   copyCode: "Copy Code",
-  copied: "Copied",
+  /** (the game's, verbatim: shown 5 s) */
+  copied: "COPIED TO CLIPBOARD",
   delete: "Delete",
   deleteTitle: "DELETE SHARED PACK",
   deleteBody: (name: string): string => `Take “${name}” off the shared packs? Its code stops working. Your own copy stays.`,
@@ -43,7 +46,7 @@ export const SHARE_TEXT = {
   signInToReport: "Sign in to report packs.",
   notSavedTitle: "NOT SAVED",
   notSaved: "Not saved: the browser's storage is full or blocked.",
-  copyTitle: "SHARE CODE",
+  copyTitle: "DOWNLOAD CODE",
   notPlayableTitle: "NOT PLAYABLE",
   notPlayable: "This pack can't be played: it couldn't be read, or isn't a training pack.",
   sharingOff: "Packs can't be shared on this page.",
@@ -80,6 +83,9 @@ const button = (text: string, onClick: () => void, className = ""): HTMLButtonEl
 export function sharedErrorText(e: unknown): string {
   return e instanceof AccountError ? accountErrorText(e.code, e.seconds, e.detail) : accountErrorText("server");
 }
+
+/** How long "COPIED TO CLIPBOARD" shows (the game's, ms) */
+export const COPIED_MS = 5000;
 
 /** The share code copied, else shown to copy by hand */
 async function copyCode(code: string, notice: SharedPacksActions["notice"]): Promise<boolean> {
@@ -158,7 +164,7 @@ export class SharedPacksPage {
     this.code = el("div", "main-menu-shared main-menu-shared-code");
     this.#codeInput = el("input", "main-menu-input main-menu-shared-code-input");
     this.#codeInput.placeholder = SHARE_TEXT.codePlaceholder;
-    this.#codeInput.maxLength = 24;
+    this.#codeInput.maxLength = 19;
     this.#codeInput.autocomplete = "off";
     this.#codeInput.spellcheck = false;
     this.#codeInput.setAttribute("aria-label", SHARE_TEXT.tabs.code);
@@ -242,7 +248,8 @@ export class SharedPacksPage {
     this.#codeResult.replaceChildren();
     this.#codeState.hidden = false;
     if (code === null) {
-      this.#codeState.textContent = SHARE_TEXT.badCode;
+      this.#codeState.hidden = true;
+      this.#actions.notice(SHARE_TEXT.badCodeTitle, SHARE_TEXT.badCode);
       return;
     }
     this.#codeInput.value = code;
@@ -329,7 +336,11 @@ export class SharedPacksPage {
     if (p.hidden) about.append(el("span", "main-menu-shared-hidden", SHARE_TEXT.hidden(p.hiddenReason)));
     const copy = button(SHARE_TEXT.copyCode, () => {
       void copyCode(p.code, this.#actions.notice).then((copied) => {
-        if (copied) copy.textContent = SHARE_TEXT.copied;
+        if (!copied) return;
+        copy.textContent = SHARE_TEXT.copied;
+        setTimeout(() => {
+          copy.textContent = SHARE_TEXT.copyCode;
+        }, COPIED_MS);
       });
     });
     copy.dataset["action"] = "copy";

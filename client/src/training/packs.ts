@@ -17,6 +17,8 @@ export interface PackListing {
   readonly url: string;
   /** The player's own (the editor's: editable) */
   readonly mine?: true;
+  /** One of Carball's starter packs (Custom Training's Starter Packs tab, not My Packs) */
+  readonly starter?: true;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -52,10 +54,13 @@ export function listingOf(pack: TrainingPack, url: string): PackListing {
   return { id: pack.id, name: pack.name, type: pack.type, difficulty: pack.difficulty, shots: pack.shots.length, creator: pack.creator, url };
 }
 
-/** The packs there are: the player's own, Carball's, then (the dev server's) the user's */
+/** The packs there are: the player's own, Carball's (marked starter), then (the dev server's) the user's */
 export async function listPacks(fetcher: typeof fetch = fetch): Promise<PackListing[]> {
   const mine = storedPacks().map((p): PackListing => ({ ...listingOf(p, `${MINE}${p.id}`), mine: true }));
-  const starter = [...mine, ...(await import("./starterPacks")).STARTER_PACKS.map((p) => listingOf(p, `${STARTER}${p.id}`))];
+  const starter = [
+    ...mine,
+    ...(await import("./starterPacks")).STARTER_PACKS.map((p): PackListing => ({ ...listingOf(p, `${STARTER}${p.id}`), starter: true })),
+  ];
   if (!import.meta.env.DEV) return starter;
   try {
     const base = "/local-assets/training/packs/";

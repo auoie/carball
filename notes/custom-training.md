@@ -614,9 +614,11 @@ sharing goes through its accounts service (api/, migration 00006); packs are pur
 - **Limits:** 10 uploads a day per account, counted in the database (a pack deleted since still counts), and 10 per
   address (50 per wider network) in memory; 100 packs an account at a time. Reads: 120 per address in 10 minutes.
   Deletes and reports: 30 per account in 10 minutes, one report per account per pack.
-- **Finding packs:** Custom Training has three tabs on the deployment's page (a development page has My Packs alone):
-  - **My Packs:** the player's own packs (local), and "My Shared Packs" with each one's code, Copy Code and Delete (one a
-    moderator hid says so, and why).
+- **Finding packs:** Custom Training has four tabs on the deployment's page (a development page has My Packs and Starter
+  Packs alone):
+  - **My Packs:** the packs the player made or saved (local), and "My Shared Packs" with each one's code, Copy Code and
+    Delete (one a moderator hid says so, and why).
+  - **Starter Packs:** Carball's five (`src/training/starterPacks.ts`), play only (the user's, 2026-10-29).
   - **Browse:** a search (a part of the name, any case), newest or most downloaded, 30 a page (keyset paging), each pack
     with its name, creator, shots and downloads, and Play, Save and Report.
   - **Enter Code:** a code typed in any case, with or without its dashes.
@@ -629,6 +631,27 @@ sharing goes through its accounts service (api/, migration 00006); packs are pur
   - the admin's `packs --recent [N] | --reported`, `pack ACCOUNT`, `pack-hide CODE --reason --by` and `pack-unhide CODE`;
   - packs are deleted with their account (the privacy page says so).
 - **Not done:** a name-change history for packs (a hide's reason is kept instead), tags in browse, favourites.
+- **The game's sharing beside ours** (PACKS1, 2026-10-29: the live client's scripts and menu movie, build 2026-10-06;
+  sources in `.agents/bullet-diff/PACKS1/`). C = confirmed, I = inferred, SERVER = not knowable from the client.
+  - *Taken from the game:*
+    - code entry: every character but letters and digits dropped, exactly 16 needed, put in fours with dashes, upper
+      case (so any letters, any case, dashes or spaces optional); the field 19 long, placeholder `0000-0000-0000-0000` (C);
+    - the texts, verbatim: "INVALID CODE" / "The code you entered was invalid." (C); the not-found "The training mode could
+      not be found. Ensure the code is correct and try again." (its use I); a name refused, "Training name is not valid."
+      (I/SERVER); the code panel "DOWNLOAD CODE" with copy, "COPIED TO CLIPBOARD" for 5 s (C); "INVALID NAME" / "Please
+      enter a valid name." under 3 characters (C, already the editor's);
+    - the editor offers Striker and Goalie only (Aerial in the enum, never offered; a pack's Aerial kept, played as
+      Striker) (C).
+  - *The same already:* name 3–30, trimmed of ASCII spaces only at both ends (C); at most 4 of 19 tags (C); the code
+    made by the service, `XXXX-XXXX-XXXX-XXXX` (C; hex SERVER); creator and dates set by the service (I).
+  - *Kept as ours (the user's choices):* Easy / Medium / Hard (the game shows Rookie / Pro / All-Star); a description
+    (the game has none); names printable ASCII only (the game takes any character) and filtered at upload, refused
+    (the game filters others' names when shown: `WordFilter.Sanitize`, SERVER rules); browse and code entry signed out
+    (the game: signed in only); a delete on the service (the game's delete is local only, a code staying live);
+    reports, hiding, text search, the two orders and paging, download counts (the game: none, its browse one list in
+    the service's order, search by code only); Carball's starter packs on their own tab.
+  - *Not taken (the user, 2026-10-29):* "UPLOAD CHANGES" (an update under the same code), favourites with "DOWNLOAD
+    UPDATES", HISTORY, FEATURED, the game's tab order (FEATURED, BROWSE, FAVORITES, CREATED, HISTORY).
 
 ---------------------------------------------------------------------------------------------------------------------
 
