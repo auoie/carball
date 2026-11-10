@@ -2,6 +2,7 @@
 // and are saved in the browser.
 import { browserNotice, currentBrowserLimits } from "./browserNotice";
 import { fullscreenAvailable } from "./displayMode";
+import { touchDevice } from "../input/touch";
 import type { CameraSettings } from "../camera/carballCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onKeyboardLayout, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
@@ -415,8 +416,8 @@ export class SettingsPanel {
     const unmapped = padUnmapped()
       ? [el("p", { className: "settings-hint unmapped-pad", textContent: "This controller isn't one the browser maps, so it can't be used here." })]
       : [];
-    // (a browser that can't take every bind: its limits, always here, RV-1104)
-    const limits = currentBrowserLimits();
+    // (a browser that can't take every bind: its limits, always here, RV-1104; none on a touch device, its binds a pad's)
+    const limits = touchDevice() ? [] : currentBrowserLimits();
     const notice = limits.length > 0 ? [browserNotice(limits)] : [];
     // (the Fullscreen notice first, seen before binding: the user's, 2026-10-24)
     return el("div", {}, [...this.#fullscreenNotice(), hint, ...unmapped, ...notice, table, reset]);
@@ -426,7 +427,8 @@ export class SettingsPanel {
    *  screen's top, in its flow (never over a slot): one fixed line, in every browser with full screen (the user's
    *  wording, 2026-10-24) */
   #fullscreenNotice(): HTMLElement[] {
-    if (!fullscreenAvailable()) return [];
+    // (a touch device goes full screen at its first touch anyway, and has no keyboard binds to lose: notes/mobile.md)
+    if (!fullscreenAvailable() || touchDevice()) return [];
     const button = el("button", { textContent: "Switch to Fullscreen" });
     button.addEventListener("click", () => {
       this.#update({ ...this.#settings, options: { ...this.#settings.options, fullscreen: true } });

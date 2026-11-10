@@ -2,7 +2,7 @@
 // name, column headers and ping header on one line, then a 38 px row per player (strip, avatar, name, MVP badge, the
 // five values, ping). Laid out on the HUD's virtual stage (1120 x 720 re-anchored to the window, HUD-1); held with the
 // binding, at least 0.35 s, fading in 0.2 s and out to 0.2 before it goes.
-import { contentStage, stageTransform } from "./stage";
+import { stageTransform, windowStage } from "./stage";
 import { SCOREBOARD_COLUMNS, SCOREBOARD_TEXT, type ScoreboardRow, TEAM_NAMES, pingBars, rowColour } from "../game/matchStats";
 import { statIconSvg } from "./statIcons";
 
@@ -161,7 +161,7 @@ export class HeldScoreboard {
   }
 
   #draw(now: number, view: ScoreboardView, end: EndPlacement | null = null): void {
-    const stage = contentStage(window.innerWidth, window.innerHeight);
+    const stage = windowStage();
     const slams = [...this.#mvpSince].map(([car, since]) => `${String(car)}:${String(now - since >= MVP_DELAY)}`).join(",");
     const key = JSON.stringify([view, stage, slams, end]);
     if (key === this.#drawn) return;

@@ -35,6 +35,19 @@ export interface ServerAddress {
   readonly ticket?: (match: bigint) => Promise<string>;
 }
 
+/** The options every WebTransport session opens with: datagrams required (Safari would otherwise fall back to HTTP/2,
+ *  which has none and which our QUIC servers don't serve: notes/mobile.md), a development server's certificate hash */
+export function webTransportOptions(certHash: Uint8Array<ArrayBuffer> | null): WebTransportOptions {
+  return { requireUnreliable: true, ...(certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: certHash }] } : {}) };
+}
+
+/** A session ready without datagrams (a fallback the browser took anyway) isn't played over: refused here, as a server
+ *  that can't be reached. The local host's stand-in, and a browser that doesn't say, pass */
+export function checkDatagrams(transport: WebTransport): void {
+  const reliability = (transport as { readonly reliability?: string }).reliability;
+  if (reliability !== undefined && reliability !== "supports-unreliable") throw new Error(`the session has no datagrams (${reliability})`);
+}
+
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */
 /** The host to reach a server at: "localhost" as 127.0.0.1. Windows resolves localhost to ::1 first, and UDP to ::1
  *  doesn't reach a server in WSL, while WebTransport doesn't fall back to IPv4: the opening handshake fails */
@@ -216,9 +229,7 @@ export class Connection {
     // leaves no session behind, RX30C)
     const ticket = match.intent !== "join" && address.ticket ? await address.ticket(match.token) : "";
     const key = ticket === "" ? storedKey() : 0n;
-    const transport =
-      address.open?.() ??
-      new WebTransport(address.url, address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined);
+    const transport = address.open?.() ?? new WebTransport(address.url, webTransportOptions(address.certHash));
     try {
       return await Connection.#hello(transport, preferences, match, token, ticket, key);
     } catch (e) {
@@ -237,6 +248,7 @@ export class Connection {
     key: bigint,
   ): Promise<{ connection: Connection; welcome: Welcome }> {
     await transport.ready;
+    checkDatagrams(transport);
     const connection = new Connection(transport);
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();

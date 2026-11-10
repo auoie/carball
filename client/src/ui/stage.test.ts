@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contentStage } from "./stage";
+import { contentStage, insetStage } from "./stage";
 
 describe("the HUD's content stage (HUD-1)", () => {
   it("keeps 720 of height at wide aspects and 1120 of width at narrow ones, 0.5 the smallest scale", () => {
@@ -17,5 +17,15 @@ describe("the HUD's content stage (HUD-1)", () => {
     expect(d.height).toBeCloseTo(720);
     expect(d.left).toBeCloseTo(96);
     expect(d.top).toBeCloseTo(54);
+  });
+});
+
+describe("the stage within a phone's safe area (RV-1212)", () => {
+  it("laid out in the window less the insets, placed from the safe area's corner; no insets, the plain stage", () => {
+    const plain = contentStage(844, 390);
+    expect(insetStage(844, 390, { left: 0, right: 0, top: 0, bottom: 0 })).toEqual(plain);
+    const notched = insetStage(844, 390, { left: 47, right: 47, top: 0, bottom: 21 });
+    expect(notched).toEqual({ ...contentStage(750, 369), left: contentStage(750, 369).left + 47, top: contentStage(750, 369).top });
+    expect(notched.left).toBeGreaterThanOrEqual(47);
   });
 });

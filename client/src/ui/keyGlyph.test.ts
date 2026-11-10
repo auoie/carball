@@ -23,6 +23,11 @@ describe("the prompts' {key} token (HT-3, RV-282)", () => {
     expect(padStyleOf("Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 09cc)")).toBe("playstation");
     expect(padStyleOf("DualSense Wireless Controller")).toBe("playstation");
     expect(padStyleOf("Xbox 360 Controller (XInput STANDARD GAMEPAD)")).toBe("xbox");
+    // (Safari's names: an Xbox pad's "Xbox Wireless Controller" never PlayStation's; a bare "Wireless Controller" a
+    // DualShock 4's: notes/mobile.md)
+    expect(padStyleOf("Xbox Wireless Controller")).toBe("xbox");
+    expect(padStyleOf("Wireless Controller")).toBe("playstation");
+    expect(padStyleOf("DUALSHOCK 4 Wireless Controller")).toBe("playstation");
     expect(inputName({ kind: "padButton", button: 0 }, "playstation")).toBe("Cross");
   });
 });

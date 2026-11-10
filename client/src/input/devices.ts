@@ -84,9 +84,21 @@ export class InputDevices {
   /** Whether a key (KeyboardEvent.code) is bound to an action: in play its browser action never taken (RV-1092) */
   bound: (code: string) => boolean = () => false;
 
+  /** When a finger last touched the page (ms): the mouse events a touch brings after it aren't a mouse's (RV-1210) */
+  #touchedAt = Number.NEGATIVE_INFINITY;
+
   /** `surface`: the element that receives mouse buttons (the game canvas). */
   constructor(surface: HTMLElement) {
     const signal = this.#abort.signal;
+    for (const type of ["pointerdown", "pointerup"] as const) {
+      window.addEventListener(
+        type,
+        (e) => {
+          if (e.pointerType === "touch") this.#touchedAt = e.timeStamp;
+        },
+        { capture: true, signal },
+      );
+    }
     window.addEventListener(
       "keydown",
       (e) => {
@@ -145,6 +157,8 @@ export class InputDevices {
     surface.addEventListener(
       "mousedown",
       (e) => {
+        // (a finger's tap's compatibility mouse events: no mouse there, never Jump (alternative), RV-1210)
+        if (e.timeStamp - this.#touchedAt < 1000) return;
         if (e.button === 1) e.preventDefault(); // middle button = rear camera, not autoscroll
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
@@ -243,7 +257,11 @@ export class InputDevices {
     // (the touch stick a pad's left stick: the controller's own deadzone, dodge and air pitch safety; played as a pad)
     const touch = this.touch?.snapshot() ?? null;
     const gamepad = withTouchStick(real, touch?.stick ?? null);
-    if (touch?.stick || (touch?.held.size ?? 0) > 0) this.#usingGamepad = true;
+    // (played by touch: a pad's, its camera settings the controller's too, as the HUD's hints are: RV-1214)
+    if (touch?.stick || (touch?.held.size ?? 0) > 0) {
+      this.#usingGamepad = true;
+      this.#ownerIsGamepad = true;
+    }
     const padButtons = gamepad?.buttons.map((v) => v > 0.5) ?? [];
     if (padButtons.some((down, i) => down && !(this.#padButtons[i] ?? false))) this.#ownerIsGamepad = true;
     this.#padButtons = padButtons;

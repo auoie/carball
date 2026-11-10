@@ -3,7 +3,7 @@
 // (MIO-22), and the end screen's menu with the next match's countdown (MIO-26, 29, 31). On the HUD's virtual stage.
 import { END_TEXT } from "../game/matchSequence";
 import { scoreboardLayout } from "./scoreboard";
-import { type ContentStage, contentStage, fitStage } from "./stage";
+import { type ContentStage, fitStage, windowStage } from "./stage";
 
 /** A podium title as shown: its name (upper-cased) and its stat line */
 interface ShownTitle {
@@ -112,7 +112,7 @@ export class PodiumTags {
       readonly at: { readonly x: number; readonly y: number } | null;
     }[],
   ): void {
-    this.#root.style.setProperty("--podium-scale", String(contentStage(window.innerWidth, window.innerHeight).scale));
+    this.#root.style.setProperty("--podium-scale", String(windowStage().scale));
     const seen = new Set<number>();
     for (const t of tags) {
       seen.add(t.car);
@@ -182,6 +182,7 @@ export class EndScreen {
   readonly #tiles: HTMLDivElement;
   #accoladesShown = "";
   readonly #menu: HTMLDivElement;
+  #menuOn = false;
   readonly #countdown: HTMLDivElement;
   readonly #ready: HTMLButtonElement;
   readonly #buttons: HTMLDivElement;
@@ -240,6 +241,11 @@ export class EndScreen {
     return Math.min(1, Math.max(0, (since - 1) / 0.3));
   }
 
+  /** Its menu (Play Again or Ready, Exit, Options) shown: the touch controls stand aside for it (RV-1209) */
+  get menuShown(): boolean {
+    return !this.#stage.root.hidden && this.#menuOn;
+  }
+
   update(s: EndScreenState): void {
     this.#stage.root.hidden = !s.shown;
     if (!s.shown) {
@@ -269,6 +275,7 @@ export class EndScreen {
     this.#accolades.style.opacity = Math.min(1, s.since / 0.3).toFixed(3);
     this.#menu.style.opacity = shift.toFixed(3);
     this.#menu.style.pointerEvents = shift > 0 ? "auto" : "none";
+    this.#menuOn = shift > 0;
     // ("Next Match In" ("Leaving In" after a queue match) and the seconds, hidden at 0; a no-break space after a last
     // digit 1: the font's kerning)
     const seconds = String(s.secondsLeft);

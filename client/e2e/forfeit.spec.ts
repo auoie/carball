@@ -4,7 +4,7 @@
 // (Under the suite's load a third page can take over 10 s to answer: the checks are on the first page, and the match's
 // end is read from the phases it recorded, which outlast its 8.3 s podium.)
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, hideGamepads, test } from "./fixtures";
 import { ends, join as joinServer, leave, leaveAll, newPlayer as newServerPlayer, ownName } from "./players";
 import type { Browser } from "@playwright/test";
 
@@ -208,3 +208,28 @@ test("the match's end: the winner banner, the podium with the winner's tag, the 
 async function phases(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));
 }
+
+// (on this file's server, its tests one after another: a phone's page alone in the open match)
+test("on a phone: the match's end screen has no touch controls over it, and its Exit is tapped (RV-1209)", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
+  await hideGamepads(context);
+  const phone = await context.newPage();
+  others.push(phone);
+  const errors: string[] = [];
+  await join(phone, errors);
+  const touch = phone.locator("#touch");
+  await expect(touch.getByRole("button", { name: "Scores" })).toBeVisible({ timeout: 30_000 });
+  // (alone on the team: its vote, open once the clock runs here, passes at once)
+  await touch.getByRole("button", { name: "Pause" }).tap();
+  const vote = button(phone, "Vote to Concede");
+  await expect(vote).toBeVisible({ timeout: 40_000 });
+  await vote.tap();
+  const exit = phone.locator("#end-screen button[data-action=exit]");
+  await expect(exit).toBeVisible({ timeout: 45_000 });
+  await expect(touch).toBeHidden();
+  await exit.tap();
+  // (its question, as a click's: Yes leaves)
+  await phone.getByRole("button", { name: /^yes$/i }).tap();
+  await expect(phone.locator("#main-menu")).toBeVisible({ timeout: 30_000 });
+});

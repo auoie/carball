@@ -62,9 +62,14 @@ export function touchDevice(): boolean {
 /** The page's touch settings: no pinch zoom in Safari (its gesture events; the stylesheet's touch-action stops the rest),
  *  and the screen turned to landscape once in full screen where the browser allows it (Android's) */
 export function installTouchPage(doc: Document = document): void {
-  doc.addEventListener("gesturestart", (e) => {
-    e.preventDefault();
-  });
+  // (the menus' targets a finger's size on a touch device: the stylesheet's .touch-device rules)
+  doc.documentElement.classList.toggle("touch-device", touchDevice());
+  // (Safari's pinch stopped on a touch screen alone: a Mac's trackpad pinch zooms as ever, RV-1216)
+  if (navigator.maxTouchPoints > 0) {
+    doc.addEventListener("gesturestart", (e) => {
+      e.preventDefault();
+    });
+  }
   doc.addEventListener("fullscreenchange", () => {
     if (doc.fullscreenElement === null || !touchDevice()) return;
     // (Safari has no lock, an older iOS no screen.orientation at all: typed as the browser may have them)
@@ -76,6 +81,45 @@ export function installTouchPage(doc: Document = document): void {
   rotate.id = "rotate";
   rotate.textContent = TOUCH_TEXT.rotate;
   doc.body.append(rotate);
+}
+
+/** The screen kept on while wanted (play on a touch device: a phone dims and locks itself otherwise; notes/mobile.md),
+ *  taken again when the page comes back (the browser lets a wake lock go with the page hidden); nothing where the browser
+ *  has none */
+class ScreenWake {
+  #wanted = false;
+  #lock: WakeLockSentinel | null = null;
+
+  constructor() {
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && this.#wanted) this.#take();
+    });
+  }
+
+  set wanted(wanted: boolean) {
+    if (wanted === this.#wanted) return;
+    this.#wanted = wanted;
+    if (wanted) this.#take();
+    else {
+      void this.#lock?.release().catch(() => undefined);
+      this.#lock = null;
+    }
+  }
+
+  #take(): void {
+    const wakeLock = (navigator as { readonly wakeLock?: WakeLock }).wakeLock;
+    if (!wakeLock || (this.#lock !== null && !this.#lock.released)) return;
+    wakeLock.request("screen").then(
+      (lock) => {
+        if (!this.#wanted) {
+          void lock.release().catch(() => undefined);
+          return;
+        }
+        this.#lock = lock;
+      },
+      () => undefined,
+    );
+  }
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, parent: HTMLElement): HTMLElementTagNameMap[K] => {
@@ -106,6 +150,7 @@ export class TouchControls {
   #padUsed = false;
   #shown = false;
   #mode: TouchMode | null = null;
+  readonly #wake = new ScreenWake();
 
   /** `pause`: the pause button's (the pause menu opened) */
   constructor(parent: HTMLElement, pause: () => void) {
@@ -119,7 +164,8 @@ export class TouchControls {
     this.#stickBase.hidden = true;
     zone.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      if (this.#stickPointer !== null) return;
+      // (a finger's or a pen's: a mouse never drives the stick, RV-1211)
+      if (this.#stickPointer !== null || e.pointerType === "mouse") return;
       this.#stickPointer = e.pointerId;
       zone.setPointerCapture(e.pointerId);
       this.#stickOrigin = { x: e.clientX, y: e.clientY };
@@ -150,21 +196,53 @@ export class TouchControls {
     });
     this.#modeRow = el("div", "touch-mode", top);
     for (const b of ["previous", "reset", "next", "scoreboard"] as const) this.#button(b, this.#modeRow);
-    // (a touch anywhere: the controls are for a finger again, a pad's use forgotten)
+    // (a touch anywhere: the controls are for a finger again, a pad's use forgotten; the mouse or the keyboard used: they
+    // go until the next touch, a touchscreen laptop's or a tablet's keyboard, RV-1211)
     window.addEventListener(
       "pointerdown",
       (e) => {
+        if (e.pointerType === "mouse") this.#touched = false;
         if (e.pointerType !== "touch") return;
         this.#touched = true;
         this.#padUsed = false;
       },
       { capture: true },
     );
+    window.addEventListener(
+      "keydown",
+      () => {
+        this.#touched = false;
+      },
+      { capture: true },
+    );
+    // (the controls swallow every touch that lands on them, a stray one between the buttons too: no tap through to the
+    // game, whose compatibility mouse events would be a jump, RV-1210; iOS before Safari 27 needs the touchstart's)
+    this.root.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+    });
+    this.root.addEventListener(
+      "touchstart",
+      (e) => {
+        e.preventDefault();
+      },
+      { passive: false },
+    );
+    // (every finger let go when the page loses them: blurred, hidden, left, or turned, RV-1213)
+    for (const type of ["blur", "pagehide", "orientationchange"] as const) {
+      window.addEventListener(type, () => {
+        this.#release();
+      });
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.#release();
+    });
   }
 
   /** Each frame: whether the game is in play (no menu over it) and its mode; shown on a touch device in play, no pad in
    *  use. Hidden, nothing is held */
   update(inPlay: boolean, mode: TouchMode): void {
+    // (the screen kept on in play on a touch device, a pad in its hands or not)
+    this.#wake.wanted = inPlay && this.#touched;
     const shown = inPlay && this.#touched && !this.#padUsed;
     if (mode !== this.#mode) {
       this.#mode = mode;
@@ -209,6 +287,7 @@ export class TouchControls {
     this.#holding.set(b, pointers);
     button.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      if (e.pointerType === "mouse") return;
       button.setPointerCapture(e.pointerId);
       pointers.add(e.pointerId);
       for (const a of TOUCH_ACTIONS[b]) this.#pressed.add(a);

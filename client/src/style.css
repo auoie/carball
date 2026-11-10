@@ -2345,7 +2345,7 @@ textarea {
 /* MENU-4: the pause menu, a column of buttons at the left (MidGameMenu), the match's buttons and the players with it */
 .pause-menu {
   position: fixed;
-  left: 6vw;
+  left: max(6vw, calc(env(safe-area-inset-left, 0px) + 16px));
   top: 22vh;
   width: min(340px, 88vw);
   transform: scale(var(--menu-scale, 1));
@@ -2437,7 +2437,8 @@ textarea {
   inset: 0;
   display: flex;
   align-items: flex-start;
-  padding: 18vh 0 calc(48px * var(--menu-scale, 1) + 24px) 8vw;
+  /* (clear of a phone's notch on its left: the safe area, RV-1212) */
+  padding: 18vh 0 calc(48px * var(--menu-scale, 1) + 24px) max(8vw, calc(env(safe-area-inset-left, 0px) + 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
   /* (no scroll anchoring: rows redrawn above the view, the bots' slots, never move the page) */
@@ -2546,7 +2547,8 @@ textarea {
   display: none;
 }
 
-.main-menu-ban {
+.main-menu-ban,
+.main-menu-limit {
   font: 14px/1.4 var(--hud-small);
   color: #ffb36b;
 }
@@ -4460,7 +4462,8 @@ body.pad-mode .settings-tab-glyph {
   position: fixed;
   inset: 0;
   z-index: 3;
-  pointer-events: none;
+  /* (every touch on it its own: a stray one never reaches the game, RV-1210) */
+  pointer-events: auto;
   touch-action: none;
   font: 600 15px/1 var(--hud-header);
   letter-spacing: 0.5px;
@@ -4610,6 +4613,71 @@ body.touch-play #boost {
 body.touch-play #flip {
   top: 60px;
   bottom: auto;
+}
+
+/* (and the stat feed's rows under the ring, not behind it: RV-1215) */
+body.touch-play #stat-ticker .ticker-row {
+  margin-top: 210px;
+}
+
+/* (no pad's glyphs on the HUD's prompts in touch play: no pad's buttons on screen; Jump skips the replay, the mode's
+   buttons are the training's: RV-1214) */
+body.touch-play #hud .key-pad {
+  display: none;
+}
+
+/* The menus on a touch device (notes/mobile.md): every target 44 px tall at least (Apple's and Android's guidance); a
+   slider's and a small link's reach widened past their drawn size; text fields at 16 px, so Safari doesn't zoom into
+   them */
+.touch-device .main-menu-button,
+.touch-device .settings-tab,
+.touch-device .settings button,
+.touch-device .pause-button,
+.touch-device .pause-match button,
+.touch-device .modal-box button,
+.touch-device .control-cycle,
+.touch-device .editor-mode,
+.touch-device .settings .option:has(.control-check),
+.touch-device .menu-hint {
+  min-height: 44px;
+}
+
+.touch-device .editor-button {
+  min-height: 40px;
+}
+
+/* (the settings' tabs one row a finger scrolls sideways: a phone's height kept for the page) */
+.touch-device .settings-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.touch-device .settings-tab {
+  flex: none;
+}
+
+/* (the settings inside the safe area: a phone's notch either side, RV-1212) */
+.touch-device .settings {
+  width: min(760px, calc((100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 24px) / var(--menu-scale, 1)));
+}
+
+.touch-device .control-slider::before,
+.touch-device .main-menu-bot-link::before {
+  content: "";
+  position: absolute;
+  inset: -10px 0;
+}
+
+.touch-device .main-menu-bot-link {
+  position: relative;
+}
+
+.touch-device input[type="text"],
+.touch-device input[type="search"],
+.touch-device input:not([type]) {
+  min-height: 44px;
+  font-size: 16px;
 }
 
 /* Portrait on a touch device: the prompt to turn it, over everything (landscape only: the user's, 2026-11-10) */

@@ -52,8 +52,9 @@ export class DisplayMode {
     this.#doc = deps.doc ?? document;
     this.#keyboard = deps.keyboard ?? pageKeyboard;
     const target = deps.target ?? window;
-    // (any press: a click, a key, a pad's button reaches the page as neither)
-    for (const kind of ["pointerdown", "keydown"] as const) {
+    // (any press: a click, a key, a pad's button reaches the page as neither; a finger's lift too: a touch's user
+    // activation comes as it ends, not as it lands, notes/mobile.md)
+    for (const kind of ["pointerdown", "keydown", "pointerup", "touchend"] as const) {
       target.addEventListener(
         kind,
         () => {

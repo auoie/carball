@@ -10,6 +10,11 @@ import type { Vec3 } from "../math/vec";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
 
+/** The most device pixels a CSS pixel is drawn at: 2, or 1.5 on a touch device (a phone's GPU, its 60 fps: notes/mobile.md) */
+export function maxPixelRatio(): number {
+  return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches ? 1.5 : 2;
+}
+
 /** The camera's far plane (uu): scenery farther from the camera isn't drawn */
 export const CAMERA_FAR = 40000;
 
@@ -80,7 +85,7 @@ export class Renderer {
   constructor(readonly canvas: HTMLCanvasElement) {
     // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
     this.#gl = new WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
-    this.#gl.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    this.#gl.setPixelRatio(Math.min(maxPixelRatio(), window.devicePixelRatio));
     this.#gl.toneMapping = NoToneMapping;
     this.#gl.outputColorSpace = LinearSRGBColorSpace;
     // (the translucents in the game's order, the reflection capture's faces too: TRN1)
@@ -110,7 +115,7 @@ export class Renderer {
   set renderScale(scale: number) {
     if (scale === this.#renderScale) return;
     this.#renderScale = scale;
-    this.#gl.setPixelRatio(Math.min(2, window.devicePixelRatio) * scale);
+    this.#gl.setPixelRatio(Math.min(maxPixelRatio(), window.devicePixelRatio) * scale);
     this.#resize();
   }
 

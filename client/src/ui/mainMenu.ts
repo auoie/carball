@@ -199,6 +199,8 @@ export class MainMenu {
   readonly #playShown: (() => void) | undefined;
   /** A leaver's queue ban under Find Match (LV1: the Play menu shows it), until when (ms) */
   readonly #banLine: HTMLDivElement;
+  readonly #findButton: HTMLButtonElement;
+  readonly #onlineLine: HTMLDivElement;
   #banUntil: number | null = null;
   #cooldownUntil: number | null = null;
   /** The ban line's countdown, each second while the ban runs (RX30C) */
@@ -306,13 +308,19 @@ export class MainMenu {
     this.#regionAction = actions.region;
     this.#opened = actions.opened;
     this.#playShown = actions.playShown;
-    button(this.#play, SEARCH_TEXT.findMatch, () => {
+    this.#findButton = button(this.#play, SEARCH_TEXT.findMatch, () => {
       actions.findMatch(this.#ticked);
-    }).classList.add("main-menu-find");
+    });
+    this.#findButton.classList.add("main-menu-find");
     this.#banLine = document.createElement("div");
     this.#banLine.className = "main-menu-ban";
     this.#banLine.hidden = true;
     this.#play.append(this.#banLine);
+    // (why online play can't happen here, when it can't: platformNotices.ts)
+    this.#onlineLine = document.createElement("div");
+    this.#onlineLine.className = "main-menu-limit";
+    this.#onlineLine.hidden = true;
+    this.#play.append(this.#onlineLine);
     // (each page's own Back row: no B Back hint under it as well, one Back, the user's call (2026-10-18); B and Escape
     // still go back)
     button(this.#play, BACK_TEXT, () => {
@@ -487,6 +495,13 @@ export class MainMenu {
     host.append(this.#root);
   }
 
+  /** Online play impossible here (no WebTransport: platformNotices.ts): Find Match off, the reason under it */
+  setOnlineBlocked(why: string): void {
+    this.#findButton.disabled = true;
+    this.#onlineLine.textContent = why;
+    this.#onlineLine.hidden = false;
+  }
+
   /** A notice on the menu (the browser's limits for binds: browserNotice.ts) */
   showNotice(notice: HTMLElement): void {
     this.#root.append(notice);
@@ -648,6 +663,7 @@ export class MainMenu {
     if (!this.#botsView) return;
     this.#botsPage = draw(this.#botsView.body);
     this.#botsView.entry.hidden = !this.#botsPage.playable;
+    this.#botsView.start.hidden = this.#botsPage.startable === false;
   }
 
   /** The training packs there are: Custom Training shown with one to play (or the editor to make one), each a button on

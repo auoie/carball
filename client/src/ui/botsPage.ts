@@ -10,7 +10,18 @@ import { BOT_MATCH_TEXT } from "../local/botText";
 /** The page's body as drawn: whether there's a bot to play, and its choices now */
 export interface BotsPage {
   readonly playable: boolean;
+  /** False: the page says why bots can't run here, and has no Start */
+  readonly startable?: false;
   choices(): BotChoices | null;
+}
+
+/** The page where bots can't run (their runtime's needs: ui/platformNotices.ts): why, and no Start */
+export function botsUnavailable(body: HTMLElement, why: string): BotsPage {
+  const line = document.createElement("div");
+  line.className = "main-menu-limit";
+  line.textContent = why;
+  body.replaceChildren(line);
+  return { playable: true, startable: false, choices: () => null };
 }
 
 /** The page's body drawn into `body` for these bot packages (its choices fitted to them), drawn anew at each change */

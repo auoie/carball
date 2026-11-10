@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import { type FakeTransportRecord, fakeTransport } from "../testing/fakeTransport";
-import { Connection, ControlQueue, RefusedError, refusalText, serverHost, storeKey, storedKey } from "./connection";
+import { Connection, ControlQueue, RefusedError, checkDatagrams, refusalText, serverHost, storeKey, storedKey, webTransportOptions } from "./connection";
 import { joinPreferences } from "./joinPreferences";
 import {
   PROTOCOL_VERSION,
@@ -274,5 +274,26 @@ describe("a session closed before the game listens", () => {
     const reasons: string[] = [];
     connection.onClose = (reason) => reasons.push(reason);
     expect(reasons).toEqual(["closed by the server"]);
+  });
+});
+
+describe("WebTransport's options and its datagrams (notes/mobile.md: Safari's HTTP/2 fallback has none)", () => {
+  it("every session requires datagrams; a development server's adds its certificate's hash", () => {
+    expect(webTransportOptions(null)).toEqual({ requireUnreliable: true });
+    const hash = new Uint8Array([1, 2, 3]);
+    expect(webTransportOptions(hash)).toEqual({ requireUnreliable: true, serverCertificateHashes: [{ algorithm: "sha-256", value: hash }] });
+  });
+
+  it("a session ready without them is refused; one with them, or a browser (or the local host) that doesn't say, passes", () => {
+    const transport = (reliability?: string): WebTransport => ({ ...(reliability === undefined ? {} : { reliability }) }) as unknown as WebTransport;
+    expect(() => {
+      checkDatagrams(transport("reliable-only"));
+    }).toThrow(/no datagrams/);
+    expect(() => {
+      checkDatagrams(transport("supports-unreliable"));
+    }).not.toThrow();
+    expect(() => {
+      checkDatagrams(transport());
+    }).not.toThrow();
   });
 });

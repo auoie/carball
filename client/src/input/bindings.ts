@@ -190,7 +190,9 @@ export type PadStyle = "xbox" | "playstation";
 /** A pad's kind from its id: Sony's (vendor 054c), a DualShock or DualSense, "Wireless Controller" (the DS4's own
  *  name), else Xbox's layout */
 export function padStyleOf(id: string): PadStyle {
-  return /054c|dualshock|dualsense|wireless controller|playstation/i.test(id) ? "playstation" : "xbox";
+  // ("Wireless Controller" alone is a DualShock 4's name in some browsers, but Safari's Xbox pad is the "Xbox Wireless
+  // Controller": research, notes/mobile.md)
+  return /054c|dualshock|dualsense|playstation/i.test(id) || (/wireless controller/i.test(id) && !/xbox/i.test(id)) ? "playstation" : "xbox";
 }
 
 let padStyle: PadStyle = "xbox";

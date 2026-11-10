@@ -79,6 +79,7 @@ import { type GamepadInput, type KeyboardInput, keyBound, lockedKeys, setKeyboar
 import { LeaveGuard } from "./game/leaveGuard";
 import { DisplayMode } from "./ui/displayMode";
 import { browserNotice, browserNoticeDismissed, currentBrowserLimits, dismissBrowserNotice } from "./ui/browserNotice";
+import { homeScreenHint, homeScreenHintDue, pageBotsBlocked, pageOnlineBlocked } from "./ui/platformNotices";
 import { type PackListing, listPacks, loadPack } from "./training/packs";
 import { type TrainingPack, parsePack } from "./training/pack";
 import { newPack, packFile, storePack, storedPacks } from "./training/myPacks";
@@ -346,6 +347,8 @@ async function main(): Promise<void> {
   // mode's buttons from the match being played: set as the pause menu and free play are made)
   let touchPause = (): void => undefined;
   let touchMode = (): TouchMode => (onlinePage ? "online" : "freeplay");
+  // (a match's end screen up, its menu tapped: no touch controls over it, RV-1209; set as the online match is made)
+  let endMenuShown = (): boolean => false;
   const touch = new TouchControls(document.body, () => {
     touchPause();
   });
@@ -598,6 +601,8 @@ async function main(): Promise<void> {
       return ping?.ms ?? null;
     };
     let pinging: Promise<void> = Promise.resolve();
+    // (online play impossible here (no WebTransport): no pings, Find Match off with why: notes/mobile.md)
+    const onlineWhy = pageOnlineBlocked();
     let chosen: string[] = [];
     /** The last search's regions (the browser tests') */
     let searchedRegions: readonly string[] = [];
@@ -633,7 +638,7 @@ async function main(): Promise<void> {
      *  kept (a later search that starts by itself, Play Again or the way back from a cancelled match, then needn't wait:
      *  RX43C-1) and chosen again the next time they're measured (RV-862) */
     const measurePings = (listed: readonly Region[]): Promise<void> => {
-      if (listed.length < 2 || Date.now() - pingedAt < 60_000) return pinging;
+      if (onlineWhy !== null || listed.length < 2 || Date.now() - pingedAt < 60_000) return pinging;
       pingedAt = Date.now();
       pinging = Promise.all(
         listed.map(async (r) => {
@@ -1030,8 +1035,12 @@ async function main(): Promise<void> {
         });
       },
     });
+    if (onlineWhy !== null) mainMenu.setOnlineBlocked(onlineWhy);
+    // (an iPhone's or iPad's Safari: full screen only as a home-screen app, said once until dismissed; a touch device has
+    // no binds to warn about)
+    if (homeScreenHintDue()) mainMenu.showNotice(homeScreenHint());
     // (a browser that can't take every bind: its limits once, Chromium recommended, until dismissed: RV-1104)
-    const limits = currentBrowserLimits();
+    const limits = touchDevice() ? [] : currentBrowserLimits();
     if (limits.length > 0 && !browserNoticeDismissed()) {
       mainMenu.showNotice(
         browserNotice(limits, () => {
@@ -1146,7 +1155,9 @@ async function main(): Promise<void> {
       void Promise.all([import("./bots/listing"), import("./ui/botsPage")]).then(async ([listing, page]) => {
         const listings = await listing.listBots();
         botListings = listings;
-        mainMenu?.setBots((body) => page.botsPage(body, listings));
+        // (where their runtime can't run: the page says why, no Start; notes/mobile.md)
+        const blocked = pageBotsBlocked();
+        mainMenu?.setBots((body) => (blocked === null ? page.botsPage(body, listings) : page.botsUnavailable(body, blocked)));
       });
     }
     // (a ranked 2v2 or 3v3 left by accident in the last 900 s: offered back to the account that played it, once per saved
@@ -1437,6 +1448,7 @@ async function main(): Promise<void> {
       claim !== null,
     );
     const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
+    endMenuShown = () => endScreen.menuShown;
     const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, inputEnabled, chat, statsUi, endUi);
     // (the match's guard from the game now: not once it's over or its connection gone)
     if (matchGuard) matchGuard.live = () => online.live;
@@ -1564,7 +1576,7 @@ async function main(): Promise<void> {
     last = now;
     padNav.frame(readGamepad(), now / 1000);
     padReadout?.update();
-    touch.update(!menusOpen() && !editorPage(), touchMode());
+    touch.update(!menusOpen() && !editorPage() && !endMenuShown(), touchMode());
     const started = performance.now();
     game.frame(dt);
     statFrame(now / 1000, dt, performance.now() - started);

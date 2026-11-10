@@ -88,6 +88,18 @@ describe("Display Mode (RV-1091, RV-1112, RV-1113, RV-1116)", () => {
     ).toHaveLength(2);
   });
 
+  it("a finger: refused as it lands (no user activation yet), asked again as it lifts, and full screen then", async () => {
+    const p = page({ refuse: true });
+    p.mode.set(true, false);
+    p.fire("pointerdown");
+    await settle();
+    expect(p.full()).toBe(false);
+    p.allow();
+    p.fire("pointerup");
+    await settle();
+    expect(p.full()).toBe(true);
+  });
+
   it("nothing where the page can't go full screen (an iPhone's Safari)", () => {
     const p = page({ enabled: false });
     p.mode.set(true, true);

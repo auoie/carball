@@ -14,6 +14,7 @@ import type { TestKind } from "../training/run";
 import { cycler, slider } from "./controls";
 import { FLY_TEXT, FlyEditor, type PackDetails } from "./flyEditor";
 import { COPIED_MS } from "./sharedPacks";
+import { touchDevice } from "../input/touch";
 
 /** The editor's words (ours) */
 export const EDITOR_TEXT = {
@@ -61,6 +62,7 @@ export const EDITOR_TEXT = {
   notSharedTitle: "NOT SHARED",
   exit: "Exit",
   hint: "Drag to turn the camera · wheel to zoom",
+  hintTouch: "Drag to turn the camera · pinch to zoom",
   unsaved: "Unsaved changes",
   deleteSequence: "Delete Sequence",
   /** The game's prompts (notes/training-editor.md §5.3, verbatim) */
@@ -117,6 +119,8 @@ export type EditorMode = "panel" | "fly";
 const MODE_KEY = "carball.training.editorMode";
 
 function storedMode(): EditorMode {
+  // (a touch device has the panel alone: the free camera is the keyboard's and the mouse's, notes/mobile.md)
+  if (touchDevice()) return "panel";
   try {
     return localStorage.getItem(MODE_KEY) === "fly" ? "fly" : "panel";
   } catch {
@@ -217,11 +221,41 @@ export class TrainingEditor {
       if (!this.#dirty || (!this.isOpen && !this.testing && !this.#actions.playtesting())) return;
       e.preventDefault();
     });
+    // (one finger or the mouse turns the camera; two fingers pinch it nearer or further, as the wheel: notes/mobile.md)
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinch: number | null = null;
+    const spread = (): number => {
+      const [a, b] = [...pointers.values()];
+      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
     canvas.addEventListener("pointerdown", (e) => {
       if (this.#root.hidden) return;
-      this.#drag = { x: e.clientX, y: e.clientY, moved: false };
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1) this.#drag = { x: e.clientX, y: e.clientY, moved: false };
+      else {
+        this.#drag = null;
+        pinch = spread();
+      }
+    });
+    const lift = (e: PointerEvent): void => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+    };
+    window.addEventListener("pointercancel", (e) => {
+      lift(e);
+      this.#drag = null;
     });
     window.addEventListener("pointermove", (e) => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch !== null && !this.#root.hidden) {
+        const now = spread();
+        if (now > 0 && pinch > 0) {
+          this.#orbit.distance = Math.max(ORBIT.minDistance, Math.min(ORBIT.maxDistance, (this.#orbit.distance * pinch) / now));
+          this.#aim();
+        }
+        pinch = now;
+        return;
+      }
       const drag = this.#drag;
       if (!drag || this.#root.hidden) return;
       const [dx, dy] = [e.clientX - drag.x, e.clientY - drag.y];
@@ -233,6 +267,7 @@ export class TrainingEditor {
       this.#aim();
     });
     window.addEventListener("pointerup", (e) => {
+      lift(e);
       const drag = this.#drag;
       this.#drag = null;
       if (!drag || drag.moved || this.#root.hidden || e.button !== 0) return;
@@ -654,13 +689,14 @@ export class TrainingEditor {
     });
     const hint = document.createElement("div");
     hint.className = "editor-hint";
-    hint.textContent = T.hint;
+    hint.textContent = touchDevice() ? T.hintTouch : T.hint;
     // (the control in use kept focused through the rebuild: a slider's arrow keys step on, RX25)
     const active = document.activeElement;
     const focused = active instanceof HTMLElement && this.#root.contains(active) ? active.dataset["editor"] : undefined;
     this.#root.replaceChildren(
       heading,
-      row(mode(FLY_TEXT.panel, "panel"), mode(FLY_TEXT.freeCamera, "fly")),
+      // (the modes: none to pick on a touch device, the panel its only one)
+      ...(touchDevice() ? [] : [row(mode(FLY_TEXT.panel, "panel"), mode(FLY_TEXT.freeCamera, "fly"))]),
       name,
       type,
       difficulty,

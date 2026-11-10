@@ -103,6 +103,24 @@ test.describe("a phone in landscape", () => {
     await expect(touch.getByRole("button", { name: "Scores" })).toBeHidden();
   });
 
+  test("a stray tap between the buttons does nothing (no jump through the mouse events a tap brings: RV-1210)", async ({ page }) => {
+    await freePlayByTouch(page);
+    await expect.poll(async () => (await car(page)).onGround, { timeout: 5000 }).toBe(true);
+    await page.locator("#touch").tap({ position: { x: 600, y: 120 } });
+    await page.waitForTimeout(500);
+    expect((await car(page)).onGround).toBe(true);
+  });
+
+  test("every finger let go when the page loses them: blurred, the stick released (RV-1213)", async ({ page }) => {
+    await freePlayByTouch(page);
+    const cdp = await page.context().newCDPSession(page);
+    await fingers(cdp, "touchStart", [{ id: 1, x: 160, y: 250 }]);
+    await fingers(cdp, "touchMove", [{ id: 1, x: 160, y: 180 }]);
+    await expect(page.locator(".touch-stick-base")).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(page.locator(".touch-stick-base")).toBeHidden();
+  });
+
   test("a pad used hides the controls until the next touch", async ({ page, context }) => {
     await fakeGamepad(context);
     await freePlayByTouch(page);
@@ -128,6 +146,25 @@ test.describe("a phone held upright", () => {
   });
 });
 
+test.describe("a touchscreen laptop", () => {
+  test.use({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+
+  test("a touch brings the controls; the mouse used takes them away, a click never the stick (RV-1211)", async ({ page }) => {
+    await page.goto("/?render=off");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^play$/i }).tap({ timeout: 30_000 });
+    await menu.getByRole("button", { name: /^free play$/i }).tap();
+    await expect(menu).toBeHidden();
+    const touch = page.locator("#touch");
+    await expect(touch).toBeVisible();
+    await page.mouse.click(200, 400);
+    await expect(touch).toBeHidden();
+    await page.locator("#game").tap({ position: { x: 900, y: 300 } });
+    await expect(touch).toBeVisible();
+  });
+});
+
 test("a desktop page (a mouse, no touch screen) has no touch controls and no prompt to turn", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
@@ -137,4 +174,113 @@ test("a desktop page (a mouse, no touch screen) has no touch controls and no pro
   await expect(menu).toBeHidden();
   await expect(page.locator("#touch")).toBeHidden();
   await expect(page.locator("#rotate")).toBeHidden();
+});
+
+const IPHONE = (version: string): string =>
+  `Mozilla/5.0 (iPhone; CPU iPhone OS ${version} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${version.replace("_", ".")} Mobile/15E148 Safari/604.1`;
+
+async function menuPage(page: Page): Promise<void> {
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+}
+
+test.describe("the menus on a phone", () => {
+  test.use(PHONE);
+
+  test("targets 44 px tall at least; the settings' tabs one row scrolled sideways, its Controls without the keyboard's notices", async ({ page }) => {
+    await menuPage(page);
+    const menu = page.locator("#main-menu");
+    const heights = await menu
+      .locator(".main-menu-column:not([hidden]) .main-menu-button")
+      .evaluateAll((buttons) => buttons.filter((b) => b.getClientRects().length > 0).map((b) => b.getBoundingClientRect().height));
+    expect(heights.length).toBeGreaterThan(0);
+    for (const h of heights) expect(h).toBeGreaterThanOrEqual(44);
+    await menu.getByRole("button", { name: /^settings$/i }).tap();
+    const tabs = page.locator("#settings .settings-tabs");
+    await expect(tabs).toBeVisible();
+    const row = await tabs.evaluate((t) => ({
+      scrolls: t.scrollWidth > t.clientWidth,
+      tops: new Set([...t.children].map((c) => Math.round(c.getBoundingClientRect().top))).size,
+    }));
+    expect(row).toEqual({ scrolls: true, tops: 1 });
+    await page.locator("#settings .settings-tab", { hasText: "Controls" }).tap();
+    await expect(page.locator("#settings")).not.toContainText("Switch to Fullscreen");
+    await expect(page.locator("#settings .browser-notice")).toHaveCount(0);
+  });
+
+  test("the training editor by touch: the panel alone (no free camera), its hint the finger's", async ({ page }) => {
+    await menuPage(page);
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^play$/i }).tap();
+    await menu.getByRole("button", { name: /^custom training$/i }).tap();
+    await menu.getByRole("button", { name: /^create training$/i }).tap();
+    const editor = page.locator("#training-editor");
+    await expect(editor).toBeVisible();
+    await expect(editor.getByRole("button", { name: /^free camera$/i })).toHaveCount(0);
+    await expect(editor.locator(".editor-hint")).toHaveText(/pinch to zoom/i);
+  });
+
+  test("the screen kept on in play, let go under the pause menu", async ({ page, context }) => {
+    await context.addInitScript(() => {
+      const log: string[] = [];
+      (window as unknown as { wakeLog: string[] }).wakeLog = log;
+      Object.defineProperty(navigator, "wakeLock", {
+        value: {
+          request: () => {
+            log.push("request");
+            const sentinel = {
+              released: false,
+              release: () => {
+                log.push("release");
+                sentinel.released = true;
+                return Promise.resolve();
+              },
+            };
+            return Promise.resolve(sentinel);
+          },
+        },
+        configurable: true,
+      });
+    });
+    await freePlayByTouch(page);
+    const log = (): Promise<string[]> => page.evaluate(() => (window as unknown as { wakeLog: string[] }).wakeLog);
+    await expect.poll(log).toEqual(["request"]);
+    await page.locator("#touch").getByRole("button", { name: "Pause" }).tap();
+    await expect.poll(log).toEqual(["request", "release"]);
+  });
+});
+
+test.describe("an iPhone before 17.5", () => {
+  test.use({ ...PHONE, userAgent: IPHONE("17_4") });
+
+  test("Play vs Bots says why it can't run, with no Start; the Add to Home Screen hint once, until dismissed", async ({ page }) => {
+    await menuPage(page);
+    const hint = page.locator(".browser-notice", { hasText: "Add to Home Screen" });
+    await expect(hint).toBeVisible();
+    await hint.getByRole("button", { name: "Got it" }).tap();
+    await expect(hint).toHaveCount(0);
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^play$/i }).tap();
+    await menu.getByRole("button", { name: "Play vs Bots" }).tap({ timeout: 15_000 });
+    await expect(menu.locator(".main-menu-bots")).toHaveText("Play vs Bots needs iOS 17.5 or later on an iPhone or iPad.");
+    await expect(menu.getByRole("button", { name: /^start$/i })).toBeHidden();
+    await menuPage(page);
+    await expect(page.locator(".browser-notice", { hasText: "Add to Home Screen" })).toHaveCount(0);
+  });
+});
+
+test.describe("a browser without WebTransport", () => {
+  test.use(PHONE);
+
+  test("Find Match is off, with why; the offline modes still there", async ({ page }) => {
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(window, "WebTransport");
+    });
+    await menuPage(page);
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^play$/i }).tap();
+    await expect(menu.getByRole("button", { name: /^find match$/i })).toBeDisabled();
+    await expect(menu.getByText("Online play needs WebTransport, which this browser doesn't have.")).toBeVisible();
+    await expect(menu.getByRole("button", { name: /^free play$/i })).toBeEnabled();
+  });
 });

@@ -40,11 +40,47 @@ export function stageTransform(stage: ContentStage): string {
   return `translate(${String(stage.left)}px, ${String(stage.top)}px) scale(${String(stage.scale)})`;
 }
 
+/** The screen's safe area's insets (px: a phone's notch and rounded corners; 0 elsewhere): a probe's padding of
+ *  env(safe-area-inset-*), resolved by the browser (a custom property would keep env() unresolved) */
+let probe: HTMLElement | null = null;
+export function safeInsets(): { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number } {
+  if (typeof document === "undefined") return { left: 0, right: 0, top: 0, bottom: 0 };
+  if (!probe) {
+    probe = document.createElement("div");
+    probe.style.cssText =
+      "position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)";
+    document.body.append(probe);
+  }
+  const s = getComputedStyle(probe);
+  return {
+    left: parseFloat(s.paddingLeft) || 0,
+    right: parseFloat(s.paddingRight) || 0,
+    top: parseFloat(s.paddingTop) || 0,
+    bottom: parseFloat(s.paddingBottom) || 0,
+  };
+}
+
+/** The stage within a `width` × `height` window's safe area (`inset`): laid out inside it, placed from its corner (a
+ *  phone's HUD clear of its notch, RV-1212) */
+export function insetStage(
+  width: number,
+  height: number,
+  inset: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number },
+): ContentStage {
+  const stage = contentStage(width - inset.left - inset.right, height - inset.top - inset.bottom);
+  return { ...stage, left: stage.left + inset.left, top: stage.top + inset.top };
+}
+
+/** The stage for the window now, within its safe area */
+export function windowStage(): ContentStage {
+  return insetStage(window.innerWidth, window.innerHeight, safeInsets());
+}
+
 /** Sizes and places a stage element for the window now; returns the stage. `last`: the key it was fitted for (refitted
  *  only when the stage changes) */
 export function fitStage(el: HTMLElement, last: { key: string }): ContentStage {
-  const stage = contentStage(window.innerWidth, window.innerHeight);
-  const key = `${String(stage.width)}x${String(stage.height)}x${String(stage.scale)}x${String(stage.left)}`;
+  const stage = windowStage();
+  const key = `${String(stage.width)}x${String(stage.height)}x${String(stage.scale)}x${String(stage.left)}x${String(stage.top)}`;
   if (key !== last.key) {
     last.key = key;
     el.style.width = `${String(stage.width)}px`;

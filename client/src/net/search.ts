@@ -1,6 +1,6 @@
 // The regions' pings (notes/matchmaking.md, Regions: a hello with intent "ping" timed to the server's Pong). The search
 // itself is the accounts service's matchmaker's (net/matchmaker.ts).
-import { type ServerAddress } from "./connection";
+import { type ServerAddress, checkDatagrams, webTransportOptions } from "./connection";
 import { PROTOCOL_VERSION, REFUSED_VERSION, decodeControl, encodeControl } from "./protocol";
 
 /** A region's ping waits this long at most (ms): its connection and the answer (notes/matchmaking.md, Regions) */
@@ -29,7 +29,7 @@ function pingHello(): Uint8Array {
 }
 
 function transportTo(address: ServerAddress): WebTransport {
-  return new WebTransport(address.url, address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined);
+  return new WebTransport(address.url, webTransportOptions(address.certHash));
 }
 
 /** A ping refused on version: the servers speak a newer protocol than this page (it loaded before their update) */
@@ -66,6 +66,7 @@ async function pingOnce(address: ServerAddress): Promise<{ ms: number; server: s
     });
     const timed = async (): Promise<{ ms: number; server: string }> => {
       await transport.ready;
+      checkDatagrams(transport);
       const stream = await transport.createBidirectionalStream();
       const writer = stream.writable.getWriter();
       const reader = (stream.readable as ReadableStream<Uint8Array>).getReader();
