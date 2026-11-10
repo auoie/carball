@@ -15,8 +15,13 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  /* (a trackpad's sideways swipe never the browser's Back: RV-1133) */
-  overscroll-behavior-x: none;
+  /* (a trackpad's sideways swipe never the browser's Back: RV-1133; a phone's pull never a reload) */
+  overscroll-behavior: none;
+  /* (touch: no double-tap zoom, no long-press callout or tap flash; scrolling where a page scrolls: notes/mobile.md) */
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
   background: #0d1117;
   color: var(--text);
   font-family:
@@ -31,6 +36,15 @@ body {
   display: block;
   width: 100vw;
   height: 100vh;
+  /* (a phone's visible height, its browser's bars out of it) */
+  height: 100dvh;
+  touch-action: none;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* The loading screen (src/ui/loadingScreen.ts: ours, in the menus' look: their dark navy, Rajdhani and Orbitron, the
@@ -2416,8 +2430,8 @@ body {
 /* MENU-1/2: the main menu over the arena: Play and Settings; Play's Free Play, the playlists and Find Match */
 /* (its column anchored 18% down, never centred: a page taller or shorter, or one growing (the bots' 1v1 to 3v3), keeps
    its heading and first buttons where they were, its rows going on downward (the user's, 2026-10-29); a page taller
-   than the window scrolls here, its foot clear of the pad's button hints, 48 px at the scale and their 12 px gaps:
-   src/ui/padNav.ts) */
+   than the window scrolls here, with some room under its last row (the main menu's pages show no pad hints:
+   RV-1207) */
 .main-menu {
   position: fixed;
   inset: 0;
@@ -4437,4 +4451,185 @@ body.pad-mode .settings-tab-glyph {
 
 .fullscreen-notice p {
   margin: 0 0 8px;
+}
+
+/* --- Touch play (src/input/touch.ts; notes/mobile.md): the stick on the left half where the thumb lands, the big buttons
+   in the right thumb's corner, pause and the mode's buttons top left (the scoreboard's top centre stays clear); every
+   one clear of the screen's rounded corners and notch (the safe area). Over the HUD, under every menu --- */
+#touch {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  touch-action: none;
+  font: 600 15px/1 var(--hud-header);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgb(var(--hud-ice));
+}
+
+#touch[hidden] {
+  display: none;
+}
+
+.touch-stick-zone {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* (centred where the finger landed: its travel 56 px, src/input/touch.ts STICK_RADIUS) */
+.touch-stick-base {
+  position: fixed;
+  width: 152px;
+  height: 152px;
+  margin: -76px 0 0 -76px;
+  border: 2px solid rgba(var(--hud-ice), 0.45);
+  border-radius: 50%;
+  background: rgba(110, 170, 225, 0.12);
+  pointer-events: none;
+}
+
+.touch-stick-base[hidden] {
+  display: none;
+}
+
+.touch-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  border-radius: 50%;
+  background: rgba(var(--hud-ice-fill), 0.55);
+  box-shadow: 0 0 8px rgba(var(--hud-ice-fill), 0.45);
+}
+
+.touch-buttons {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  width: 200px;
+  height: 200px;
+}
+
+.touch-button {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 2px solid rgba(var(--hud-ice), 0.5);
+  border-radius: 50%;
+  background: rgba(10, 18, 32, 0.45);
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.touch-button.held {
+  background: rgba(var(--hud-ice-fill), 0.45);
+  border-color: rgb(var(--hud-ice));
+}
+
+.touch-button[hidden] {
+  display: none;
+}
+
+/* (Jump the biggest, in the corner; Boost left of it; Slide over it; Ball cam between, smaller) */
+.touch-jump {
+  right: 0;
+  bottom: 0;
+  width: 96px;
+  height: 96px;
+  font-size: 18px;
+}
+
+.touch-boost {
+  right: 108px;
+  bottom: 6px;
+  width: 80px;
+  height: 80px;
+}
+
+.touch-slide {
+  right: 8px;
+  bottom: 108px;
+  width: 80px;
+  height: 80px;
+}
+
+.touch-ballCam {
+  right: 112px;
+  bottom: 112px;
+  width: 64px;
+  height: 64px;
+  font-size: 12px;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.touch-top {
+  position: absolute;
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  display: flex;
+  gap: 8px;
+}
+
+.touch-mode {
+  display: flex;
+  gap: 8px;
+}
+
+.touch-top .touch-button {
+  position: static;
+  min-width: 64px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+}
+
+/* (in touch play the boost ring and the flip lamp go to the stage's top right, out from under the buttons: the scoreboard
+   is top centre, the touch row top left) */
+body.touch-play #boost {
+  top: 10px;
+  bottom: auto;
+}
+
+body.touch-play #flip {
+  top: 60px;
+  bottom: auto;
+}
+
+/* Portrait on a touch device: the prompt to turn it, over everything (landscape only: the user's, 2026-11-10) */
+#rotate {
+  display: none;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: #0d1117;
+    font: 600 24px/1.3 var(--hud-header);
+    text-align: center;
+    text-transform: uppercase;
+    color: rgb(var(--hud-ice));
+  }
 }

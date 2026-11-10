@@ -110,7 +110,8 @@ The client sends its unacknowledged frames (the newest 10) at its input rate (60
 **Update**: the network state (`engine/net/NetState.h`, its compact form since version 15) is the server's world after
 `serverTick` for the bodies it holds; for this client that is the state after its input frame `ackFrame` (the last
 frame the server consumed for it; 0 = none yet). Updates go out every other tick (60 a second) with the actors due, at
-the game's rates (`server/src/replication.rs`): the ball about 35 times a second, each car about 12, and forced into
+the game's rates (`server/src/replication.rs`): the ball about 35 times a second, each car about 13.4 (every 8 ticks
+52 % of the time, else every 10), and forced into
 the next update as the game forces them (the ball after a car hits it; a car on a placement, a flip reset, a
 demolition, the countdown's end, and its jump, double jump or dodge within 1000 uu of the ball); the pads when one
 changes and once a second. The compact form carries each body as the game's `ReplicatedRBState` (the location ×100
@@ -184,5 +185,6 @@ Stat event ids (`StatEvent_TA`, `notes/match-stats.md` §2; the server's `protoc
 19 CrossbarHits, 20 AerialHit, 21 BicycleHit, 22 JuggleHit, 23 Demolish, 24 Demolished, 25 Extermination (the game's
 "Demolition" object), 26 LowFive, 27 HighFive, 28 OwnGoal, 29 MVP, 30 Win, 31 Loss, 32 DemolitionRespawn.
 
-What an update carries (the game's rates, `notes/netcode.md`): the ball every update (60 Hz); cars within 1000 uu of
-the ball every update, other cars and the boost pads every 8 ticks (15 Hz).
+What an update carries (the game's rates, `server/src/replication.rs`): the ball about 35 times a second, each car about
+13.4, each forced into the next update as above; the boost pads when one changes and once a second. (An earlier scheme,
+the ball every update and the cars near it too, the rest every 8 ticks, is gone.)

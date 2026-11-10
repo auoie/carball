@@ -1,6 +1,6 @@
 // Collects keyboard, mouse and gamepad state from the browser into snapshots.
 import { padStyleOf, setPadStyle, takesBrowserKey } from "./bindings";
-import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
+import type { GamepadSnapshot, InputEvent, InputSnapshot, TouchSnapshot } from "./mapping";
 
 /** The keys a browser sends only a keyup for (Windows keeps PrintScreen's keydown): taps when they come (RV-1100) */
 export const KEYUP_ONLY: readonly string[] = ["PrintScreen"];
@@ -222,6 +222,10 @@ export class InputDevices {
   /** What the game sees of the pad (the menus' presses taken out: ui/padNav.ts) */
   padFilter: (pad: GamepadSnapshot | null) => GamepadSnapshot | null = (pad) => pad;
 
+  /** The touch controls (src/input/touch.ts), when the page has them: read with the rest each frame, told when a real
+   *  pad is used (they hide till the next touch) */
+  touch: { snapshot(): TouchSnapshot | null; padUsed(): void } | null = null;
+
   /** A key pressed and let go within the frame (the wheel's turns, PrintScreen): a press the game acts on, never held */
   #tap(code: string): void {
     this.#pressedKeys.add(code);
@@ -231,10 +235,15 @@ export class InputDevices {
 
   /** Held inputs, and the presses and releases since the previous snapshot. */
   snapshot(): InputSnapshot {
-    const gamepad = this.padFilter(readGamepad());
-    if (gamepad && (gamepad.buttons.some((v) => v > 0.5) || gamepad.axes.some((v) => Math.abs(v) > 0.5))) {
+    const real = this.padFilter(readGamepad());
+    if (real && (real.buttons.some((v) => v > 0.5) || real.axes.some((v) => Math.abs(v) > 0.5))) {
       this.#usingGamepad = true;
+      this.touch?.padUsed();
     }
+    // (the touch stick a pad's left stick: the controller's own deadzone, dodge and air pitch safety; played as a pad)
+    const touch = this.touch?.snapshot() ?? null;
+    const gamepad = withTouchStick(real, touch?.stick ?? null);
+    if (touch?.stick || (touch?.held.size ?? 0) > 0) this.#usingGamepad = true;
     const padButtons = gamepad?.buttons.map((v) => v > 0.5) ?? [];
     if (padButtons.some((down, i) => down && !(this.#padButtons[i] ?? false))) this.#ownerIsGamepad = true;
     this.#padButtons = padButtons;
@@ -248,6 +257,7 @@ export class InputDevices {
       events: this.#events.splice(0),
       mouse: { x: this.#mouseX, y: this.#mouseY },
       gamepad,
+      touch,
     };
     this.#mouseX = 0;
     this.#mouseY = 0;
@@ -257,6 +267,15 @@ export class InputDevices {
     this.#releasedButtons.clear();
     return snapshot;
   }
+}
+
+/** The pad with the touch stick on its left stick (axes 0 and 1), the tilt further from centre winning each axis; a
+ *  virtual pad of its own with no real one (its other inputs at rest) */
+export function withTouchStick(pad: GamepadSnapshot | null, stick: { readonly x: number; readonly y: number } | null): GamepadSnapshot | null {
+  if (!stick) return pad;
+  const axes = pad ? [...pad.axes] : [0, 0, 0, 0];
+  for (const [i, v] of [stick.x, stick.y].entries()) if (Math.abs(v) > Math.abs(axes[i] ?? 0)) axes[i] = v;
+  return { axes, buttons: pad?.buttons ?? Array.from({ length: 17 }, () => 0) };
 }
 
 /** The browser's pads: none where it has no Gamepad API (turned off, or a privacy setting's) or refuses it (a

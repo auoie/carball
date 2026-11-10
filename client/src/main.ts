@@ -46,6 +46,7 @@ import { MATCHMAKER_TEXT, type MatchmakerSearch, MatchmakerSearchSession, type S
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, cancelThumbButtons, readGamepad } from "./input/devices";
+import { TouchControls, type TouchMode, installTouchPage, touchDevice } from "./input/touch";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
@@ -146,6 +147,8 @@ async function main(): Promise<void> {
   window.addEventListener("focus", readLayout);
   keyboard?.addEventListener?.("layoutchange", readLayout);
   const loading = new LoadingScreen(required("#loading", HTMLElement));
+  // (phones and tablets: no pinch zoom, landscape in full screen, the prompt to turn an upright phone: notes/mobile.md)
+  installTouchPage();
   const canvas = required("#game", HTMLCanvasElement);
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server
   const params = new URLSearchParams(location.search);
@@ -171,8 +174,9 @@ async function main(): Promise<void> {
   // (Display Mode: Fullscreen asked for at the page's first press, the loading screen's too (a match's page, its full
   // screen ended with the menu's: RV-1111), its keyboard locked there for the keys needed: RV-1091, RV-1112)
   const displayMode = new DisplayMode({ keys: () => lockedKeys(settings.bindings) });
+  // (a touch device always full screen where its browser allows: a phone's bars take too much of it; notes/mobile.md)
   let fullscreen = settings.options.fullscreen;
-  displayMode.set(fullscreen, false);
+  displayMode.set(fullscreen || touchDevice(), false);
   // (a claim that fails: back to the menu with what to show (claimNotice). Its config.json and its ticket tried again
   // inside its window (claimAddress, RX31), a ticket the server refuses once more (openClaim, RX30C))
   const claimFailed = (e: unknown): void => {
@@ -320,7 +324,8 @@ async function main(): Promise<void> {
   // The video settings' automatic default (settings/video.ts): a weak GPU starts lower, the player's own choice wins; the
   // browser tests say theirs (e2e/fixtures.ts: the maximum, no guard)
   const videoAuto = (window as unknown as { carballVideoAuto?: { readonly weak: boolean; readonly guard: boolean } }).carballVideoAuto;
-  const weakGpu = videoAuto?.weak ?? isWeakGpu(renderer.gpuName);
+  // (a phone's or a tablet's GPU too: an iPhone's says only "Apple GPU")
+  const weakGpu = videoAuto?.weak ?? (isWeakGpu(renderer.gpuName) || touchDevice());
   const resolve = (s: Settings): Settings => resolveSettings(s, weakGpu);
   settings = resolve(settings);
   renderer.renderScale = RENDER_QUALITY_SCALE[settings.video.renderQuality];
@@ -337,6 +342,14 @@ async function main(): Promise<void> {
   installMenuScale();
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
+  // (the touch controls, in play on a touch device: src/input/touch.ts; their pause button as the pad's Start, their
+  // mode's buttons from the match being played: set as the pause menu and free play are made)
+  let touchPause = (): void => undefined;
+  let touchMode = (): TouchMode => (onlinePage ? "online" : "freeplay");
+  const touch = new TouchControls(document.body, () => {
+    touchPause();
+  });
+  input.touch = touch;
   // (in play, the bound keys' browser actions never taken: RV-1092)
   input.bound = (code) => keyBound(settings.bindings, code);
   const audio = new GameAudio(name);
@@ -380,7 +393,7 @@ async function main(): Promise<void> {
       // (chosen in the settings, a press: asked for at once; the binds changed in full screen: the lock's keys with them)
       if (next.options.fullscreen !== fullscreen) {
         fullscreen = next.options.fullscreen;
-        displayMode.set(fullscreen, true);
+        displayMode.set(fullscreen || touchDevice(), true);
       } else displayMode.relock();
     },
     resolve,
@@ -396,6 +409,8 @@ async function main(): Promise<void> {
   let editorHolds = (): boolean => false;
   // (and its unsaved changes: the pause menu's entry reads Save and Exit, TE1 §6.3)
   let editorDirty = (): boolean => false;
+  // (the editor's own page up, not its test: no touch controls over it)
+  let editorPage = (): boolean => false;
   const pause: PauseMenu = new PauseMenu(document.body, {
     resume: () => {
       pause.close();
@@ -431,6 +446,12 @@ async function main(): Promise<void> {
   // (custom training's Select Shot over the game: set once it's made)
   let shotSelectOpen = (): boolean => false;
   const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen || shotSelectOpen();
+  // (the touch controls' pause: the pause menu opened, as the pad's Start opens it)
+  touchPause = () => {
+    if (menusOpen()) return;
+    pause.open();
+    audio.menu("select");
+  };
   // (the pad's Y releasing over the main or pause menu, no modal or settings over it: the search's cancel, MM-10; set by the
   // menu page's search)
   let cancelSearchByPad = (): boolean => false;
@@ -538,6 +559,7 @@ async function main(): Promise<void> {
   };
   if (!onlinePage) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled, { car: storedCar(), team: storedTeam() });
+    touchMode = () => (freeplay.training ? "training" : "freeplay");
     freeplayRestart = () => {
       freeplay.restart();
     };
@@ -862,6 +884,7 @@ async function main(): Promise<void> {
     editorPadMenu = () => editor?.padMenu ?? null;
     editorHolds = () => editor !== null && (editor.isOpen || editor.testing || playtesting !== null);
     editorDirty = () => editor?.dirty ?? false;
+    editorPage = () => editor !== null && editor.isOpen && !editor.testing;
     leaveEditor = (then, cancelled) => {
       if (!editorHolds() || !editor) return false;
       editor.leave(() => {
@@ -1541,6 +1564,7 @@ async function main(): Promise<void> {
     last = now;
     padNav.frame(readGamepad(), now / 1000);
     padReadout?.update();
+    touch.update(!menusOpen() && !editorPage(), touchMode());
     const started = performance.now();
     game.frame(dt);
     statFrame(now / 1000, dt, performance.now() - started);

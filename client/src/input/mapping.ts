@@ -26,6 +26,35 @@ export interface InputSnapshot {
   /** The captured mouse's motion since the previous snapshot (counts; y down) */
   readonly mouse?: { readonly x: number; readonly y: number };
   readonly gamepad: GamepadSnapshot | null;
+  /** The on-screen touch controls (src/input/touch.ts), shown: their stick is the virtual pad's left stick already
+   *  (InputDevices), their throttle and buttons are read here */
+  readonly touch?: TouchSnapshot | null;
+}
+
+/** The touch controls' state for a frame: the stick (-1..1 each way, y down as a pad's; null while no finger holds it),
+ *  the actions the buttons hold, and those pressed since the last (a tap shorter than a frame too) */
+export interface TouchSnapshot {
+  readonly stick: { readonly x: number; readonly y: number } | null;
+  readonly held: ReadonlySet<Action>;
+  readonly pressed: ReadonlySet<Action>;
+}
+
+/** The touch stick's throttle (-1..1): its tilt past the controller deadzone, as a pad axis's (axisDeadzone), forward
+ *  except in its bottom quarter (within 45 degrees of straight down: reverse), so steering at full lock still drives */
+export function stickThrottle(x: number, y: number, deadzone: number): number {
+  const amount = axisDeadzone(Math.min(1, Math.hypot(x, y)), deadzone);
+  if (amount <= 0) return 0;
+  return y > Math.abs(x) ? -amount : amount;
+}
+
+/** A touch-held action's value: its button held (1), the throttle's from the stick (stickThrottle) */
+function touchValue(touch: TouchSnapshot | null | undefined, action: Action, stickDeadzone: number): number {
+  if (!touch) return 0;
+  if (action === "throttleForward" || action === "throttleReverse") {
+    const t = touch.stick ? stickThrottle(touch.stick.x, touch.stick.y, stickDeadzone) : 0;
+    return Math.max(0, action === "throttleForward" ? t : -t);
+  }
+  return touch.held.has(action) ? 1 : 0;
 }
 
 export type InputEvent =
@@ -179,7 +208,7 @@ export function actionValues(input: InputSnapshot, bindings: Bindings, stickDead
   const values = {} as Record<Action, number>;
   for (const action of Object.keys(bindings) as Action[]) {
     const b = bindings[action];
-    values[action] = keyboardValue(input, b.keyboard) + gamepadValue(input.gamepad, b.gamepad, stickDeadzone);
+    values[action] = keyboardValue(input, b.keyboard) + gamepadValue(input.gamepad, b.gamepad, stickDeadzone) + touchValue(input.touch, action, stickDeadzone);
   }
   return values;
 }
@@ -201,11 +230,13 @@ function orderedKeyEvents(input: InputSnapshot, bindings: Bindings, actions: rea
     .map((e) => e.down);
 }
 
-/** Each input bound to an action (keyboard, then gamepad) */
+/** Each input bound to an action (keyboard, then gamepad), then the touch controls' button (its presses events, as a
+ *  key's: a tap shorter than a frame counts) */
 function buttonInputs(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, ...actions: Action[]): ButtonInput[] {
   return actions.flatMap((a) => [
     keyboardButton(input, bindings[a].keyboard),
     { down: gamepadPressed(input.gamepad, bindings[a].gamepad, stickDeadzone), pressed: false },
+    { down: input.touch?.held.has(a) ?? false, pressed: input.touch?.pressed.has(a) ?? false },
   ]);
 }
 
@@ -301,11 +332,16 @@ export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickD
   // (held, or pressed since the last frame: a tap still toggles, as the game's press commands do)
   const held = (action: Action): boolean => buttonInputs(input, bindings, stickDeadzone, action).some((i) => i.down || i.pressed);
   // (the commands' presses and releases from the frame's ordered events; without them, a press, and a tap's release)
+  // (a touch button's press and release events too, as a key's: after the keys', its own input)
   const command = (action: Action): ActionButton => {
-    const [key, pad] = buttonInputs(input, bindings, stickDeadzone, action);
+    const [key, pad, touch] = buttonInputs(input, bindings, stickDeadzone, action);
     const events = orderedKeyEvents(input, bindings, [action]);
-    const pressed = key?.pressed === true ? (key.down ? [true] : [true, false]) : [];
-    return { keyEvents: events ?? pressed, keyDown: key?.down ?? false, padDown: pad?.down ?? false };
+    const tap = (b: ButtonInput | undefined): boolean[] => (b?.pressed === true ? (b.down ? [true] : [true, false]) : []);
+    return {
+      keyEvents: [...(events ?? tap(key)), ...tap(touch)],
+      keyDown: (key?.down ?? false) || (touch?.down ?? false),
+      padDown: pad?.down ?? false,
+    };
   };
   return {
     ballCam: command("ballCam"),

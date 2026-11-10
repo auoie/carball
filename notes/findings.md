@@ -12,7 +12,8 @@ All addresses are VAs for this build only. They will move on the next patch.
 | .data | 0x14224e000 | 0x2b0000 | native tables; GNames/GObjects live in its bss tail |
 
 - MSVC, x64, ~135 RTTI type descriptors (CryptoPP + std only; game classes have none).
-- Bullet physics statically linked, version >= 2.83 (`btGearConstraint`, `btDynamicsWorldFloatData`).
+- Bullet physics statically linked, version 2.82: its two serialization DNA blobs are byte-identical to the 2.82 tag's
+  (notes/bullet-diff.md). An early reading here, from `btGearConstraint` and `btDynamicsWorldFloatData`, said ≥ 2.83.
 - Easy Anti-Cheat installed. Everything here is static analysis of files on disk.
 
 ## UE3 core globals

@@ -108,9 +108,9 @@ The −Y goal is the same mesh rotated 180°. Every edge below is a quarter circ
   int32×3 indices, float×3 vertices in Bullet units = uu × 0.02). RocketSim adds the floor, ceiling and side-wall
   planes itself. It warns that the mesh hash is unknown; that is expected.
 
-One welded mesh: 5,702 vertices, 10,904 triangles, normals into the playable space, consistently wound
-(no edge used twice in the same direction). The only open edges are under the floor, above the ceiling,
-behind the side walls, or on the side-wall plane where the corner starts.
+Since 2026-10-08 the output is the game's 16 pieces, each in the game's cooked triangle order (below, "The game's
+pieces, triangle for triangle"). Before, it was one welded mesh (5,702 vertices, 10,904 triangles, normals into the
+playable space, consistently wound); the checks below were made on that mesh unless they say otherwise.
 
 **Checks**
 - `scripts/arena_check.py` (local only; needs `out/arena_local/`) compares with the game's meshes in one quadrant:
@@ -122,7 +122,7 @@ behind the side walls, or on the side-wall plane where the corner starts.
   | ours → game | 0.00 | 0.17 | 1.44 |
 
   Game samples more than 2 uu from ours that lie behind our surface are dropped (the game's pieces overlap and run
-  on behind each other; ours is one welded mesh), so the game side's max is 2 by construction.
+  on behind each other; ours was one welded mesh then), so the game side's max is 2 by construction.
 - Replays (notes/validation.md finding 18): cars driving on walls, curves and corners are as close to the replays on
   our mesh as on the game's own (0.046 uu median after ~4 ticks; corners 0.090 vs 0.084, side curves 0.058 vs
   0.057). The one visible remainder is where the corner meets the back wall (|x| 2560–2700, 60 cases): the game's

@@ -97,7 +97,8 @@ export class GameAudio {
       this.#unlocked = true;
       void ctx.resume();
     };
-    for (const type of ["pointerdown", "keydown"] as const) window.addEventListener(type, unlock, { capture: true, signal });
+    // (a touch's end and a click too: iOS Safari lets the sound start only from those, not from a finger landing)
+    for (const type of ["pointerdown", "keydown", "touchend", "click"] as const) window.addEventListener(type, unlock, { capture: true, signal });
     document.addEventListener(
       "visibilitychange",
       () => {

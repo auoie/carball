@@ -37,7 +37,8 @@ together: `--max-sessions`, `--max-per-address`, `--claims-per-address`, `--ping
 them), 4 s for the QUIC handshake and 10 s from the first packet to the hello, pages only from `ALLOWED_ORIGIN` when it's
 set (any origin without: development), 240 input packets and 20 control messages a second (excess dropped; a session
 that keeps flooding either kind is closed, a client now and then over its rate never is), QUIC's 4 streams each way and
-small receive windows; the game thread reads at most 2048 messages a pass (a pass a millisecond at least), a session's
+small receive windows; the game thread reads at most 2048 messages a pass (a pass at each tick: it sleeps until the
+next is due, notes/benchmarks.md), a session's
 inputs one place in its queue (its newest datagram: no flood, nor a stalled game thread, drops another's: RV-991); a
 panic in a match's tick lets that match go (the others play on), and the process exits if the game thread ends; join and
 leave send the other players the world once a tick at most.
@@ -64,8 +65,7 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | `src/protocol.rs` | messages; byte vectors shared with the client (`protocol/vectors.json`) |
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |
 | `src/game.rs` | the match: joins and leaves, inputs, the match flow (below), updates (rates, splitting into datagrams) |
-| `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock, asleep until each tick (notes/benchmarks.md) |
-| `src/queue.rs` | who plays together: each playlist's searchers, the oldest with those within a rating window (wider as they wait), teams by a snake draft |
+| `src/game_loop.rs` | the game thread: the sessions' messages, the matchmaker's matches opened at their first claim, every match at 120 Hz on its own clock, asleep until each tick (notes/benchmarks.md) |
 | `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over; the ranked bookkeeping (each seat's first ticket, the leave penalty's latch, results; a seat held for a rejoin) |
 | `src/net.rs` | WebTransport sessions (a claim's and a rejoin's ticket checked), development identity and info endpoint |
 | `src/metrics.rs` | the counters the info endpoint serves at `/metrics` (game-loop passes, ticks and slipped ticks, matches, players, datagrams, each thread's CPU, memory: notes/benchmarks.md) |
@@ -100,16 +100,13 @@ As the game's competitive match (`notes/match-rules-audit.md`, from the live scr
 - The clients get the match state (`0x84 Match`: phase, clock, scores, winner) on each change.
 The goal explosion pushes the cars near the goal away (engine patch 77).
 
-**The queue** (`--mode queue`, `notes/matchmaking.md` v1 queue): a search session names a playlist; when two full
-teams wait, the match host reserves their slots (teams alternating) and each gets a one-time random token
-(`MatchFound`), which their client claims in a new session. The match's warm-up waits for every reserved player (full
-start); a player who doesn't claim within 12 s, or leaves before the start, cancels it (the others are told,
-`Kicked` reason 1, and search again at the front of the queue in their first search's order, their claimed token in the
-search; a claim refused for a cancelled match does the same). Whoever stalled it can't search for 2 minutes, by the
-browser key their search sent, their other waiting searches let go with it (RV-386); their address too when it's theirs
-(an IPv6 /64, or no key sent) or after two different keys stalled from it within 10 minutes (RV-385: an IPv4 address is
-often shared), told then that the network's searches are paused (`SearchCooldown`'s `network`; RV-367, the user's
-decision). Leaving a started ranked match is penalized (LV1, notes/matchmaking.md): the first armed leaver is
+**The queue's matches** (`--mode queue`; `notes/matchmaking.md`, the central matchmaker): the accounts service's
+matchmaker decides who plays together, where and in which seat (`api/internal/matchmaker`), and each player claims
+their seat here with its match ticket (`src/match_host.rs`); the first claim opens the match. The match waits for every
+seat (full start); a seat not claimed within 10 s of the first claim (`RESERVATION_SECONDS`), or a player who leaves
+before the start, cancels it: the claimed players are told (`Kicked` reason 1) and search again, and the matchmaker is
+told which seats stalled it (its 2-minute no-show cooldown is the matchmaker's: RV-367). Leaving a started ranked match
+is penalized (LV1, notes/matchmaking.md): the first armed leaver is
 reported to the accounts service (a queue ban), and a ranked 2v2 or 3v3 seat is held for its player's rejoin. No
 backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
 is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match doesn't rematch: when the end screen's
