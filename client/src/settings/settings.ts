@@ -6,6 +6,7 @@ import { ACTIONS, type Action, type Binding, type Bindings, DEFAULT_BINDINGS, ty
 import { DEFAULT_SLOTS, POOLS } from "../game/quickChat";
 import type { ChatFilter } from "../net/protocol";
 import { TRAINING_DEFAULTS, TRAINING_LIMITS, type TrainingNumbers, type TrainingSettings } from "../training/settings";
+import { TOUCH_DEFAULTS, type TouchSettings, readTouch } from "../input/touchSettings";
 
 /** The game's Controls menu (ProfileGamepadSave_TA). The engine applies everything but the deadzone. */
 export interface ControllerSettings {
@@ -185,6 +186,8 @@ export interface Settings {
   readonly video: VideoSettings;
   /** Custom training's (training/settings.ts) */
   readonly training: TrainingSettings;
+  /** The touch controls' (input/touchSettings.ts: a touch device's Touch tab) */
+  readonly touch: TouchSettings;
 }
 
 /** The scoreboard's four columns after SCORE (ProfileScoreboardSave_TA, Soccar's group: SB-17), by column id */
@@ -307,6 +310,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gameplay: DEFAULT_GAMEPLAY_SETTINGS,
   video: DEFAULT_VIDEO_SETTINGS,
   training: TRAINING_DEFAULTS,
+  touch: TOUCH_DEFAULTS,
 };
 
 /** The settings as they apply: the video settings' automatic default resolved (settings/video.ts resolveVideo: the
@@ -455,6 +459,7 @@ export function parseSettings(v: unknown): Settings {
     gameplay: readGameplay(src["gameplay"], old),
     video,
     training: readTraining(src["training"]),
+    touch: readTouch(src["touch"]),
   };
 }
 

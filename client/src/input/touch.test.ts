@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS, type Action } from "./bindings";
 import { withTouchStick } from "./devices";
 import { ButtonLatch, type InputSnapshot, JumpLatch, actionEvents, readControls, readHeldActions, stickThrottle } from "./mapping";
-import { STICK_RADIUS, TOUCH_ACTIONS, stickVector } from "./touch";
+import { STICK_RADIUS, ScreenWake, TOUCH_ACTIONS, stickVector } from "./touch";
 
 const DZ = 0.2;
 
@@ -85,5 +85,57 @@ describe("the buttons", () => {
     expect(actionEvents(at(touch(null, [], ["reset"])).reset, idle.reset)).toEqual([true, false]);
     expect(at(touch(null, [...TOUCH_ACTIONS.jump])).readyUp).toBe(true);
     expect(at(touch(null, [...TOUCH_ACTIONS.scoreboard])).scoreboard).toBe(true);
+  });
+});
+
+describe("the screen kept on (a wake lock: RV-1224)", () => {
+  /** A stand-in wake lock whose requests come when the test says: each request's lock, its releases counted */
+  function fakeWakeLock() {
+    const resolvers: ((lock: WakeLockSentinel) => void)[] = [];
+    const locks: { released: boolean }[] = [];
+    const wakeLock = {
+      request: () =>
+        new Promise<WakeLockSentinel>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    };
+    const grant = (i: number): void => {
+      const lock = {
+        released: false,
+        release: () => {
+          lock.released = true;
+          return Promise.resolve();
+        },
+      };
+      locks.push(lock);
+      resolvers[i]?.(lock as unknown as WakeLockSentinel);
+    };
+    return { wakeLock, grant, locks, requests: () => resolvers.length };
+  }
+  const doc = { addEventListener: () => undefined, hidden: false } as unknown as Document;
+  const settle = (): Promise<void> => new Promise((done) => setTimeout(done, 0));
+
+  it("one request at a time: wanted, let go and wanted again while it's pending asks once, and the lock is let go when unwanted", async () => {
+    const fake = fakeWakeLock();
+    const wake = new ScreenWake(() => fake.wakeLock, doc);
+    wake.wanted = true;
+    wake.wanted = false;
+    wake.wanted = true;
+    expect(fake.requests()).toBe(1);
+    fake.grant(0);
+    await settle();
+    wake.wanted = false;
+    await settle();
+    expect(fake.locks.map((l) => l.released)).toEqual([true]);
+  });
+
+  it("a lock that comes when it's no longer wanted is let go at once", async () => {
+    const fake = fakeWakeLock();
+    const wake = new ScreenWake(() => fake.wakeLock, doc);
+    wake.wanted = true;
+    wake.wanted = false;
+    fake.grant(0);
+    await settle();
+    expect(fake.locks.map((l) => l.released)).toEqual([true]);
   });
 });

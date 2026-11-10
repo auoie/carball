@@ -284,3 +284,128 @@ test.describe("a browser without WebTransport", () => {
     await expect(menu.getByRole("button", { name: /^free play$/i })).toBeEnabled();
   });
 });
+
+/** A settings cycler stepped by taps on its right chevron until its value is `value` */
+async function tapCycleTo(page: Page, selector: string, value: string): Promise<void> {
+  for (let i = 0; i < 8; i++) {
+    const control = page.locator(selector);
+    if ((await control.getAttribute("data-value")) === value) return;
+    const box = await control.boundingBox();
+    if (!box) throw new Error(`${selector} isn't shown`);
+    await control.tap({ position: { x: box.width - 10, y: box.height / 2 } });
+  }
+  await expect(page.locator(selector)).toHaveAttribute("data-value", value);
+}
+
+/** The settings stored before the page loads: the Touch tab's (input/touchSettings.ts) */
+async function touchSettings(page: Page, touch: object): Promise<void> {
+  await page.addInitScript((t) => {
+    localStorage.setItem("carball.settings.v1", JSON.stringify({ touch: t }));
+  }, touch);
+}
+
+test.describe("the Touch settings on a phone", () => {
+  test.use(PHONE);
+
+  test("Auto drive, set in the Touch tab: the car drives with no finger on the stick; Brake backs it up", async ({ page }) => {
+    await menuPage(page);
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^settings$/i }).tap();
+    await page.locator("#settings .settings-tab", { hasText: "Touch" }).tap();
+    await tapCycleTo(page, '#settings [data-setting="throttle"]', "auto");
+    await expect(page.locator("#settings")).toContainText("hold Brake to slow down and reverse");
+    await page.keyboard.press("Escape");
+    await menu.getByRole("button", { name: /^play$/i }).tap();
+    await menu.getByRole("button", { name: /^free play$/i }).tap();
+    await page.evaluate(() => {
+      (window as unknown as Hook).carballFreeplay.place({ x: 0, y: -2000, yaw: Math.PI / 2 });
+    });
+    await expect(page.locator("#touch").getByRole("button", { name: "Brake" })).toBeVisible();
+    await expect.poll(async () => (await car(page)).speed, { timeout: 5000 }).toBeGreaterThan(800);
+    const cdp = await page.context().newCDPSession(page);
+    await fingers(cdp, "touchStart", [{ id: 1, ...(await centre(page, ".touch-brake")) }]);
+    await expect.poll(async () => (await car(page)).speed, { timeout: 5000 }).toBeLessThan(300);
+    await fingers(cdp, "touchEnd", []);
+  });
+
+  test("Split: the stick steers alone (no drive), Gas drives", async ({ page }) => {
+    await touchSettings(page, { throttle: "split" });
+    await freePlayByTouch(page);
+    await page.evaluate(() => {
+      (window as unknown as Hook).carballFreeplay.place({ x: 0, y: -2000, yaw: Math.PI / 2 });
+    });
+    const touch = page.locator("#touch");
+    await expect(touch.getByRole("button", { name: "Gas" })).toBeVisible();
+    await expect(touch.getByRole("button", { name: "Reverse" })).toBeVisible();
+    const cdp = await page.context().newCDPSession(page);
+    await fingers(cdp, "touchStart", [{ id: 1, x: 160, y: 250 }]);
+    await fingers(cdp, "touchMove", [{ id: 1, x: 160, y: 180 }]);
+    await page.waitForTimeout(800);
+    expect((await car(page)).speed).toBeLessThan(50);
+    await fingers(cdp, "touchStart", [
+      { id: 1, x: 160, y: 180 },
+      { id: 2, ...(await centre(page, ".touch-gas")) },
+    ]);
+    await expect.poll(async () => (await car(page)).speed, { timeout: 5000 }).toBeGreaterThan(800);
+    await fingers(cdp, "touchEnd", []);
+  });
+
+  test("a fixed stick: shown at its spot in play; a thumb near it drives, one far from it doesn't", async ({ page }) => {
+    await touchSettings(page, { fixedStick: true });
+    await freePlayByTouch(page);
+    await page.evaluate(() => {
+      (window as unknown as Hook).carballFreeplay.place({ x: 0, y: -2000, yaw: Math.PI / 2 });
+    });
+    const base = page.locator(".touch-stick-base");
+    await expect(base).toBeVisible();
+    const spot = await centre(page, ".touch-stick-base");
+    const cdp = await page.context().newCDPSession(page);
+    // (far from it, high in the left half, clear of the buttons (a touch near one is taken as its): nothing)
+    await fingers(cdp, "touchStart", [{ id: 1, x: 380, y: 140 }]);
+    await fingers(cdp, "touchMove", [{ id: 1, x: 380, y: 80 }]);
+    await page.waitForTimeout(800);
+    expect((await car(page)).speed).toBeLessThan(50);
+    await fingers(cdp, "touchEnd", []);
+    // (on it, pushed up: drives; the base where it was)
+    await fingers(cdp, "touchStart", [{ id: 2, x: spot.x + 10, y: spot.y }]);
+    await fingers(cdp, "touchMove", [{ id: 2, x: spot.x, y: spot.y - 70 }]);
+    await expect.poll(async () => (await car(page)).speed, { timeout: 5000 }).toBeGreaterThan(800);
+    expect(await centre(page, ".touch-stick-base")).toEqual(spot);
+    await fingers(cdp, "touchEnd", []);
+  });
+
+  test("the layout editor: Jump dragged, Boost made bigger, Ball Cam hidden; kept across a reload; reset", async ({ page }) => {
+    await menuPage(page);
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^settings$/i }).tap();
+    await page.locator("#settings .settings-tab", { hasText: "Touch" }).tap();
+    await page.getByRole("button", { name: "Edit Button Layout" }).tap();
+    const touch = page.locator("#touch");
+    await expect(touch).toHaveClass(/touch-editing/);
+    const cdp = await page.context().newCDPSession(page);
+    const jump = await centre(page, ".touch-jump");
+    await fingers(cdp, "touchStart", [{ id: 1, ...jump }]);
+    await fingers(cdp, "touchMove", [{ id: 1, x: 500, y: 200 }]);
+    await fingers(cdp, "touchEnd", []);
+    await page.locator(".touch-boost").tap();
+    await page.getByRole("button", { name: "Bigger" }).tap();
+    await page.getByRole("button", { name: "Bigger" }).tap();
+    await page.locator(".touch-ballCam").tap();
+    await page.getByRole("button", { name: "Hide" }).tap();
+    await page.getByRole("button", { name: "Done" }).tap();
+    await expect(touch).not.toHaveClass(/touch-editing/);
+    // (a reload: the layout as left)
+    await freePlayByTouch(page);
+    const moved = await centre(page, ".touch-jump");
+    expect(Math.abs(moved.x - 500)).toBeLessThan(2);
+    expect(Math.abs(moved.y - 200)).toBeLessThan(2);
+    await expect(page.locator(".touch-boost")).toHaveCSS("scale", "1.2");
+    await expect(page.locator(".touch-ballCam")).toBeHidden();
+    // (reset: every button back at its default)
+    await touch.getByRole("button", { name: "Pause" }).tap();
+    await page.getByRole("button", { name: /^settings$/i }).tap();
+    await page.locator("#settings .settings-tab", { hasText: "Touch" }).tap();
+    await page.getByRole("button", { name: "Reset Button Layout" }).tap();
+    expect(await page.evaluate(() => localStorage.getItem("carball.touchLayout"))).toBeNull();
+  });
+});

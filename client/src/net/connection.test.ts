@@ -290,6 +290,9 @@ describe("WebTransport's options and its datagrams (notes/mobile.md: Safari's HT
       checkDatagrams(transport("reliable-only"));
     }).toThrow(/no datagrams/);
     expect(() => {
+      checkDatagrams(transport("pending"));
+    }).not.toThrow();
+    expect(() => {
       checkDatagrams(transport("supports-unreliable"));
     }).not.toThrow();
     expect(() => {

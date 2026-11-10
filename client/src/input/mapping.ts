@@ -37,6 +37,9 @@ export interface TouchSnapshot {
   readonly stick: { readonly x: number; readonly y: number } | null;
   readonly held: ReadonlySet<Action>;
   readonly pressed: ReadonlySet<Action>;
+  /** The stick drives too (the Stick throttle model's: stickThrottle); else the throttle is the buttons' alone (Auto
+   *  drive's, Split's: input/touchSettings.ts) */
+  readonly stickDrives?: boolean;
 }
 
 /** The touch stick's throttle (-1..1): its tilt past the controller deadzone, as a pad axis's (axisDeadzone), forward
@@ -47,14 +50,16 @@ export function stickThrottle(x: number, y: number, deadzone: number): number {
   return y > Math.abs(x) ? -amount : amount;
 }
 
-/** A touch-held action's value: its button held (1), the throttle's from the stick (stickThrottle) */
+/** A touch-held action's value: its button held (1), and the throttle's from the stick too where it drives
+ *  (stickThrottle) */
 function touchValue(touch: TouchSnapshot | null | undefined, action: Action, stickDeadzone: number): number {
   if (!touch) return 0;
-  if (action === "throttleForward" || action === "throttleReverse") {
+  const held = touch.held.has(action) ? 1 : 0;
+  if ((action === "throttleForward" || action === "throttleReverse") && touch.stickDrives !== false) {
     const t = touch.stick ? stickThrottle(touch.stick.x, touch.stick.y, stickDeadzone) : 0;
-    return Math.max(0, action === "throttleForward" ? t : -t);
+    return held + Math.max(0, action === "throttleForward" ? t : -t);
   }
-  return touch.held.has(action) ? 1 : 0;
+  return held;
 }
 
 export type InputEvent =

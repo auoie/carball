@@ -41,23 +41,40 @@ export function stageTransform(stage: ContentStage): string {
 }
 
 /** The screen's safe area's insets (px: a phone's notch and rounded corners; 0 elsewhere): a probe's padding of
- *  env(safe-area-inset-*), resolved by the browser (a custom property would keep env() unresolved) */
+ *  env(safe-area-inset-*), resolved by the browser (a custom property would keep env() unresolved); read once, again
+ *  only after the window's size or turn changes (each read a style recalculation after the frame's HUD writes: RV-1229) */
+export interface Insets {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+const NO_INSETS: Insets = { left: 0, right: 0, top: 0, bottom: 0 };
 let probe: HTMLElement | null = null;
-export function safeInsets(): { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number } {
-  if (typeof document === "undefined") return { left: 0, right: 0, top: 0, bottom: 0 };
+let insets: Insets | null = null;
+export function safeInsets(): Insets {
+  if (typeof document === "undefined") return NO_INSETS;
+  if (insets) return insets;
   if (!probe) {
     probe = document.createElement("div");
     probe.style.cssText =
       "position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)";
     document.body.append(probe);
+    const forget = (): void => {
+      insets = null;
+    };
+    window.addEventListener("resize", forget);
+    window.addEventListener("orientationchange", forget);
+    window.visualViewport?.addEventListener("resize", forget);
   }
   const s = getComputedStyle(probe);
-  return {
+  insets = {
     left: parseFloat(s.paddingLeft) || 0,
     right: parseFloat(s.paddingRight) || 0,
     top: parseFloat(s.paddingTop) || 0,
     bottom: parseFloat(s.paddingBottom) || 0,
   };
+  return insets;
 }
 
 /** The stage within a `width` × `height` window's safe area (`inset`): laid out inside it, placed from its corner (a

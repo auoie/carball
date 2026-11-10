@@ -3,6 +3,7 @@
 import { browserNotice, currentBrowserLimits } from "./browserNotice";
 import { fullscreenAvailable } from "./displayMode";
 import { touchDevice } from "../input/touch";
+import { TOUCH_DEFAULTS, TOUCH_LIMITS, TOUCH_SETTINGS_TEXT, type ThrottleModel, type TouchNumbers, type TouchSettings } from "../input/touchSettings";
 import type { CameraSettings } from "../camera/carballCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onKeyboardLayout, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
@@ -41,7 +42,7 @@ import { presetText } from "../game/quickChat";
 import { SCOREBOARD_COLUMNS } from "../game/matchStats";
 import { TRAINING_DEFAULTS, TRAINING_LIMITS, TRAINING_SETTINGS_TEXT, type TrainingNumbers, type TrainingSettings } from "../training/settings";
 
-type Tab = "controls" | "camera" | "controller" | "gameplay" | "training" | "interface" | "scoreboard" | "chat" | "video" | "audio";
+type Tab = "controls" | "touch" | "camera" | "controller" | "gameplay" | "training" | "interface" | "scoreboard" | "chat" | "video" | "audio";
 
 /** The Gameplay tab's lists (verbatim, the game's settings labels: MENU-9) */
 const GAMEPLAY_TEXT = {
@@ -163,6 +164,8 @@ export class SettingsPanel {
   onClose: () => void = () => undefined;
   #settings: Settings;
   #tab: Tab = "controls";
+  /** The touch controls' layout editor and its reset (main.ts: the Touch tab's buttons), where the page has them */
+  touchLayout: { readonly edit: () => void; readonly reset: () => void } | null = null;
   #capture: { action: Action; device: Device; cancel: () => void } | null = null;
   /** The pad's X Default's question over the page (YES resets it, NO or B leaves it) */
   readonly #confirm: HTMLElement;
@@ -180,6 +183,8 @@ export class SettingsPanel {
     this.#body = el("div", { className: "settings-body" });
     const tabs = el("div", { className: "settings-tabs" }, [
       this.#tabButton("controls", "Controls"),
+      // (a touch device's own: the throttle, the stick, the buttons' layout)
+      ...(touchDevice() ? [this.#tabButton("touch", TOUCH_SETTINGS_TEXT.tab)] : []),
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
       this.#tabButton("gameplay", "Gameplay"),
@@ -342,23 +347,25 @@ export class SettingsPanel {
     const content =
       this.#tab === "controls"
         ? this.#controls()
-        : this.#tab === "camera"
-          ? this.#cameraTab()
-          : this.#tab === "controller"
-            ? this.#controllerTab()
-            : this.#tab === "gameplay"
-              ? this.#gameplayTab()
-              : this.#tab === "training"
-                ? this.#trainingTab()
-                : this.#tab === "interface"
-                  ? this.#interfaceTab()
-                  : this.#tab === "scoreboard"
-                    ? this.#scoreboardTab()
-                    : this.#tab === "chat"
-                      ? this.#chatTab()
-                      : this.#tab === "video"
-                        ? this.#videoTab()
-                        : this.#audioTab();
+        : this.#tab === "touch"
+          ? this.#touchTab()
+          : this.#tab === "camera"
+            ? this.#cameraTab()
+            : this.#tab === "controller"
+              ? this.#controllerTab()
+              : this.#tab === "gameplay"
+                ? this.#gameplayTab()
+                : this.#tab === "training"
+                  ? this.#trainingTab()
+                  : this.#tab === "interface"
+                    ? this.#interfaceTab()
+                    : this.#tab === "scoreboard"
+                      ? this.#scoreboardTab()
+                      : this.#tab === "chat"
+                        ? this.#chatTab()
+                        : this.#tab === "video"
+                          ? this.#videoTab()
+                          : this.#audioTab();
     // (each tab a page of the pad's: its focus kept while the settings are open; its reset the pad's X Default, its
     // bindings' slots cleared by Y)
     content.dataset["padPage"] = this.#tab;
@@ -762,6 +769,58 @@ export class SettingsPanel {
 
   /** Training (custom training's: notes/custom-training.md §5): the game speed, the round start's input delay, the
    *  variance's modifiers, the starting boost; the replay's skip, the car on the ground, unlimited boost */
+  /** The touch controls' (input/touchSettings.ts): the throttle's model and what it means, the stick floating or fixed,
+   *  its size, sensitivity and deadzone; the buttons' layout edited or reset */
+  #touchTab(): HTMLElement {
+    const T = TOUCH_SETTINGS_TEXT;
+    const touch = this.#settings.touch;
+    const apply = (next: Partial<TouchSettings>): void => {
+      this.#update({ ...this.#settings, touch: { ...this.#settings.touch, ...next } });
+    };
+    const numbers: TouchNumbers = { stickSize: touch.stickSize, sensitivity: touch.sensitivity, deadzone: touch.deadzone };
+    const defaults: TouchNumbers = { stickSize: TOUCH_DEFAULTS.stickSize, sensitivity: TOUCH_DEFAULTS.sensitivity, deadzone: TOUCH_DEFAULTS.deadzone };
+    const box = this.#sliders(numbers, TOUCH_LIMITS, { stickSize: T.stickSize, sensitivity: T.sensitivity, deadzone: T.deadzone }, apply, defaults);
+    const throttle = cycler({
+      label: T.throttle,
+      options: Object.entries(T.throttles) as [ThrottleModel, string][],
+      value: touch.throttle,
+      data: { setting: "throttle" },
+      onChange: (value) => {
+        apply({ throttle: value });
+      },
+    });
+    const help = el("p", { className: "settings-hint", textContent: T.throttleHelp[touch.throttle] });
+    const stick = cycler({
+      label: T.stick,
+      options: [
+        ["floating", T.sticks.floating],
+        ["fixed", T.sticks.fixed],
+      ],
+      value: touch.fixedStick ? "fixed" : "floating",
+      data: { setting: "fixedStick" },
+      onChange: (value) => {
+        apply({ fixedStick: value === "fixed" });
+      },
+    });
+    box.prepend(throttle, help, stick);
+    const layout = this.touchLayout;
+    if (layout) {
+      const edit = el("button", { textContent: T.editLayout });
+      edit.addEventListener("click", () => {
+        layout.edit();
+      });
+      const reset = el("button", { textContent: T.resetLayout });
+      reset.addEventListener("click", () => {
+        layout.reset();
+      });
+      const row = el("div", { className: "settings-touch-layout" }, [edit, reset]);
+      const last = box.lastElementChild;
+      if (last) last.before(row);
+      else box.append(row);
+    }
+    return box;
+  }
+
   #trainingTab(): HTMLElement {
     const T = TRAINING_SETTINGS_TEXT;
     const training = this.#settings.training;
@@ -1124,6 +1183,8 @@ export function pageDefaults(tab: Tab, s: Settings): Settings {
       return { ...s, gameplay: d.gameplay, options: options(["unlimitedBoost", "autoSkipReplay"]) };
     case "training":
       return { ...s, training: d.training };
+    case "touch":
+      return { ...s, touch: d.touch };
     case "interface":
       return { ...s, interface: d.interface };
     case "scoreboard":

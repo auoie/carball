@@ -138,7 +138,8 @@ const TEXT = /\.(json|css|js|mjs|html|txt|markdown|glsl|svg|csv|map|webmanifest)
 type Kind = "text" | "cmf" | "wasm" | "font" | "onnx" | "glb" | "icon" | "unknown";
 /** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm);
  *  font: the HUD's bundled fonts (pinned: FONTS); glb: the cars' models (client/cars' alone, checked by
- *  src/render/carGlb.test.ts); icon: the page's two icon PNGs by name (public/: rendered from public/favicon.svg, ours) */
+ *  src/render/carGlb.test.ts); icon: the page's icon PNGs by name (public/: rendered from public/favicon.svg, ours: the
+ *  tab's, the home screen's, and the web app manifest's 192, 512 and maskable 512, notes/mobile.md) */
 const kind = (path: string): Kind =>
   TEXT.test(path)
     ? "text"
@@ -152,7 +153,7 @@ const kind = (path: string): Kind =>
             ? "onnx"
             : path.endsWith(".glb")
               ? "glb"
-              : /[/\\](favicon-32|apple-touch-icon)\.png$/.test(path)
+              : /[/\\](favicon-32|apple-touch-icon|icon-192|icon-512|icon-maskable-512)\.png$/.test(path)
                 ? "icon"
                 : "unknown";
 /** The fonts that ship (style.css, public/fonts/; the user's pick, 2026-10-14), by their path under public/ and their

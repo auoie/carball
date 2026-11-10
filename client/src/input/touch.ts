@@ -3,10 +3,25 @@
 // stick, through its own path, InputDevices putting it on a virtual pad's axes 0 and 1); big buttons on the right (Jump,
 // Boost, Powerslide and air roll, Ball cam); a pause button and the mode's own (free play's reset, training's retry and
 // shots, online's scoreboard). The buttons press actions, not pad buttons (the default pad binds Reverse and Air roll
-// both to LT). The throttle is the stick's too: forward at its tilt, reverse in its bottom quarter, so steering at full
-// lock still drives. Every finger its own pointer, captured where it lands (the stick and the buttons at once).
+// both to LT). The throttle is the stick's by default (forward at its tilt, reverse in its bottom quarter, so steering at
+// full lock still drives), else the buttons' (Auto drive's Brake; Split's Gas and Reverse: input/touchSettings.ts). The
+// stick floats or stays at a fixed spot, its size, sensitivity and deadzone the player's; every button can be moved,
+// sized, faded or hidden in the layout editor. Every finger its own pointer, captured where it lands (the stick and the
+// buttons at once).
 import type { Action } from "./bindings";
 import type { TouchSnapshot } from "./mapping";
+import {
+  type ButtonPlace,
+  DEFAULT_PLACE,
+  EMPTY_LAYOUT,
+  PLACE_LIMITS,
+  TOUCH_DEFAULTS,
+  type TouchLayout,
+  type TouchSettings,
+  loadLayout,
+  saveLayout,
+  shapeStick,
+} from "./touchSettings";
 
 /** The stick's travel (px from its centre to full tilt) */
 export const STICK_RADIUS = 56;
@@ -19,12 +34,16 @@ export function stickVector(dx: number, dy: number, radius: number = STICK_RADIU
 }
 
 /** The buttons and the actions each holds (Jump skips a replay too, as the pad's A: the game's ReadyUp) */
-export type TouchButton = "jump" | "boost" | "slide" | "ballCam" | "reset" | "previous" | "next" | "scoreboard";
+export type TouchButton = "jump" | "boost" | "slide" | "ballCam" | "gas" | "reverse" | "brake" | "reset" | "previous" | "next" | "scoreboard";
 export const TOUCH_ACTIONS: Readonly<Record<TouchButton, readonly Action[]>> = {
   jump: ["jump", "readyUp"],
   boost: ["boost"],
   slide: ["handbrake", "airRoll"],
   ballCam: ["ballCam"],
+  // (the throttle's buttons: Split's Gas and Reverse, Auto drive's Brake (the forward drive itself while it's let go))
+  gas: ["throttleForward"],
+  reverse: ["throttleReverse"],
+  brake: ["throttleReverse"],
   reset: ["reset"],
   previous: ["trainingPrevious"],
   next: ["trainingNext"],
@@ -40,9 +59,29 @@ export const TOUCH_TEXT = {
   previous: "Prev",
   next: "Next",
   scoreboard: "Scores",
+  gas: "Gas",
+  reverse: "Reverse",
+  brake: "Brake",
   pause: "Pause",
   rotate: "Turn your phone sideways to play",
+  /** The layout editor's */
+  editing: "Drag a button to move it",
+  stick: "Stick",
+  smaller: "Smaller",
+  bigger: "Bigger",
+  fainter: "Fainter",
+  stronger: "Stronger",
+  hide: "Hide",
+  show: "Show",
+  resetAll: "Reset All",
+  done: "Done",
 } as const;
+
+/** The throttle model's buttons shown (Stick's none) */
+const THROTTLE_BUTTONS: Readonly<Record<TouchSettings["throttle"], readonly TouchButton[]>> = { stick: [], auto: ["brake"], split: ["gas", "reverse"] };
+
+/** The fixed stick's spot by default (fractions of the screen) */
+const FIXED_STICK = { x: 0.2, y: 0.68 } as const;
 
 /** The match the controls are for: its own buttons (free play's reset; training's retry, previous and next; online's
  *  scoreboard) */
@@ -64,10 +103,11 @@ export function touchDevice(): boolean {
 export function installTouchPage(doc: Document = document): void {
   // (the menus' targets a finger's size on a touch device: the stylesheet's .touch-device rules)
   doc.documentElement.classList.toggle("touch-device", touchDevice());
-  // (Safari's pinch stopped on a touch screen alone: a Mac's trackpad pinch zooms as ever, RV-1216)
+  // (Safari's pinch stopped on a touch screen in play alone: a Mac's trackpad pinch zooms as ever, RV-1216, and so do a
+  // phone's menus, RV-1227)
   if (navigator.maxTouchPoints > 0) {
     doc.addEventListener("gesturestart", (e) => {
-      e.preventDefault();
+      if (doc.body.classList.contains("touch-play")) e.preventDefault();
     });
   }
   doc.addEventListener("fullscreenchange", () => {
@@ -86,13 +126,20 @@ export function installTouchPage(doc: Document = document): void {
 /** The screen kept on while wanted (play on a touch device: a phone dims and locks itself otherwise; notes/mobile.md),
  *  taken again when the page comes back (the browser lets a wake lock go with the page hidden); nothing where the browser
  *  has none */
-class ScreenWake {
+export class ScreenWake {
   #wanted = false;
   #lock: WakeLockSentinel | null = null;
+  #pending = false;
+  readonly #wakeLock: () => WakeLock | undefined;
 
-  constructor() {
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && this.#wanted) this.#take();
+  /** `wakeLock`: the browser's (navigator.wakeLock: the tests' a stand-in); `doc`, whose visibility it follows */
+  constructor(
+    wakeLock: () => WakeLock | undefined = () => (navigator as { readonly wakeLock?: WakeLock }).wakeLock,
+    doc: Pick<Document, "addEventListener" | "hidden"> = document,
+  ) {
+    this.#wakeLock = wakeLock;
+    doc.addEventListener("visibilitychange", () => {
+      if (!doc.hidden && this.#wanted) this.#take();
     });
   }
 
@@ -107,17 +154,22 @@ class ScreenWake {
   }
 
   #take(): void {
-    const wakeLock = (navigator as { readonly wakeLock?: WakeLock }).wakeLock;
-    if (!wakeLock || (this.#lock !== null && !this.#lock.released)) return;
+    const wakeLock = this.#wakeLock();
+    if (!wakeLock || this.#pending || (this.#lock !== null && !this.#lock.released)) return;
+    // (one request at a time: a lock that comes when it's no longer wanted, or one is held, let go at once: RV-1224)
+    this.#pending = true;
     wakeLock.request("screen").then(
       (lock) => {
-        if (!this.#wanted) {
+        this.#pending = false;
+        if (!this.#wanted || (this.#lock !== null && !this.#lock.released)) {
           void lock.release().catch(() => undefined);
           return;
         }
         this.#lock = lock;
       },
-      () => undefined,
+      () => {
+        this.#pending = false;
+      },
     );
   }
 }
@@ -131,8 +183,9 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, pa
 
 /**
  * The controls over the game (#touch). Shown while `update` says the game is in play on a touch device (its pointer a
- * finger, or a touch since), hidden while a pad is used (until the next touch). `snapshot` is read with the others' a
- * frame (InputDevices).
+ * finger, or a touch since), hidden while a pad, the mouse or the keyboard is used (until the next touch). `snapshot` is
+ * read with the others' a frame (InputDevices). `configure` takes the Touch settings, `editLayout` opens the layout
+ * editor over everything.
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
@@ -140,6 +193,9 @@ export class TouchControls {
   readonly #stickKnob: HTMLDivElement;
   readonly #buttons = new Map<TouchButton, HTMLButtonElement>();
   readonly #modeRow: HTMLDivElement;
+  readonly #toolbar: HTMLDivElement;
+  readonly #toolbarLabel: HTMLDivElement;
+  readonly #hideButton: HTMLButtonElement;
   #stickPointer: number | null = null;
   #stickOrigin = { x: 0, y: 0 };
   #stick: { x: number; y: number } | null = null;
@@ -151,13 +207,17 @@ export class TouchControls {
   #shown = false;
   #mode: TouchMode | null = null;
   readonly #wake = new ScreenWake();
+  #settings: TouchSettings = TOUCH_DEFAULTS;
+  #layout: TouchLayout = loadLayout();
+  /** The layout editor open: its selected piece (a button, or the fixed stick), what to do when it's done */
+  #editing: { selected: TouchButton | "stick" | null; done: () => void } | null = null;
 
   /** `pause`: the pause button's (the pause menu opened) */
   constructor(parent: HTMLElement, pause: () => void) {
     this.root = el("div", "touch", parent);
     this.root.id = "touch";
     this.root.hidden = true;
-    // (the left half: a finger landing there places the stick)
+    // (the left half: a finger landing there places the stick, or takes the fixed one near its spot)
     const zone = el("div", "touch-stick-zone", this.root);
     this.#stickBase = el("div", "touch-stick-base", zone);
     this.#stickKnob = el("div", "touch-stick-knob", this.#stickBase);
@@ -165,10 +225,14 @@ export class TouchControls {
     zone.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       // (a finger's or a pen's: a mouse never drives the stick, RV-1211)
-      if (this.#stickPointer !== null || e.pointerType === "mouse") return;
+      if (this.#editing || this.#stickPointer !== null || e.pointerType === "mouse") return;
+      if (this.#settings.fixedStick) {
+        const centre = this.#fixedCentre();
+        if (Math.hypot(e.clientX - centre.x, e.clientY - centre.y) > this.#radius() * 2) return;
+        this.#stickOrigin = centre;
+      } else this.#stickOrigin = { x: e.clientX, y: e.clientY };
       this.#stickPointer = e.pointerId;
       zone.setPointerCapture(e.pointerId);
-      this.#stickOrigin = { x: e.clientX, y: e.clientY };
       this.#moveStick(e.clientX, e.clientY);
     });
     zone.addEventListener("pointermove", (e) => {
@@ -179,12 +243,15 @@ export class TouchControls {
         if (e.pointerId !== this.#stickPointer) return;
         this.#stickPointer = null;
         this.#stick = null;
-        this.#stickBase.hidden = true;
+        this.#restStick();
       });
     }
-    // (the right side's big buttons, bottom up: Jump in the thumb's corner, Boost beside it, Slide over it, Ball cam)
+    // (in the layout editor the fixed stick is dragged to its spot)
+    this.#draggable(this.#stickBase, "stick");
+    // (the right side's big buttons, bottom up: Jump in the thumb's corner, Boost beside it, Slide over it, Ball cam; the
+    // throttle model's own left of them)
     const pad = el("div", "touch-buttons", this.root);
-    for (const b of ["jump", "boost", "slide", "ballCam"] as const) this.#button(b, pad);
+    for (const b of ["jump", "boost", "slide", "ballCam", "gas", "reverse", "brake"] as const) this.#button(b, pad);
     // (the top row: pause, then the mode's own)
     const top = el("div", "touch-top", this.root);
     const pauseButton = el("button", "touch-button touch-pause", top);
@@ -192,10 +259,48 @@ export class TouchControls {
     pauseButton.textContent = TOUCH_TEXT.pause;
     pauseButton.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      pause();
+      if (!this.#editing) pause();
     });
     this.#modeRow = el("div", "touch-mode", top);
     for (const b of ["previous", "reset", "next", "scoreboard"] as const) this.#button(b, this.#modeRow);
+    // (the layout editor's bar: the selected piece's size, its opacity, hidden or not; every piece back to its default;
+    // done)
+    this.#toolbar = el("div", "touch-toolbar", this.root);
+    this.#toolbarLabel = el("div", "touch-toolbar-label", this.#toolbar);
+    const tool = (label: string, act: () => void): HTMLButtonElement => {
+      const b = el("button", "touch-tool", this.#toolbar);
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", act);
+      return b;
+    };
+    const T = TOUCH_TEXT;
+    tool(T.smaller, () => {
+      this.#adjust({ scale: -0.1 });
+    });
+    tool(T.bigger, () => {
+      this.#adjust({ scale: 0.1 });
+    });
+    tool(T.fainter, () => {
+      this.#adjust({ opacity: -0.1 });
+    });
+    tool(T.stronger, () => {
+      this.#adjust({ opacity: 0.1 });
+    });
+    this.#hideButton = tool(T.hide, () => {
+      const selected = this.#editing?.selected;
+      if (!selected || selected === "stick") return;
+      const place = this.#place(selected);
+      this.#setPlace(selected, { ...place, hidden: !place.hidden });
+    });
+    tool(T.resetAll, () => {
+      this.#layout = EMPTY_LAYOUT;
+      this.#applyLayout();
+      this.#select(null);
+    });
+    tool(T.done, () => {
+      this.#finishEditing();
+    });
     // (a touch anywhere: the controls are for a finger again, a pad's use forgotten; the mouse or the keyboard used: they
     // go until the next touch, a touchscreen laptop's or a tablet's keyboard, RV-1211)
     window.addEventListener(
@@ -210,7 +315,10 @@ export class TouchControls {
     );
     window.addEventListener(
       "keydown",
-      () => {
+      (e) => {
+        // (typing into a text field, the on-screen keyboard's too, is no keyboard player: RV-1231)
+        const target = e.target;
+        if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
         this.#touched = false;
       },
       { capture: true },
@@ -218,12 +326,12 @@ export class TouchControls {
     // (the controls swallow every touch that lands on them, a stray one between the buttons too: no tap through to the
     // game, whose compatibility mouse events would be a jump, RV-1210; iOS before Safari 27 needs the touchstart's)
     this.root.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
+      if (!(e.target instanceof Element && e.target.closest(".touch-toolbar"))) e.preventDefault();
     });
     this.root.addEventListener(
       "touchstart",
       (e) => {
-        e.preventDefault();
+        if (!(e.target instanceof Element && e.target.closest(".touch-toolbar"))) e.preventDefault();
       },
       { passive: false },
     );
@@ -236,11 +344,24 @@ export class TouchControls {
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) this.#release();
     });
+    this.#applyLayout();
   }
 
-  /** Each frame: whether the game is in play (no menu over it) and its mode; shown on a touch device in play, no pad in
-   *  use. Hidden, nothing is held */
+  /** The Touch settings (input/touchSettings.ts): the throttle model's buttons, the stick's kind, size and response */
+  configure(settings: TouchSettings): void {
+    this.#settings = settings;
+    this.root.style.setProperty("--stick-scale", String(settings.stickSize));
+    for (const b of ["gas", "reverse", "brake"] as const) {
+      const button = this.#buttons.get(b);
+      if (button) button.hidden = !THROTTLE_BUTTONS[settings.throttle].includes(b);
+    }
+    this.#release();
+  }
+
+  /** Each frame: whether the game is in play (no menu over it) and its mode; shown on a touch device in play, no pad, mouse
+   *  or keyboard in use. Hidden, nothing is held. (Not while the layout editor is open: it's shown over everything) */
   update(inPlay: boolean, mode: TouchMode): void {
+    if (this.#editing) return;
     // (the screen kept on in play on a touch device, a pad in its hands or not)
     this.#wake.wanted = inPlay && this.#touched;
     const shown = inPlay && this.#touched && !this.#padUsed;
@@ -268,14 +389,56 @@ export class TouchControls {
     return this.#shown;
   }
 
-  /** This frame's stick and buttons (null while hidden); the presses since the last read */
+  /** This frame's stick and buttons (null while hidden, or while the layout editor is open); the presses since the last
+   *  read. Auto drive drives forward while Brake is let go */
   snapshot(): TouchSnapshot | null {
-    if (!this.#shown) return null;
+    if (!this.#shown || this.#editing) return null;
     const held = new Set<Action>();
     for (const [b, pointers] of this.#holding) if (pointers.size > 0) for (const a of TOUCH_ACTIONS[b]) held.add(a);
+    if (this.#settings.throttle === "auto" && !held.has("throttleReverse")) held.add("throttleForward");
     const pressed = new Set(this.#pressed);
     this.#pressed.clear();
-    return { stick: this.#stick, held, pressed };
+    return { stick: this.#stick, held, pressed, stickDrives: this.#settings.throttle === "stick" };
+  }
+
+  /** The layout editor over everything (the settings' Edit Button Layout): every button shown, dragged to its place, the
+   *  selected one sized, faded or hidden; kept when done, then `done` */
+  editLayout(done: () => void): void {
+    this.#release();
+    this.#editing = { selected: null, done };
+    this.root.hidden = false;
+    this.root.classList.add("touch-editing");
+    for (const b of ["previous", "reset", "next", "scoreboard"] as const) {
+      const button = this.#buttons.get(b);
+      if (button) button.hidden = false;
+    }
+    this.#restStick();
+    this.#select(null);
+  }
+
+  get editing(): boolean {
+    return this.#editing !== null;
+  }
+
+  /** Every button and the fixed stick back to their default places (the settings' Reset Button Layout) */
+  resetLayout(): void {
+    this.#layout = EMPTY_LAYOUT;
+    saveLayout(this.#layout);
+    this.#applyLayout();
+  }
+
+  #finishEditing(): void {
+    const editing = this.#editing;
+    if (!editing) return;
+    saveLayout(this.#layout);
+    this.#editing = null;
+    this.root.classList.remove("touch-editing");
+    // (shown again as the next frame says; its mode's buttons as its mode has them)
+    this.#shown = false;
+    this.#mode = null;
+    this.root.hidden = true;
+    this.#restStick();
+    editing.done();
   }
 
   #button(b: TouchButton, parent: HTMLElement): void {
@@ -287,7 +450,7 @@ export class TouchControls {
     this.#holding.set(b, pointers);
     button.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      if (e.pointerType === "mouse") return;
+      if (this.#editing || e.pointerType === "mouse") return;
       button.setPointerCapture(e.pointerId);
       pointers.add(e.pointerId);
       for (const a of TOUCH_ACTIONS[b]) this.#pressed.add(a);
@@ -299,23 +462,129 @@ export class TouchControls {
         if (pointers.size === 0) button.classList.remove("held");
       });
     }
+    if (b === "gas" || b === "reverse" || b === "brake") button.hidden = true;
+    this.#draggable(button, b);
     this.#buttons.set(b, button);
   }
 
+  /** In the layout editor: a piece selected by a touch, moved with the finger (its centre where the finger is) */
+  #draggable(piece: HTMLElement, id: TouchButton | "stick"): void {
+    let dragging: number | null = null;
+    piece.addEventListener("pointerdown", (e) => {
+      if (!this.#editing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = e.pointerId;
+      piece.setPointerCapture(e.pointerId);
+      this.#select(id);
+    });
+    piece.addEventListener("pointermove", (e) => {
+      if (!this.#editing || e.pointerId !== dragging) return;
+      const x = Math.min(1, Math.max(0, e.clientX / window.innerWidth));
+      const y = Math.min(1, Math.max(0, e.clientY / window.innerHeight));
+      if (id === "stick") {
+        this.#layout = { ...this.#layout, stick: { x, y } };
+        this.#restStick();
+      } else this.#setPlace(id, { ...this.#place(id), x, y });
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+      piece.addEventListener(type, (e) => {
+        if (e.pointerId === dragging) dragging = null;
+      });
+    }
+  }
+
+  #select(id: TouchButton | "stick" | null): void {
+    if (!this.#editing) return;
+    this.#editing.selected = id;
+    for (const [b, button] of this.#buttons) button.classList.toggle("selected", b === id);
+    this.#stickBase.classList.toggle("selected", id === "stick");
+    const place = id && id !== "stick" ? this.#place(id) : null;
+    this.#toolbarLabel.textContent = id === null ? TOUCH_TEXT.editing : id === "stick" ? TOUCH_TEXT.stick : TOUCH_TEXT[id];
+    this.#hideButton.textContent = place?.hidden ? TOUCH_TEXT.show : TOUCH_TEXT.hide;
+    this.#hideButton.disabled = place === null;
+  }
+
+  /** The selected button's size or opacity stepped, within their limits */
+  #adjust(by: { readonly scale?: number; readonly opacity?: number }): void {
+    const selected = this.#editing?.selected;
+    if (!selected || selected === "stick") return;
+    const place = this.#place(selected);
+    const clamp = (v: number, r: { readonly min: number; readonly max: number }): number => Math.round(Math.min(r.max, Math.max(r.min, v)) * 100) / 100;
+    this.#setPlace(selected, {
+      ...place,
+      scale: clamp(place.scale + (by.scale ?? 0), PLACE_LIMITS.scale),
+      opacity: clamp(place.opacity + (by.opacity ?? 0), PLACE_LIMITS.opacity),
+    });
+  }
+
+  #place(b: TouchButton): ButtonPlace {
+    return this.#layout.buttons[b] ?? DEFAULT_PLACE;
+  }
+
+  #setPlace(b: TouchButton, place: ButtonPlace): void {
+    this.#layout = { ...this.#layout, buttons: { ...this.#layout.buttons, [b]: place } };
+    this.#applyLayout();
+    if (this.#editing?.selected === b) this.#select(b);
+  }
+
+  /** Each button at its place: moved (its centre at its fractions of the screen), sized, faded, hidden (shown faded in the
+   *  editor); the fixed stick at its spot */
+  #applyLayout(): void {
+    for (const [b, button] of this.#buttons) {
+      const place = this.#place(b);
+      const moved = place.x !== undefined && place.y !== undefined;
+      button.style.position = moved ? "fixed" : "";
+      button.style.left = moved ? `${String((place.x ?? 0) * 100)}%` : "";
+      button.style.top = moved ? `${String((place.y ?? 0) * 100)}%` : "";
+      button.style.right = moved ? "auto" : "";
+      button.style.bottom = moved ? "auto" : "";
+      button.style.translate = moved ? "-50% -50%" : "";
+      button.style.scale = place.scale === 1 ? "" : String(place.scale);
+      button.style.opacity = place.opacity === 1 ? "" : String(place.opacity);
+      if (place.hidden) button.dataset["layoutHidden"] = "";
+      else delete button.dataset["layoutHidden"];
+    }
+    this.#restStick();
+  }
+
+  /** The stick's travel (px): its size's */
+  #radius(): number {
+    return STICK_RADIUS * this.#settings.stickSize;
+  }
+
+  /** The fixed stick's centre (px): its spot in the layout, else its default */
+  #fixedCentre(): { x: number; y: number } {
+    const spot = this.#layout.stick ?? FIXED_STICK;
+    return { x: spot.x * window.innerWidth, y: spot.y * window.innerHeight };
+  }
+
+  /** The stick at rest: the fixed one shown at its spot, its knob centred (in the editor too); the floating one hidden */
+  #restStick(): void {
+    const fixed = this.#settings.fixedStick;
+    this.#stickBase.hidden = !fixed;
+    this.#stickKnob.style.transform = "";
+    if (!fixed) return;
+    const centre = this.#fixedCentre();
+    this.#stickBase.style.left = `${String(centre.x)}px`;
+    this.#stickBase.style.top = `${String(centre.y)}px`;
+  }
+
   #moveStick(x: number, y: number): void {
-    const v = stickVector(x - this.#stickOrigin.x, y - this.#stickOrigin.y);
+    const radius = this.#radius();
+    const v = shapeStick(stickVector(x - this.#stickOrigin.x, y - this.#stickOrigin.y, radius), this.#settings);
     this.#stick = v;
     this.#stickBase.hidden = false;
     this.#stickBase.style.left = `${String(this.#stickOrigin.x)}px`;
     this.#stickBase.style.top = `${String(this.#stickOrigin.y)}px`;
-    this.#stickKnob.style.transform = `translate(${String(v.x * STICK_RADIUS)}px, ${String(v.y * STICK_RADIUS)}px)`;
+    this.#stickKnob.style.transform = `translate(${String(v.x * radius)}px, ${String(v.y * radius)}px)`;
   }
 
   /** Everything let go (hidden: a menu over the game) */
   #release(): void {
     this.#stickPointer = null;
     this.#stick = null;
-    this.#stickBase.hidden = true;
+    this.#restStick();
     for (const [b, pointers] of this.#holding) {
       pointers.clear();
       this.#buttons.get(b)?.classList.remove("held");

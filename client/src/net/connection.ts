@@ -41,11 +41,12 @@ export function webTransportOptions(certHash: Uint8Array<ArrayBuffer> | null): W
   return { requireUnreliable: true, ...(certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: certHash }] } : {}) };
 }
 
-/** A session ready without datagrams (a fallback the browser took anyway) isn't played over: refused here, as a server
- *  that can't be reached. The local host's stand-in, and a browser that doesn't say, pass */
+/** A session ready without datagrams (a fallback the browser took anyway: its reliability "reliable-only") isn't played
+ *  over: refused here, as a server that can't be reached. Anything else passes: the local host's stand-in, a browser that
+ *  doesn't say, one still saying "pending" or a value to come (RV-1222) */
 export function checkDatagrams(transport: WebTransport): void {
   const reliability = (transport as { readonly reliability?: string }).reliability;
-  if (reliability !== undefined && reliability !== "supports-unreliable") throw new Error(`the session has no datagrams (${reliability})`);
+  if (reliability === "reliable-only") throw new Error("the session has no datagrams (reliable-only)");
 }
 
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */

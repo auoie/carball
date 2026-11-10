@@ -4488,9 +4488,9 @@ body.pad-mode .settings-tab-glyph {
 /* (centred where the finger landed: its travel 56 px, src/input/touch.ts STICK_RADIUS) */
 .touch-stick-base {
   position: fixed;
-  width: 152px;
-  height: 152px;
-  margin: -76px 0 0 -76px;
+  width: calc(152px * var(--stick-scale, 1));
+  height: calc(152px * var(--stick-scale, 1));
+  margin: calc(-76px * var(--stick-scale, 1)) 0 0 calc(-76px * var(--stick-scale, 1));
   border: 2px solid rgba(var(--hud-ice), 0.45);
   border-radius: 50%;
   background: rgba(110, 170, 225, 0.12);
@@ -4505,9 +4505,9 @@ body.pad-mode .settings-tab-glyph {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 60px;
-  height: 60px;
-  margin: -30px 0 0 -30px;
+  width: calc(60px * var(--stick-scale, 1));
+  height: calc(60px * var(--stick-scale, 1));
+  margin: calc(-30px * var(--stick-scale, 1)) 0 0 calc(-30px * var(--stick-scale, 1));
   border-radius: 50%;
   background: rgba(var(--hud-ice-fill), 0.55);
   box-shadow: 0 0 8px rgba(var(--hud-ice-fill), 0.45);
@@ -4582,6 +4582,30 @@ body.pad-mode .settings-tab-glyph {
   text-align: center;
 }
 
+/* (the throttle model's buttons left of Boost: Split's Gas over Reverse, Auto drive's Brake) */
+.touch-gas,
+.touch-reverse,
+.touch-brake {
+  right: 200px;
+  width: 72px;
+  height: 72px;
+  font-size: 13px;
+}
+
+.touch-gas {
+  bottom: 84px;
+}
+
+.touch-reverse,
+.touch-brake {
+  bottom: 4px;
+}
+
+/* (a button the layout hides: gone in play, faded in the editor) */
+.touch-button[data-layout-hidden] {
+  display: none;
+}
+
 .touch-top {
   position: absolute;
   left: calc(env(safe-area-inset-left, 0px) + 12px);
@@ -4601,6 +4625,68 @@ body.pad-mode .settings-tab-glyph {
   height: 44px;
   padding: 0 12px;
   border-radius: 8px;
+}
+
+/* The layout editor (input/touch.ts editLayout): over everything, the game dimmed; every button shown, the selected one
+   outlined; its bar top centre */
+#touch.touch-editing {
+  z-index: 30;
+  background: rgba(4, 8, 16, 0.85);
+}
+
+.touch-editing .touch-button[data-layout-hidden] {
+  display: flex;
+  opacity: 0.3;
+  border-style: dashed;
+}
+
+.touch-editing .touch-stick-base {
+  pointer-events: auto;
+}
+
+.touch-editing .touch-button.selected,
+.touch-editing .touch-stick-base.selected {
+  outline: 3px solid rgb(var(--hud-ice));
+  outline-offset: 3px;
+}
+
+.touch-toolbar {
+  display: none;
+}
+
+/* (under the top row, between the stick's side and the buttons': the middle of the screen is free) */
+.touch-editing .touch-toolbar {
+  position: absolute;
+  left: 50%;
+  top: calc(env(safe-area-inset-top, 0px) + 68px);
+  translate: -50% 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  width: min(460px, calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 24px));
+}
+
+.touch-toolbar-label {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 14px;
+}
+
+.touch-tool {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(var(--hud-ice), 0.5);
+  border-radius: 8px;
+  background: rgba(10, 18, 32, 0.9);
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+}
+
+.touch-tool:disabled {
+  opacity: 0.4;
 }
 
 /* (in touch play the boost ring and the flip lamp go to the stage's top right, out from under the buttons: the scoreboard
@@ -4623,6 +4709,12 @@ body.touch-play #stat-ticker .ticker-row {
 /* (no pad's glyphs on the HUD's prompts in touch play: no pad's buttons on screen; Jump skips the replay, the mode's
    buttons are the training's: RV-1214) */
 body.touch-play #hud .key-pad {
+  display: none;
+}
+
+/* (nor the prompts that name a key or a pad's button: the replay's skip is Jump, ball cam its own button: RV-1225) */
+body.touch-play #replay-prompt,
+body.touch-play #ballcam-toggle {
   display: none;
 }
 
@@ -4655,6 +4747,14 @@ body.touch-play #hud .key-pad {
 
 .touch-device .settings-tab {
   flex: none;
+}
+
+/* (the Touch tab's layout buttons, a row) */
+.settings-touch-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* (the settings inside the safe area: a phone's notch either side, RV-1212) */

@@ -23,7 +23,8 @@ export function appleTouch(userAgent: string, touchPoints = 0): boolean {
 /** An Apple touch device's system version from its user agent ("OS 17_4" on an iPhone's, Safari's "Version/17.4" on an
  *  iPad's that says it's a Mac's), else null */
 export function appleVersion(userAgent: string): readonly [number, number] | null {
-  const m = /\bOS (\d+)_(\d+)/.exec(userAgent) ?? /\bVersion\/(\d+)\.(\d+)/.exec(userAgent);
+  // (Safari's Version/ first: iOS 26's "OS" stays 18_6, RV-1230)
+  const m = /\bVersion\/(\d+)\.(\d+)/.exec(userAgent) ?? /\bOS (\d+)_(\d+)/.exec(userAgent);
   return m ? [Number(m[1]), Number(m[2])] : null;
 }
 
@@ -77,9 +78,12 @@ function local(): Pick<Storage, "getItem" | "setItem"> | null {
   }
 }
 
-/** Whether the Add to Home Screen hint is due: an iPhone's or iPad's Safari page, not the home-screen app, not dismissed */
+/** Whether the Add to Home Screen hint is due: an iPhone's Safari page (an iPad's only without element full screen, which
+ *  its Safari has from 16.4: RV-1226), not the home-screen app, not dismissed */
 export function homeScreenHintDue(storage = local()): boolean {
-  if (!appleTouch(navigator.userAgent, navigator.maxTouchPoints) || homeScreenApp()) return false;
+  const iPhone = /\b(iPhone|iPod)\b/.test(navigator.userAgent);
+  const fullscreen = typeof document !== "undefined" && document.fullscreenEnabled;
+  if (!appleTouch(navigator.userAgent, navigator.maxTouchPoints) || (!iPhone && fullscreen) || homeScreenApp()) return false;
   try {
     return storage?.getItem(HINT_KEY) !== "1";
   } catch {

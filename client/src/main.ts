@@ -353,6 +353,7 @@ async function main(): Promise<void> {
     touchPause();
   });
   input.touch = touch;
+  touch.configure(settings.touch);
   // (in play, the bound keys' browser actions never taken: RV-1092)
   input.bound = (code) => keyBound(settings.bindings, code);
   const audio = new GameAudio(name);
@@ -381,6 +382,7 @@ async function main(): Promise<void> {
     settings,
     (next) => {
       settings = next;
+      touch.configure(next.touch);
       audio.apply(next.audio, next.options.muted);
       renderer.postOptions = next.options;
       renderer.renderScale = RENDER_QUALITY_SCALE[next.video.renderQuality];
@@ -401,6 +403,15 @@ async function main(): Promise<void> {
     },
     resolve,
   );
+  // (the Touch tab's layout editor: over everything, the settings under it again when it's done)
+  panel.touchLayout = {
+    edit: () => {
+      touch.editLayout(() => undefined);
+    },
+    reset: () => {
+      touch.resetLayout();
+    },
+  };
   // The menus (MENU-1/4): Escape brings up the pause menu, the settings over it; the main menu as freeplay's page opens
   let mainMenu: MainMenu | null = null;
   // (freeplay's session over again: leaving it for the main menu, RV-284)
