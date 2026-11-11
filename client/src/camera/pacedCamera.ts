@@ -2,11 +2,13 @@
 // notes/camera.md). The game steps its camera once a frame with the frame's time; ours steps the same formulas on a
 // steady clock: whole steps of 1/R on a grid phase-locked to the frames, each step with the car and ball as they were at
 // its moment (blended from the ticks it's told), and the car it follows drawn as its last step saw it. R is the screen's
-// refresh (a phone's Frame Rate cap when it divides it: 60 on a 120 Hz phone), so every frame drawn lands on a step: its
+// refresh (a phone's Frame Rate cap when it divides it and the phone holds it: 60 on a 120 Hz phone), so every frame
+// drawn lands on a step: its
 // lag behind a turning car is the game's at that rate (3.23° at 60, 3.76° at 144, 3.92° at 240), and uneven frames (a
 // phone's dropped ones, Firefox's timer, a hitch) run whole steps at their grid times: no wobble (stepped once a frame
 // with the frame's time, the lag changed with each frame's length).
 import { blendStates } from "../game/interpolated";
+import { refreshOf } from "../game/refreshRate";
 import type { CarState } from "../engine/world";
 import { TICK_SECONDS } from "../loop/fixedStep";
 import { type Vec3, lerp } from "../math/vec";
@@ -47,6 +49,10 @@ const LOCK = { phase: 0.02, rate: 0.0004, range: 0.03 } as const;
 const STALL = 0.25;
 /** A cap this close to a whole share of the refresh divides it (119.88 Hz at 60: 2) */
 const DIVIDES = 0.1;
+/** A phone not holding its cap: this many late frames within `within` s, and the steps are the screen's refresh's (each
+ *  frame on one, however late: steady) until none is late for `held` s (the user's phone in a slow browser, 2026-11-10:
+ *  steadiness before the cap's feel) */
+const MISSING = { late: 3, within: 5, held: 10 } as const;
 /** The furthest a step's moment is carried past the newest tick (ticks: 1.25 ms, a timer's jitter) */
 const CARRY = 0.15;
 /** A rate this far off the lock's centre (a share) moves the centre to it; this far off the rate followed, a new rate:
@@ -83,6 +89,9 @@ export class PacedCamera {
   #sinceStall = ALIKE + 1;
   /** A desktop's refresh as measured (s) */
   #refresh = 1 / RATE.initial;
+  /** A phone's late frames at its cap (their times on the clock, the last `MISSING.held` s), and whether it's missing it */
+  readonly #late: number[] = [];
+  #missing = false;
   /** The step's length (s): the rate's (`#base`), the lock's correction on it */
   #base = 1 / RATE.initial;
   #period = 1 / RATE.initial;
@@ -228,7 +237,14 @@ export class PacedCamera {
       const refresh = frame.refreshHz;
       const share = frame.capHz > 0 ? refresh / frame.capHz : 1;
       const whole = Math.round(share);
-      const capped = whole >= 2 && Math.abs(share - whole) <= DIVIDES;
+      const divides = whole >= 2 && Math.abs(share - whole) <= DIVIDES;
+      // (the cap held: its late frames few. Not held, the screen's refresh)
+      const now = this.#clock;
+      if (divides && frame.rephased) this.#late.push(now);
+      while ((this.#late[0] ?? now) < now - MISSING.held) this.#late.shift();
+      if (this.#late.filter((t) => t >= now - MISSING.within).length >= MISSING.late) this.#missing = true;
+      else if (this.#late.length === 0) this.#missing = false;
+      const capped = divides && !this.#missing;
       return { period: capped ? whole / refresh : 1 / refresh, capped, exact: true };
     }
     this.#measure(real);
@@ -239,8 +255,10 @@ export class PacedCamera {
    *  from it: a window taken to a faster screen, RV-1272) */
   #measure(real: number): void {
     const ms = real * 1000;
-    // (a stall: a hidden tab, a hitch; the frames after it may come in a burst, never a screen's: not measured)
-    this.#sinceStall = ms >= 100 || ms >= 4 * this.#refresh * 1000 ? 0 : this.#sinceStall + 1;
+    // (a stall: a hidden tab, a hitch, four of the usual frames or more; the frames after it may come in a burst, never a
+    // screen's: not measured)
+    const usual = [...this.#intervals].sort((a, b) => a - b)[Math.floor(this.#intervals.length / 2)] ?? this.#refresh * 1000;
+    this.#sinceStall = ms >= 100 || ms >= 4 * usual ? 0 : this.#sinceStall + 1;
     if (!(ms > 0) || ms >= 250 || this.#sinceStall <= ALIKE) return;
     this.#intervals.push(ms);
     if (this.#intervals.length > RATE.kept) this.#intervals.shift();
@@ -282,18 +300,3 @@ export class PacedCamera {
 
 /** Further than a tick can move a car (uu: 2300 uu/s is 19 a tick): a teleport, not blended */
 const TELEPORT = 300;
-
-/** A refresh (ms) from frames' intervals (ms): each over the whole refreshes it spans (a dropped frame two), averaged (a
- *  timer's jitter cancels). Seeded from their median (a timer's jitter doesn't move it), or from the median of the short
- *  ones when they're a sixth or more of them (most frames doubled, the median a doubled one: RV-1268) */
-export function refreshOf(intervals: readonly number[]): number {
-  const median = (v: readonly number[]): number => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)] ?? 1000 / RATE.initial;
-  let refresh = median(intervals);
-  const short = intervals.filter((v) => v <= 0.6 * refresh);
-  if (short.length >= 0.15 * intervals.length) refresh = median(short);
-  for (let pass = 0; pass < 2; pass++) {
-    const shares = intervals.filter((v) => v <= 4.5 * refresh).map((v) => v / Math.max(1, Math.round(v / refresh)));
-    if (shares.length > 0) refresh = shares.reduce((a, b) => a + b, 0) / shares.length;
-  }
-  return refresh;
-}

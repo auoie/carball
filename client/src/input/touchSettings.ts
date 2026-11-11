@@ -1,6 +1,7 @@
 // The touch controls' settings (Settings → Touch on a touch device; notes/mobile.md, the user's choices of 2026-11-10):
 // the throttle's model, the stick's (floating or fixed, its size, sensitivity and deadzone), and the buttons' layout (each
 // moved, sized, faded or hidden), kept in its own versioned record so an update never wipes it.
+import { refreshOf } from "../game/refreshRate";
 import type { Range } from "../settings/settings";
 
 /** How the car is driven by touch: the stick's tilt (forward, reverse in its bottom quarter: the default, Sideswipe's);
@@ -99,10 +100,7 @@ export class FramePacer {
   /** The screen's refresh as measured from every animation frame (Hz; null before eight): exact once its jitter averages
    *  out (camera/pacedCamera.ts steps on it) */
   get refreshHz(): number | null {
-    const m = this.#refresh;
-    if (m === null || this.#long.length < 8) return null;
-    const shares = this.#long.filter((v) => v <= 4.5 * m).map((v) => v / Math.max(1, Math.round(v / m)));
-    return shares.length > 0 ? 1000 / (shares.reduce((a, b) => a + b, 0) / shares.length) : 1000 / m;
+    return this.#refresh === null || this.#long.length < 8 ? null : 1000 / this.#refresh;
   }
 
   /** The last frame drawn started the cadence again (a vsync missed, a stall: the camera's steps start from it too) */
@@ -121,8 +119,10 @@ export class FramePacer {
       }
     }
     this.#last = now;
+    // (the screen's refresh: the recent frames' median to start with, then the estimate the camera's steps share
+    // (game/refreshRate.ts refreshOf: missed vsyncs, most frames late, a page too busy for every refresh's frame))
     const sorted = [...this.#intervals].sort((a, b) => a - b);
-    this.#refresh = sorted[Math.floor(sorted.length / 2)] ?? this.#refresh;
+    this.#refresh = this.#long.length >= 8 ? refreshOf(this.#long) : (sorted[Math.floor(sorted.length / 2)] ?? this.#refresh);
     if (hz <= 0 || this.#drawn === null) {
       this.#drawn = now;
       this.#rephased = false;

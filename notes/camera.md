@@ -90,9 +90,32 @@ quarter turn, a goal's slow motion).
   frames a refresh or two apart each on a step, the car never shimmering against the ball (RV-1262: the user's choice
   (i), 2026-11-10). A rate moved 2 % is a new one (another screen, a refresh changed, a cap chosen): the grid starts again
   on it (RV-1269); the lock (a small phase and rate correction) follows a desktop's screen a little off the rate measured.
-  A variable-refresh screen has no fixed refresh: R follows its frames' mean rate, and the frames that come before a
-  step (8–10 % at 7–14 ms) keep the last step's car with its view (the car with its camera; a few uu from the scene, a
-  wobble of a few tenths of a degree): RV-1271, open, a real variable-refresh screen's to answer.
+  A variable-refresh screen has no fixed refresh:
+  R follows its frames' mean rate, and the frames that come before a step (8–10 % at 7–14 ms) keep the last step's car
+  with its view (the car with its camera; a few uu from the scene, a wobble of a few tenths of a degree): RV-1271, open, a
+  real variable-refresh screen's to answer.
+- **A slow browser** (the user's Firefox, phone and PC, 2026-11-10: 50 to 55 a second at the phone's cap of 60, "the car
+  is jittery also when turning"; Chrome on the same phone fine). Two faults in it, fixed:
+  - **A page too busy for every refresh's animation frame** (its work a frame past a refresh: 8.3 ms on a 120 Hz phone)
+    only ever shows frames two refreshes apart and some three, never one; read as they came, the screen was 48–59 Hz, the
+    steps off the frames: a wobble of 1.4–1.5°, the car up to 36 uu from the scene, frames without a step (worse than the
+    game's 0.4° on the same frames). The estimate (`refreshOf`, game/refreshRate.ts, shared by the pacer and the
+    desktop's measure) now takes the half or third of the usual gap that every gap is a whole number of (and its seed's
+    cluster's mean, the median an edge of it when half the frames are late).
+  - **A phone not holding its cap:** at a dividing cap a late frame takes one step of the time that passed (the game's at
+    the cap on a late frame), so many late frames wobbled as the game's camera does on uneven frames (0.4° at 10–20 %
+    late, 0.75° with frames two refreshes late). With 3 late frames within 5 s the steps are the screen's refresh's
+    (each frame on one however late: under 0.03°, the lag the game's at the refresh, 3.68° at 120 Hz, not the cap's
+    3.23°), the cap's again after 10 s with none late. One late frame now and then keeps the cap's.
+  - What it can't do: a browser dropping a tenth of its frames still shows the world moving unevenly from frame to
+    frame, the camera steady or not. Only the frame rate helps that (the video guard now steps down on a cap not held:
+    notes/mobile.md).
+  - A stall (for the measure: a hidden tab, a hitch) is four of the usual frames or more, not four refreshes, so a
+    refresh read too short can't keep every frame from being measured.
+- **Known and left (RX87's INFOs):** the re-measure's quiet after a stall has no test of its own (a burst of 33–48
+  frames would be one: RV-1280); a burst longer than 16 frames after a stall still nudges R 5–7 % for a second or two
+  (RV-1281; ±2 ms of jitter at 165/240 Hz moves it too, RV-1279); behind a stall a faster screen takes up to 0.27 s to be
+  stepped every frame, not 0.2 (RV-1282).
 - **Each step** takes the car and ball as they were at its moment, blended from the ticks (the last 32: car, ball,
   respawn; online the car with its correction's offset, SyncError, notes/netcode-audit.md N-1, which decays once a tick
   and is drawn between the last two: RV-1247), carried at most 0.15 tick past the newest (a timer's jitter: a wall's or a

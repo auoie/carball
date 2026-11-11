@@ -170,6 +170,36 @@ describe("the automatic default", () => {
     ).toMatchObject({ slow: false });
   });
 
+  it("a cap not held: 50 to 55 a second at a cap of 60 (a tenth to a quarter of the frames a refresh late) steps, two windows in a row; a few late frames don't", () => {
+    /** A 120 Hz screen capped at 60: frames two refreshes long, `late` of them three */
+    const frames = (late: number, n = 240): number[] =>
+      Array.from({ length: n }, (_, i) => (Math.floor(i * late) !== Math.floor((i - 1) * late) ? 3 / 120 : 2 / 120));
+    expect(guardDecision(frames(0.2), 60, 60)).toMatchObject({ step: true });
+    expect(guardDecision(frames(0.1), 60, 60)).toMatchObject({ step: true });
+    expect(guardDecision(frames(0.04), 60, 60)).toMatchObject({ step: false });
+    // (the fixed 45 a second alone never saw it)
+    expect(guardDecision(frames(0.2), 60)).toMatchObject({ step: false });
+    // (a 30 Hz display under a cap of 60: the display's frames, none late)
+    expect(
+      guardDecision(
+        Array.from({ length: 120 }, () => 1 / 30),
+        30,
+        60,
+      ),
+    ).toMatchObject({ step: false });
+    // (the guard: one slow window isn't enough, the second in a row is; a good window between starts the count again)
+    const windowsOf = (windows: readonly number[]): boolean[] => {
+      const guard = new AutoVideoGuard({ rolling: true });
+      const out: boolean[] = [];
+      for (let t = 0; t < AUTO_GUARD.warmUp + 0.1; t += 1 / 60) guard.frame(1 / 60, true, 60, 60);
+      for (const late of windows) for (const f of frames(late)) out.push(guard.frame(f, true, 60, 60));
+      return out;
+    };
+    expect(windowsOf([0.2]).some(Boolean)).toBe(false);
+    expect(windowsOf([0.2, 0.2]).filter(Boolean)).toEqual([true]);
+    expect(windowsOf([0.2, 0, 0.2]).some(Boolean)).toBe(false);
+  });
+
   it("rolling (a touch device's): a window that wasn't slow is followed by another; a phone slowing as it heats steps then, once", () => {
     const guard = new AutoVideoGuard({ rolling: true });
     const decisions: boolean[] = [];
