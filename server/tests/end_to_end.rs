@@ -557,6 +557,34 @@ async fn an_addresss_pings_and_claims_each_have_their_own_allowance() {
     assert_eq!(past, None, "the starts spent: refused before its hello");
 }
 
+/// SEC-SRV-02: a claim whose ticket verifies isn't charged to its address's claims, so hellos with no ticket from a
+/// neighbour behind the same address (which are) can't use up what a player's real claim needs
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticketed_claim_gets_in_past_an_addresss_spent_claims() {
+    let limits = NetLimits {
+        claims: net::Rate { burst: 2, per_minute: 1 },
+        pings: net::Rate { burst: 100, per_minute: 1 },
+        ..open_limits()
+    };
+    let (port, cert_hash, key) = ticketed_server_limited(false, limits).await;
+    let refused = |reason| Some(Control::Refused { reason });
+    // (the neighbour's: two heard and refused for their ticket, the allowance then spent)
+    for _ in 0..2 {
+        let reply = any_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
+        assert_eq!(reply, refused(protocol::REFUSED_TICKET));
+    }
+    let spent = any_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
+    assert_eq!(spent, refused(protocol::REFUSED_FULL), "the address's claims spent");
+    // (the player's, a match ticket that verifies: let in all the same)
+    let ticket = seat_ticket(&key, 1, "Ada", 0xb1, 0, 2, &format!("localhost:{port}"));
+    let (claim, _connection, _recv) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket.clone())).await;
+    assert!(matches!(claim, Control::Welcome { match_id: 0xb1, .. }), "{claim:?}");
+    // (and its replay, a ticket used, is charged like any that doesn't verify: refused as full)
+    let replay = any_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket)).await;
+    assert_eq!(replay, refused(protocol::REFUSED_FULL));
+}
+
 /// A session's first control message; none if it's refused, or ends without one (an unanswered ping)
 async fn any_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> Option<Control> {
     let config = ClientConfig::builder()
@@ -818,10 +846,24 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     };
     assert!(connect(None).await.is_err(), "no origin: forbidden");
     assert!(connect(Some("https://evil.example")).await.is_err(), "another origin: forbidden");
+    /// A session's hello said and answered: it holds its slot from here
+    async fn joined(connection: &wtransport::Connection) {
+        let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
+        send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
+        std::mem::forget(send);
+        assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
+        std::mem::forget(recv);
+    }
     let first = connect(Some("https://carball.zolt.top")).await.expect("the page's origin");
     let second = connect(Some("https://Carball.Zolt.Top")).await.expect("a second session from the address");
-    assert!(connect(Some("https://carball.zolt.top")).await.is_err(), "a third at once: refused");
-    drop((first, second));
+    // (SEC-SRV-01: neither has said its hello, so a third at once takes the older's slot: the first is closed)
+    let third = connect(Some("https://carball.zolt.top")).await.expect("a third: the oldest silent one gives way");
+    assert!(tokio::time::timeout(Duration::from_secs(5), first.closed()).await.is_ok(), "the first gave way");
+    // (their hellos said, they hold their slots: the next at once is refused)
+    joined(&second).await;
+    joined(&third).await;
+    assert!(connect(Some("https://carball.zolt.top")).await.is_err(), "another at once: refused");
+    drop((second, third));
 
     // A server of one session at most: the second is refused, whatever its address may have
     let (identity, capped_hash) = net::dev_identity().unwrap();
@@ -834,15 +876,14 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
             .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(capped_hash)])
             .build()
     };
-    let only = Endpoint::client(config())
-        .unwrap()
-        .connect(format!("https://localhost:{capped_port}/play"))
-        .await
-        .expect("the one session");
-    assert!(
-        Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await.is_err(),
-        "past the most sessions"
-    );
+    let connect_capped =
+        || async { Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await };
+    let silent = connect_capped().await.expect("the one session");
+    // (SEC-SRV-01: it says nothing, so the next takes its slot)
+    let only = connect_capped().await.expect("the silent session gives way");
+    assert!(tokio::time::timeout(Duration::from_secs(5), silent.closed()).await.is_ok(), "the silent one closed");
+    joined(&only).await;
+    assert!(connect_capped().await.is_err(), "past the most sessions, the one there a player's");
     drop(only);
 }
 

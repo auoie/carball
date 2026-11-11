@@ -434,6 +434,12 @@ UI. Tournament matches inherit ranked's 90 s and add series forfeits (out of sco
   - Tests: 5 server tests, client unit tests, and e2e `forfeit.spec.ts`.
 - **D-3 done.** When everyone has gone, the match is a no contest (flag 16). Our arena stops ticking with nobody in it,
   so this happens at the leave, not 0.01 s later.
+  - **Not a match decided already** (`has_winner`: a team forfeiting after a goal, the golden goal scored, the clock
+    out with the scores apart; the 2026-11-11 audit's MATCH-01). The game's no contest is every team forfeiting
+    (MR-7.11), and no team can once there's a winner (MR-7.10), so the game plays on to `EndGame` and its result.
+    Ours, which doesn't tick with nobody in it, settles the winner at that last leave (`remove_player`: the forfeit's
+    other team, else the leader) and the host reports the result. Before: a no contest, no result, so a 1v1's winner
+    who left in the golden goal's replay (the menu's Leave Match, no warning there) lost the win.
   - The countdown-end recheck of every team is not done: our matches start without the 30 s WaitingForPlayers, so a
     team empty from the start (solo play) is not a forfeit.
   - The leave's own check runs 2 ticks later (`CheckAllTeamsForfeitState`), in casual and ranked only.

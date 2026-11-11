@@ -228,17 +228,23 @@ services instead (the browser tests' stacks, `client/e2e/services`).
 
 Every limit the game server holds, to tune from the benchmark's hostile mode (notes/benchmarks.md). An address is an
 IPv4 address or an IPv6 /64 (a LAN party's players behind one address count together: the user's decision of
-2026-10-23); a bucket is a burst at once, then a steady rate (governor's GCRA).
+2026-10-23); its wider network an IPv4 /24 or an IPv6 /48, as the accounts service's; a bucket is a burst at once, then
+a steady rate (governor's GCRA). A session that hasn't said its hello holds its slot only until it's needed: at the
+server's, its address's or its network's most sessions, the oldest such (anyone's, its address's, its network's) is
+closed for the newcomer; one that has said its hello (a player's, its ticket checked) never is (the audit's
+SEC-SRV-01).
 
 | Limit | Counted per | Value | Set by |
 |---|---|---|---|
 | Sessions at once | the server | 512 | `--max-sessions` |
 | Sessions at once | address | 64 | `--max-per-address` |
+| Sessions at once | network | 128 (twice an address's) | `--max-per-network` |
 | New sessions (each charged as it's admitted, before its hello) | address | 256 at once, then 300 a minute (the two below together) | the two below |
-| Claims and rejoins (any hello but a ping) | address | 64 at once, then 60 a minute; past it `Refused` 0 | `--claims-per-address 64/60` |
+| New sessions | network | 512 at once, then 1200 a minute (twice an address's burst, four times its rate) | the two below |
+| Claims and rejoins (any hello but a ping, and but a claim or rejoin whose ticket verifies: SEC-SRV-02) | address | 64 at once, then 60 a minute; past it `Refused` 0 | `--claims-per-address 64/60` |
 | Region pings | address | 192 at once, then 240 a minute; past it unanswered | `--pings-per-address 192/240` |
 | QUIC handshake | session | 4 s | fixed |
-| Hello | session | 10 s from the first packet | fixed |
+| Hello | session | 3 s from the session's request, 7 s from the first packet | fixed |
 | Input datagrams | session | 240 a second (a burst of 120); over it dropped; 500 a second dropped (5000 at most) and it's closed | fixed |
 | Control messages | session | 20 a second (a burst of 40); over it dropped; 2 a second dropped (200 at most) and it's closed | fixed |
 | A hello's ticket | message | 1024 bytes | protocol |
@@ -438,7 +444,7 @@ window.
 |---|---|---|
 | Sign-ins (the start and each provider's callback, so two a sign-in) | address / wider network | 30 / 150 in 10 minutes |
 | Sign-ups | address / wider network | 5 / 25 an hour |
-| Sign-ins in progress, sign-ups waiting | everyone | 20,000, 5,000 |
+| Sign-ins in progress, sign-ups waiting (one an identity: migration 00008) | everyone | 20,000, 5,000 |
 | Renames | account | 5 a day |
 | Rejoin tickets | account | 60 in 10 minutes |
 | Searches started | account | 30 in 10 minutes |

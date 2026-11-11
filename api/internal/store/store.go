@@ -345,8 +345,12 @@ type Pending struct {
 }
 
 func (s *Store) CreatePending(ctx context.Context, p Pending) error {
+	// (one waiting per identity, its latest sign-in's: the older cookie's is gone, migration 00008, SEC-API-02)
 	_, err := s.pool.Exec(ctx, `INSERT INTO pending_signups (token_hash, provider, subject, suggestion, expires_at)
-		VALUES ($1, $2, $3, $4, $5)`, p.TokenHash, p.Provider, p.Subject, p.Suggestion, p.ExpiresAt)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (provider, subject) DO UPDATE SET token_hash = EXCLUDED.token_hash,
+			suggestion = EXCLUDED.suggestion, expires_at = EXCLUDED.expires_at`,
+		p.TokenHash, p.Provider, p.Subject, p.Suggestion, p.ExpiresAt)
 	return err
 }
 

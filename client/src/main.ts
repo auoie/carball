@@ -435,6 +435,8 @@ async function main(): Promise<void> {
   let editorHolds = (): boolean => false;
   // (and its unsaved changes: the pause menu's entry reads Save and Exit, TE1 §6.3)
   let editorDirty = (): boolean => false;
+  // (the page going to a match found: the editor's changes kept, its "leave site?" not asked)
+  let editorLeaveForMatch = (): void => undefined;
   // (the editor's own page up, not its test: no touch controls over it)
   let editorPage = (): boolean => false;
   const pause: PauseMenu = new PauseMenu(document.body, {
@@ -800,6 +802,7 @@ async function main(): Promise<void> {
           // (a deployment's server's URL: the claim opens with it at once, the flow audit's 1)
           ...(region?.address.certHash === null ? { url: region.address.url } : {}),
         });
+        editorLeaveForMatch();
         location.assign(pageUrl("match", location));
       },
       // (the seat claimed and left at once: the match is cancelled now for its other players, RV-355; this account its
@@ -925,6 +928,7 @@ async function main(): Promise<void> {
     editorPadMenu = () => editor?.padMenu ?? null;
     editorHolds = () => editor !== null && (editor.isOpen || editor.testing || playtesting !== null);
     editorDirty = () => editor?.dirty ?? false;
+    editorLeaveForMatch = () => editor?.leaveForMatch();
     editorPage = () => editor !== null && editor.isOpen && !editor.testing;
     leaveEditor = (then, cancelled) => {
       if (!editorHolds() || !editor) return false;

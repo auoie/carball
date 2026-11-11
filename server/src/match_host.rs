@@ -1185,6 +1185,35 @@ mod tests {
         assert_eq!(host.match_count(), 0);
     }
 
+    /// The golden goal scored, then both players gone before its replay ends: the result told, the scorer's win (the
+    /// audit's MATCH-01: it was a no contest, no result)
+    #[test]
+    fn everyone_leaving_in_the_golden_goals_replay_is_a_result() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), tx.clone()));
+        assert!(host.claim(tokens[1], 2, seat(2), tx));
+        run_to(&mut host, 0.0, 8.0);
+        host.take_reports();
+        host.game_of(1).unwrap().golden_goal_next_tick = true;
+        let mut t = 8.0;
+        while host.game_of(1).unwrap().phase() != Phase::PostGoal {
+            t += 1.0 / 120.0;
+            host.tick(t);
+            assert!(t < 12.0, "no goal");
+        }
+        // (decided: neither leave is a quitter's; the loser first, then the winner)
+        host.leave(2, false);
+        host.leave(1, false);
+        let reports = ranked(host.take_reports());
+        let [Report::Result(result)] = reports.as_slice() else { panic!("a result, no quitter: {reports:?}") };
+        assert_eq!(result.winning_team, 0);
+        assert!(result.players.iter().all(|p| !p.quitter));
+        assert_eq!(host.match_count(), 0);
+    }
+
     /// A match's end screen run out with its winner still there: its result told once, at the winner, nothing at its
     /// teardown
     #[test]

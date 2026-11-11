@@ -154,6 +154,8 @@ export class TrainingEditor {
   #status = "";
   /** edited since it was opened or saved */
   #dirty = false;
+  /** The page is leaving for a match: the browser not to ask */
+  #leaving = false;
   #drag: { x: number; y: number; moved: boolean } | null = null;
   #mode: EditorMode = storedMode();
   readonly #fly: FlyEditor;
@@ -218,7 +220,7 @@ export class TrainingEditor {
     // (unsaved changes asked about before the page goes: a reload, the tab closed, Ctrl+W among the free camera's keys:
     // RX25)
     window.addEventListener("beforeunload", (e) => {
-      if (!this.#dirty || (!this.isOpen && !this.testing && !this.#actions.playtesting())) return;
+      if (this.#leaving || !this.#dirty || (!this.isOpen && !this.testing && !this.#actions.playtesting())) return;
       e.preventDefault();
     });
     // (one finger or the mouse turns the camera; two fingers pinch it nearer or further, as the wheel: notes/mobile.md)
@@ -366,6 +368,15 @@ export class TrainingEditor {
   /** Unsaved changes (the pause menu's entry reads Save and Exit: TE1 §6.3) */
   get dirty(): boolean {
     return this.#dirty;
+  }
+
+  /** The page going to a match found while this was open (the search runs on under it): its unsaved changes kept as
+   *  Save keeps them, no question, and the browser's "leave site?" not asked: the question would hold the page while the
+   *  seat's 10 s ran out (the match cancelled, this account its no-show), its Leave lose the pack (the audit's CLI-01) */
+  leaveForMatch(): void {
+    const p = this.pack;
+    if (this.#dirty && p && storePack(p)) this.#dirty = false;
+    this.#leaving = true;
   }
 
   /** Left whatever is open in it, as Escape leaves it (the pause menu's Exit to Main Menu over the editor, its test or a

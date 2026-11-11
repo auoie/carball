@@ -86,6 +86,44 @@ test("two players find a 1v1, count down and land in the match together", async 
   await b.context().close();
 });
 
+test("a match found while the training editor has unsaved changes: the pack kept, no question asked, the seat claimed (the audit's CLI-01)", async ({
+  browser,
+}) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  const a = await menuPage(browser, errors);
+  const b = await menuPage(browser, errors);
+  // (the browser's "leave site?" would hold the page: none may be asked; one that is, is dismissed, the page staying)
+  const asked: string[] = [];
+  a.on("dialog", (dialog) => {
+    asked.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await findMatch(a, "1v1");
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  // (searching on under the editor: a new pack, a shot added, unsaved)
+  const menu = a.locator("#main-menu");
+  await menu.getByRole("button", { name: /^custom training$/i }).click();
+  await menu.getByRole("button", { name: /^create training$/i }).click();
+  const editor = a.locator("#training-editor");
+  await editor.getByRole("button", { name: /^add$/i }).click();
+  await expect(editor.locator(".editor-status")).toHaveText(/unsaved changes/i);
+  expect(await a.evaluate(() => localStorage.getItem("carball.training.mine"))).toBeNull();
+  await findMatch(b, "1v1");
+  for (const page of [a, b]) {
+    await page.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
+  }
+  expect(asked).toEqual([]);
+  // (the pack as it stood, kept as Save keeps it: its two shots)
+  const kept = await a.evaluate(() => JSON.parse(localStorage.getItem("carball.training.mine") ?? "[]") as { shots: unknown[] }[]);
+  expect(kept.map((p) => p.shots.length)).toEqual([2]);
+  expect(errors).toEqual([]);
+  await a.context().close();
+  await b.context().close();
+});
+
 test("the search under the banner: Cancel Search over the menus, none while driving; free play under it; Cancel Search ends it", async ({ browser }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];

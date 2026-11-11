@@ -534,6 +534,58 @@ func TestSignUpRefusals(t *testing.T) {
 	}
 }
 
+// SEC-API-01: a sign-in starts only from the page's own top-level navigation. Another site's image tag (or script,
+// frame, fetch) is refused, and another site's link sent to the page, each before anything is charged or stored
+func TestStartIsAPagesOwnNavigation(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.SignIns.Burst = 2
+	e := setup(t, &limits)
+	b := e.browser()
+	flows := func() int {
+		n, err := e.db.OpenFlows(context.Background(), e.s.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	from := "203.0.113.50"
+	for _, c := range []struct{ mode, dest, site string }{
+		{"no-cors", "image", "cross-site"},
+		{"no-cors", "script", "cross-site"},
+		{"navigate", "iframe", "cross-site"},
+		{"cors", "empty", "same-origin"},
+	} {
+		// (many more than the address's allowance: none of them charged)
+		for range 5 {
+			resp := e.get(b, "/api/auth/steam/start", "CF-Connecting-IP", from,
+				"Sec-Fetch-Mode", c.mode, "Sec-Fetch-Dest", c.dest, "Sec-Fetch-Site", c.site)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("%+v: %d", c, resp.StatusCode)
+			}
+		}
+	}
+	// (another site's link: back to the page, no flow)
+	link := e.get(b, "/api/auth/steam/start", "CF-Connecting-IP", from,
+		"Sec-Fetch-Mode", "navigate", "Sec-Fetch-Dest", "document", "Sec-Fetch-Site", "cross-site")
+	if link.StatusCode != http.StatusSeeOther || link.Header.Get("Location") != e.s.Origin+"/" {
+		t.Errorf("another site's navigation: %d to %q", link.StatusCode, link.Header.Get("Location"))
+	}
+	if n := flows(); n != 0 {
+		t.Fatalf("%d flows stored by requests that aren't the page's navigation", n)
+	}
+	// (the page's own, and a typed address: both start one, the allowance untouched by all the above)
+	for _, site := range []string{"same-origin", "none"} {
+		own := e.get(b, "/api/auth/steam/start", "CF-Connecting-IP", from,
+			"Sec-Fetch-Mode", "navigate", "Sec-Fetch-Dest", "document", "Sec-Fetch-Site", site)
+		if own.StatusCode != http.StatusSeeOther || !strings.Contains(own.Header.Get("Location"), "openid") {
+			t.Errorf("the page's own navigation (%s): %d to %q", site, own.StatusCode, own.Header.Get("Location"))
+		}
+	}
+	if n := flows(); n != 2 {
+		t.Errorf("flows = %d, want the two navigations'", n)
+	}
+}
+
 func TestRateLimits(t *testing.T) {
 	limits := server.DefaultLimits()
 	limits.SignIns.Burst = 2

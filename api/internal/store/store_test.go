@@ -97,6 +97,30 @@ func pending(t *testing.T, s *store.Store, provider store.Provider, subject stri
 	return p
 }
 
+// SEC-API-02: an identity has one sign-up waiting, its latest sign-in's: the earlier cookie's is gone, and the ceiling
+// on the sign-ups waiting counts identities, not sign-ins
+func TestOnePendingSignupAnIdentity(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+	first := pending(t, s, "steam", "sub-1", t0)
+	second := pending(t, s, "steam", "sub-1", t0.Add(time.Minute))
+	for range 20 {
+		second = pending(t, s, "steam", "sub-1", second.ExpiresAt)
+	}
+	other := pending(t, s, "google", "sub-1", t0)
+	if n, err := s.OpenSignups(ctx, t0); err != nil || n != 2 {
+		t.Fatalf("OpenSignups = %d, %v; want 2 (an identity's one, another provider's)", n, err)
+	}
+	if _, found, err := s.PendingSignup(ctx, first.TokenHash, t0); err != nil || found {
+		t.Errorf("the earlier sign-in's still waits: %v, %v", found, err)
+	}
+	for _, p := range []store.Pending{second, other} {
+		if got, found, err := s.PendingSignup(ctx, p.TokenHash, t0); err != nil || !found || got.Subject != p.Subject {
+			t.Errorf("the latest sign-in's: %+v, %v, %v", got, found, err)
+		}
+	}
+}
+
 func TestCreateAccount(t *testing.T) {
 	s, _, _ := open(t)
 	ctx := context.Background()

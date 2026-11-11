@@ -208,7 +208,9 @@ export function pageUrl(page: "menu" | "match" | "bots", at: { readonly pathname
   query.delete("bots");
   if (page !== "menu") query.set(page, "");
   const text = query.toString().replace(/(^|&)(match|bots)=(?=&|$)/, "$1$2");
-  return `${at.pathname}${text === "" ? "" : `?${text}`}`;
+  // (one leading slash: a path "//host/" is another site's URL to `location.assign`, and the page is served at any path,
+  // so a link to it sent its visitor there: the audit's CLI-02)
+  return `${at.pathname.replace(/^[/\\]+/, "/")}${text === "" ? "" : `?${text}`}`;
 }
 
 /** One game server, a region's (config.json's `gameServers`: notes/matchmaking.md, Regions): its id, its name as the region

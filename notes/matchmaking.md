@@ -536,6 +536,15 @@ In match (Active only): idle > 25 s → WARNING tip; > 30 s → kicked (1 s late
 Disconnect → menu modal; casual slot freed; no reconnect prompt (ranked teams only)
 ```
 
+Ours, on the way to the match's page (the 2026-11-11 audit):
+- **The training editor's unsaved changes** (the search runs on under it): kept as its Save keeps them, no question,
+  and the browser's "leave site?" not asked (`TrainingEditor.leaveForMatch`). Asked, the question held the page while
+  the seat's 10 s ran out (the match cancelled for everyone, this account its no-show), and its Leave lost the pack
+  (CLI-01).
+- **The pages' URLs** (`pageUrl`) keep this page's path with one leading slash: the page is served at any path, and a
+  path of two slashes (`//host/?match`) was another site's address to `location.replace`, a link to this site that
+  landed its visitor there (CLI-02).
+
 ## Timers
 | Timer | Value | Side | Source | Conf |
 |---|---|---|---|---|

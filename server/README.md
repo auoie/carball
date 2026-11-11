@@ -31,10 +31,12 @@ session's hello), and the accounts service for the rated matches' calls, `API_UR
 
 What a session may do (the security review's SEC-2/3/5/7/8, RX13's RV-366/373; every limit in APP-CONTRACT.md's
 table): its address proven first (a QUIC Retry: a spoofed packet takes no slot), 512 sessions at once, 64 at once per
-address (an IPv6 one by its /64: a LAN party's players together), each address's new sessions as governor's buckets
+address (an IPv6 one by its /64: a LAN party's players together) and 128 per network (an IPv4 /24, an IPv6 /48:
+`--max-per-network`), a session that hasn't said its hello giving way, the oldest first, to a newcomer there's no room
+for (one that has, never: the audit's SEC-SRV-01), each address's new sessions as governor's buckets
 allow (claims and rejoins 64 at once then 60 a minute, region pings 192 then 240, charged at admission as both
 together: `--max-sessions`, `--max-per-address`, `--claims-per-address`, `--pings-per-address`: the browser tests raise
-them), 4 s for the QUIC handshake and 10 s from the first packet to the hello, pages only from `ALLOWED_ORIGIN` when it's
+them), 4 s for the QUIC handshake, 3 s more for the hello (7 s from the first packet), pages only from `ALLOWED_ORIGIN` when it's
 set (any origin without: development), 240 input packets and 20 control messages a second (excess dropped; a session
 that keeps flooding either kind is closed, a client now and then over its rate never is), QUIC's 4 streams each way and
 small receive windows; the game thread reads at most 2048 messages a pass (a pass at each tick: it sleeps until the

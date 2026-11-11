@@ -177,6 +177,9 @@ struct Cli {
     /// Sessions at once per client address (an IPv6 one by its /64: a LAN party's players behind one address)
     #[arg(long, default_value_t = 64, value_parser = number_of::<usize>("--max-per-address"))]
     max_per_address: usize,
+    /// Sessions at once per client network (an IPv4 /24, an IPv6 /48): twice an address's unless set
+    #[arg(long, value_parser = number_of::<usize>("--max-per-network"))]
+    max_per_network: Option<usize>,
     /// Claims and rejoins per client address: BURST at once, then PER_MINUTE
     #[arg(long, value_name = "BURST/PER_MINUTE", default_value = "64/60")]
     claims_per_address: net::Rate,
@@ -284,6 +287,7 @@ impl Cli {
         let mut limits = NetLimits {
             max_sessions: self.max_sessions,
             per_address: self.max_per_address,
+            per_network: self.max_per_network,
             claims: self.claims_per_address,
             pings: self.pings_per_address,
             ..NetLimits::default()

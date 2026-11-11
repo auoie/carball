@@ -4,8 +4,8 @@
 //! anything is spent on it (RV-366), sessions at once and per address, the handshakes' deadlines, the page's origin, each
 //! session's message rates.
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr};
+use std::collections::{HashMap, VecDeque};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -226,6 +226,10 @@ fn check_pair(identity: &Identity) -> anyhow::Result<()> {
 pub struct NetLimits {
     pub max_sessions: usize,
     pub per_address: usize,
+    /// Sessions at once from an address's wider network (`network_key`: an IPv4 /24, an IPv6 /48, as the accounts
+    /// service's limits have it): None, twice an address's. Its new sessions come at four times an address's rates, twice
+    /// its burst (the audit's SEC-SRV-01: a block of addresses, or one host's routed IPv6 prefix, a fresh address each)
+    pub per_network: Option<usize>,
     /// An address's claims and rejoins (any hello but a ping) as they come: a whole LAN party's at once, then steady
     pub claims: Rate,
     /// Its region pings (each search pings every region, the Play page twice: RV-870), apart from the claims, so that
@@ -236,6 +240,9 @@ pub struct NetLimits {
     pub handshake: Duration,
     /// Its QUIC part, through the session's request (a browser sends it at once), this soon (RV-366)
     pub quic_handshake: Duration,
+    /// And the hello this soon after the request (a page sends it at once: a session that says nothing holds its slot no
+    /// longer, SEC-SRV-01)
+    pub hello: Duration,
     /// The match and rejoin tickets checked (notes/accounts.md §3): a queue server's always (`main` requires its keys, or
     /// --dev's); None, no claim or rejoin taken (a direct development server, the tests')
     pub tickets: Option<Arc<crate::ticket::Tickets>>,
@@ -252,17 +259,26 @@ impl Default for NetLimits {
         Self {
             max_sessions: 512,
             per_address: 64,
+            per_network: None,
             claims: Rate { burst: 64, per_minute: 60 },
             pings: Rate { burst: 192, per_minute: 240 },
             allowed_origins: None,
-            handshake: Duration::from_secs(10),
+            handshake: Duration::from_secs(7),
             quic_handshake: Duration::from_secs(4),
+            hello: Duration::from_secs(3),
             tickets: None,
             server_name: None,
             api: None,
         }
     }
 }
+impl NetLimits {
+    /// Sessions at once from one network
+    pub fn network_sessions(&self) -> usize {
+        self.per_network.unwrap_or(self.per_address.saturating_mul(2))
+    }
+}
+
 /// How long a ping's session waits for its Pong to go out before it closes (RV-856: its slot free at once)
 const PING_FLUSH: Duration = Duration::from_millis(100);
 
@@ -316,6 +332,21 @@ pub fn address_key(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// The wider network an address's limits count against too: an IPv4 /24, an IPv6 /48 (the accounts service's tier:
+/// APP-CONTRACT.md's limits)
+pub fn network_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            IpAddr::V4(Ipv4Addr::new(o[0], o[1], o[2], 0))
+        }
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            IpAddr::V6(Ipv6Addr::new(s[0], s[1], s[2], 0, 0, 0, 0, 0))
+        }
+    }
+}
+
 /// A rate per client address: `burst` at once, then `per_minute` (governor's GCRA: the allowance refills steadily, one
 /// every minute / `per_minute`)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -337,6 +368,11 @@ impl Rate {
             per_minute: self.per_minute.saturating_add(other.per_minute),
         }
     }
+
+    /// A network's of an address's: twice the burst, four times the rate
+    fn of_network(self) -> Self {
+        Self { burst: self.burst.saturating_mul(2), per_minute: self.per_minute.saturating_mul(4) }
+    }
 }
 
 impl std::str::FromStr for Rate {
@@ -351,14 +387,14 @@ impl std::str::FromStr for Rate {
 }
 
 /// What becomes of a connection attempt: an address not yet proven is sent a Retry before anything is spent on it (a
-/// spoofed Initial holds no slot, RV-366); a proven one is refused past the limits, else admitted (its permit kept for
-/// the session)
+/// spoofed Initial holds no slot, RV-366); a proven one is refused past the limits, else admitted (its slot the
+/// admission's until its hello, then the session's)
 #[derive(Debug)]
 pub enum Admit {
     Retry,
     /// Past a limit: which (the log's)
     Refuse(&'static str),
-    Admit(tokio::sync::OwnedSemaphorePermit),
+    Admit(Unsettled),
 }
 
 pub fn admit<C: governor::clock::Clock + Clone>(
@@ -371,11 +407,30 @@ pub fn admit<C: governor::clock::Clock + Clone>(
     if !validated {
         return Admit::Retry;
     }
-    let Ok(permit) = sessions.clone().try_acquire_owned() else { return Admit::Refuse("the server's most sessions") };
-    if let Err(why) = admission.lock().unwrap().admit(address, limits) {
-        return Admit::Refuse(why);
+    match admission.lock().unwrap().admit(address, limits, sessions) {
+        Ok(unsettled) => Admit::Admit(unsettled),
+        Err(why) => Admit::Refuse(why),
     }
-    Admit::Admit(permit)
+}
+
+/// An admitted session until its hello: its number in the admission, and the word that it gave way to a newer one
+#[derive(Clone, Debug)]
+pub struct Unsettled {
+    pub id: u64,
+    pub gave_way: Arc<tokio::sync::Notify>,
+}
+
+/// A session admitted that hasn't said its hello: it holds its slot, and gives way (the oldest first) to a newcomer its
+/// address, its network or the server has no room for. A session that says nothing is how the slots were all held
+/// without a ticket, the players' claims refused and their matches cancelled as no-shows (the audit's SEC-SRV-01, and
+/// SEC-SRV-02's neighbour behind a shared address); one that has said its hello never gives way
+#[derive(Debug)]
+struct Waiter {
+    id: u64,
+    address: IpAddr,
+    network: IpAddr,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    gave_way: Arc<tokio::sync::Notify>,
 }
 
 /// What a session's hello asks for, as an address's allowances count it
@@ -394,14 +449,20 @@ type Bucket<C> = governor::RateLimiter<
     governor::middleware::NoOpMiddleware<<C as governor::clock::Clock>::Instant>,
 >;
 
-/// The sessions of each address (`address_key`): at once, and as they start (SEC-2; governor's keyed buckets, the 60 s
-/// windows and the pings' refund before them, RV-870/900/909/919). A session is charged as it's admitted, its hello's
-/// kind not yet known (both kinds' rates together: a connect-and-close loop bounded too), then its hello's kind's own
+/// The sessions of each address (`address_key`) and of its network (`network_key`): at once, and as they start (SEC-2;
+/// governor's keyed buckets, the 60 s windows and the pings' refund before them, RV-870/900/909/919). A session is
+/// charged as it's admitted, its hello's kind not yet known (both kinds' rates together: a connect-and-close loop bounded
+/// too), then its hello's kind's own
 #[derive(Debug)]
 pub struct Admission<C: governor::clock::Clock + Clone = governor::clock::DefaultClock> {
     clock: C,
     active: HashMap<IpAddr, usize>,
+    networks: HashMap<IpAddr, usize>,
+    /// The sessions still to say their hello, the oldest first
+    waiting: VecDeque<Waiter>,
+    next_waiter: u64,
     starts: Bucket<C>,
+    network_starts: Bucket<C>,
     claims: Bucket<C>,
     pings: Bucket<C>,
     /// When the buckets' idle addresses and the refusals' lines were last let go: once a minute at most (RV-909)
@@ -424,10 +485,14 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
         let bucket = |rate: Rate| Bucket::hashmap_with_clock(rate.quota(), clock.clone());
         Self {
             starts: bucket(limits.claims.and(limits.pings)),
+            network_starts: bucket(limits.claims.and(limits.pings).of_network()),
             claims: bucket(limits.claims),
             pings: bucket(limits.pings),
             clock,
             active: HashMap::new(),
+            networks: HashMap::new(),
+            waiting: VecDeque::new(),
+            next_waiter: 0,
             swept: None,
             refusals: HashMap::new(),
         }
@@ -437,17 +502,63 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
         Duration::from(governor::clock::Reference::duration_since(&self.clock.now(), then))
     }
 
-    /// A new session from `address`, if its limits allow it (counted then: `release` when it ends); else why not
-    pub fn admit(&mut self, address: IpAddr, limits: &NetLimits) -> Result<(), &'static str> {
+    /// A new session from `address`, if its limits allow it (counted then: `release` when it ends); else why not. At
+    /// its address's, its network's or the server's most sessions, the oldest of those still to say their hello (its
+    /// address's, its network's, anyone's) gives way to it, its slot the newcomer's; none of them waiting, refused
+    pub fn admit(
+        &mut self,
+        address: IpAddr,
+        limits: &NetLimits,
+        sessions: &Arc<tokio::sync::Semaphore>,
+    ) -> Result<Unsettled, &'static str> {
         self.sweep_due();
-        if self.active.get(&address).copied().unwrap_or(0) >= limits.per_address {
-            return Err("its address's sessions at once");
+        let network = network_key(address);
+        let own = if self.active.get(&address).copied().unwrap_or(0) >= limits.per_address {
+            Some((self.waiting.iter().position(|w| w.address == address), "its address's sessions at once"))
+        } else if self.networks.get(&network).copied().unwrap_or(0) >= limits.network_sessions() {
+            Some((self.waiting.iter().position(|w| w.network == network), "its network's sessions at once"))
+        } else {
+            None
+        };
+        if let Some((None, why)) = own {
+            return Err(why);
         }
         if self.starts.check_key(&address).is_err() {
             return Err("its address's new sessions");
         }
+        if self.network_starts.check_key(&network).is_err() {
+            return Err("its network's new sessions");
+        }
+        let giving_way = match own {
+            Some((at, _)) => at,
+            None => None,
+        };
+        let permit = match giving_way.and_then(|at| self.give_way(at)) {
+            Some(permit) => permit,
+            None => match sessions.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => self.give_way(0).ok_or("the server's most sessions")?,
+            },
+        };
         *self.active.entry(address).or_default() += 1;
-        Ok(())
+        *self.networks.entry(network).or_default() += 1;
+        self.next_waiter += 1;
+        let waiting = Unsettled { id: self.next_waiter, gave_way: Arc::new(tokio::sync::Notify::new()) };
+        self.waiting.push_back(Waiter { id: waiting.id, address, network, permit, gave_way: waiting.gave_way.clone() });
+        Ok(waiting)
+    }
+
+    /// The waiting session at `at` told to give way: its slot (its counts go as its session ends: `release`)
+    fn give_way(&mut self, at: usize) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let waiter = self.waiting.remove(at)?;
+        waiter.gave_way.notify_one();
+        Some(waiter.permit)
+    }
+
+    /// A session's hello read: it waits no more, its slot its own from here (None: it gave way meanwhile)
+    pub fn settle(&mut self, id: u64) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let at = self.waiting.iter().position(|w| w.id == id)?;
+        self.waiting.remove(at).map(|w| w.permit)
     }
 
     /// A session's hello of `kind` from `address`, if that kind's allowance has room
@@ -490,7 +601,7 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
             return;
         }
         self.swept = Some(self.clock.now());
-        for bucket in [&self.starts, &self.claims, &self.pings] {
+        for bucket in [&self.starts, &self.network_starts, &self.claims, &self.pings] {
             bucket.retain_recent();
             bucket.shrink_to_fit();
         }
@@ -506,20 +617,29 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
         }
     }
 
-    pub fn release(&mut self, address: IpAddr) {
-        if let Some(n) = self.active.get_mut(&address) {
-            *n -= 1;
-            if *n == 0 {
-                self.active.remove(&address);
+    /// A session ended (waiting still, or not): its counts
+    pub fn release(&mut self, address: IpAddr, id: u64) {
+        self.waiting.retain(|w| w.id != id);
+        let network = network_key(address);
+        for (counts, key) in [(&mut self.active, address), (&mut self.networks, network)] {
+            if let Some(n) = counts.get_mut(&key) {
+                *n -= 1;
+                if *n == 0 {
+                    counts.remove(&key);
+                }
             }
         }
     }
 }
 
-/// A session's address and its admission: its hello's kind charged, its refusals logged a line a minute
+/// An admitted session's address and its admission: its hello's kind charged, its refusals logged a line a minute, its
+/// slot held once its hello's read; its counts given back as it's dropped (however its session ends)
 pub struct Admitted {
     admission: Arc<Mutex<Admission>>,
     address: IpAddr,
+    waiting: Unsettled,
+    /// Its slot, from its hello on (`settle`) until it's refused (`free`) or ends
+    slot: Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
 }
 
 impl Admitted {
@@ -529,10 +649,35 @@ impl Admitted {
 
     /// A refusal of this session's for `why`, its line if it's the address's first in a minute
     fn refused(&self, peer: std::net::SocketAddr, why: &'static str) {
-        if let Some(unlogged) = self.admission.lock().unwrap().log_refusal(self.address, why) {
-            let since = if unlogged > 0 { format!(", {unlogged} more since the last line") } else { String::new() };
-            tracing::warn!("session from {peer} refused: {why} (its address's next this minute unlogged{since})");
-        }
+        log_refused(&self.admission, self.address, peer, why);
+    }
+
+    /// Its hello read: no longer one to give way; false if it gave way meanwhile
+    fn settle(&self) -> bool {
+        let permit = self.admission.lock().unwrap().settle(self.waiting.id);
+        let settled = permit.is_some();
+        *self.slot.lock().unwrap() = permit;
+        settled
+    }
+
+    /// Its slot let go before its session's end (a refusal's wait for the client's close holds none: SEC-SRV-01)
+    fn free(&self) {
+        self.slot.lock().unwrap().take();
+    }
+}
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        let mut admission = self.admission.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        admission.release(self.address, self.waiting.id);
+    }
+}
+
+/// A refusal of `address`'s session for `why`, its line if it's the address's first in a minute
+fn log_refused(admission: &Mutex<Admission>, address: IpAddr, peer: std::net::SocketAddr, why: &'static str) {
+    if let Some(unlogged) = admission.lock().unwrap().log_refusal(address, why) {
+        let since = if unlogged > 0 { format!(", {unlogged} more since the last line") } else { String::new() };
+        tracing::warn!("session from {peer} refused: {why} (its address's next this minute unlogged{since})");
     }
 }
 
@@ -547,25 +692,25 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         let peer = incoming.remote_address();
         let peer = std::net::SocketAddr::new(peer.ip().to_canonical(), peer.port());
         let address = address_key(peer.ip());
-        let admitted = Admitted { admission: admission.clone(), address };
-        let permit = match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits) {
+        let admitted = match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits) {
             Admit::Retry => {
                 incoming.retry();
                 continue;
             }
             Admit::Refuse(why) => {
-                admitted.refused(peer, why);
+                log_refused(&admission, address, peer, why);
                 incoming.refuse();
                 continue;
             }
-            Admit::Admit(permit) => permit,
+            Admit::Admit(waiting) => {
+                Admitted { admission: admission.clone(), address, waiting, slot: Mutex::new(None) }
+            }
         };
         let id = next_id;
         next_id += 1;
         let to_game = to_game.clone();
         let limits = limits.clone();
         tokio::spawn(async move {
-            let _permit = permit;
             let lost = match session(incoming, peer, id, &to_game, &limits, &admitted).await {
                 Ok(lost) => lost,
                 Err(e) => {
@@ -577,7 +722,8 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
                 }
             };
             let _ = to_game.send(ToGame::Leave { id, lost }).await;
-            admitted.admission.lock().unwrap().release(address);
+            // (its counts and its slot: `Admitted`'s drop)
+            drop(admitted);
         });
     }
 }
@@ -598,10 +744,17 @@ fn session_end_line(id: PlayerId, peer: std::net::SocketAddr, e: &anyhow::Error)
     format!("player {id} ({peer}): {}", one_line(&format!("{e:#}")))
 }
 
-/// Refuses a session's hello with `reason`, then gives the client a moment to close
-async fn refuse(send: &mut wtransport::SendStream, connection: &wtransport::Connection, reason: u8) {
+/// Refuses a session's hello with `reason`, then gives the client a moment to close (its slot let go first: the wait
+/// holds none)
+async fn refuse(
+    send: &mut wtransport::SendStream,
+    connection: &wtransport::Connection,
+    reason: u8,
+    admitted: &Admitted,
+) {
     let _ = send.write_all(&Control::Refused { reason }.encode()).await;
     let _ = send.finish().await;
+    admitted.free();
     let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
 }
 
@@ -652,8 +805,14 @@ async fn handshake(
         return Ok(None);
     }
     let connection = request.accept().await?;
-    let (send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let hello = read_hello(&mut recv).await?;
+    // (the hello soon after the request: a page sends it at once)
+    let (send, recv, hello) = tokio::time::timeout(limits.hello, async {
+        let (send, mut recv) = connection.accept_bi().await.context("no control stream")?;
+        let hello = read_hello(&mut recv).await?;
+        anyhow::Ok((send, recv, hello))
+    })
+    .await
+    .context("no hello in time")??;
     Ok(Some((connection, send, recv, hello)))
 }
 
@@ -666,26 +825,41 @@ async fn session(
     limits: &NetLimits,
     admitted: &Admitted,
 ) -> anyhow::Result<bool> {
-    // (the whole handshake within its deadline: a session that never opens its control stream is gone, SEC-2)
-    let Some((connection, mut send, mut recv, hello)) =
-        tokio::time::timeout(limits.handshake, handshake(incoming, limits)).await.context("no hello in time")??
-    else {
+    // (the whole handshake within its deadline: a session that never opens its control stream is gone, SEC-2; sooner
+    // when a newer session needs its slot: until its hello it's one to give way, SEC-SRV-01)
+    let handshaken = tokio::select! {
+        biased;
+        () = admitted.waiting.gave_way.notified() => bail!("gave way to a newer session before its hello"),
+        done = tokio::time::timeout(limits.handshake, handshake(incoming, limits)) => done.context("no hello in time")??,
+    };
+    let Some((connection, mut send, mut recv, hello)) = handshaken else {
         return Ok(false);
     };
+    if !admitted.settle() {
+        bail!("gave way to a newer session before its hello");
+    }
     let hello = match hello {
         Ok(hello) => hello,
         Err(version) => {
             // (a client from before version 12 just sees the close)
-            refuse(&mut send, &connection, protocol::REFUSED_VERSION).await;
+            refuse(&mut send, &connection, protocol::REFUSED_VERSION, admitted).await;
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
     // (its kind charged to its address, before anything's spent on it: a ping past the pings' allowance unanswered (the
-    // page's dash), a claim past the claims' refused)
+    // page's dash), a claim past the claims' refused. A claim or rejoin whose ticket verifies isn't charged: it's an
+    // account's and good once, its own limit, so a neighbour behind the same address with no ticket can't use up the
+    // allowance a player's real claim needs (the audit's SEC-SRV-02); the check is offline, a signature's)
     let ping = matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING);
-    if !admitted.charge(if ping { Kind::Ping } else { Kind::Claim }) {
+    let proven = match (&limits.tickets, &hello) {
+        (Some(tickets), Control::Hello { ticket, .. }) if !ping => {
+            tickets.verify(ticket, crate::ticket::unix_now()).is_ok()
+        }
+        _ => false,
+    };
+    if !proven && !admitted.charge(if ping { Kind::Ping } else { Kind::Claim }) {
         if !ping {
-            refuse(&mut send, &connection, protocol::REFUSED_FULL).await;
+            refuse(&mut send, &connection, protocol::REFUSED_FULL, admitted).await;
         }
         admitted.refused(peer, if ping { "its address's pings" } else { "its address's claims and rejoins" });
         return Ok(false);
@@ -710,7 +884,7 @@ async fn session(
     let ticketed = matches!(intent, protocol::INTENT_CLAIM | protocol::INTENT_REJOIN);
     let served = if limits.tickets.is_some() { ticketed } else { intent == protocol::INTENT_JOIN };
     if !served {
-        refuse(&mut send, &connection, protocol::REFUSED_MODE).await;
+        refuse(&mut send, &connection, protocol::REFUSED_MODE, admitted).await;
         bail!("a hello with intent {intent}: not served here");
     }
     // (a claim and a rejoin are an account's: its ticket checked here alone, never in the match code the browser's local
@@ -753,7 +927,7 @@ async fn session(
         }) {
             Ok(checked) => checked,
             Err(why) => {
-                refuse(&mut send, &connection, protocol::REFUSED_TICKET).await;
+                refuse(&mut send, &connection, protocol::REFUSED_TICKET, admitted).await;
                 return Err(refused(why));
             }
         };
@@ -782,7 +956,7 @@ async fn session(
             match tickets.decide(&checked) {
                 Ok(deciding) => _deciding = Some(deciding),
                 Err(why) => {
-                    refuse(&mut send, &connection, protocol::REFUSED_TICKET).await;
+                    refuse(&mut send, &connection, protocol::REFUSED_TICKET, admitted).await;
                     return Err(refused(why));
                 }
             }
@@ -795,7 +969,7 @@ async fn session(
                     // wait, RV-1028)
                     let _ = tickets.spend(&checked, crate::ticket::unix_now());
                     drop(_deciding.take());
-                    refuse(&mut send, &connection, protocol::REFUSED_REJOIN_GONE).await;
+                    refuse(&mut send, &connection, protocol::REFUSED_REJOIN_GONE, admitted).await;
                     bail!(
                         "{}: the rejoin of match {m:016x} refused: the matchmaker says the account searched or was matched \
                          since, or the match is another server's",
@@ -805,13 +979,13 @@ async fn session(
                 // (the API down or slow, which passes: the ticket left good for a retry once it's back, RV-1020)
                 crate::outbox::RejoinAnswer::Unconfirmed(why) => {
                     drop(_deciding.take());
-                    refuse(&mut send, &connection, protocol::REFUSED_UNCONFIRMED).await;
+                    refuse(&mut send, &connection, protocol::REFUSED_UNCONFIRMED, admitted).await;
                     bail!("{}: the rejoin of match {m:016x} refused unconfirmed: the matchmaker: {why}", request.who());
                 }
             }
         }
         if let Err(why) = tickets.spend(&checked, crate::ticket::unix_now()) {
-            refuse(&mut send, &connection, protocol::REFUSED_TICKET).await;
+            refuse(&mut send, &connection, protocol::REFUSED_TICKET, admitted).await;
             return Err(refused(why));
         }
     }
@@ -1292,6 +1466,17 @@ mod tests {
         assert_eq!((0..100).filter(|_| b.take(t2)).count(), 40, "never more than the burst");
     }
 
+    /// A session admitted and its hello said (settled: no longer one to give way), the tests' usual; its number
+    fn settled<C: governor::clock::Clock + Clone>(
+        admission: &mut Admission<C>,
+        address: IpAddr,
+        limits: &NetLimits,
+        sessions: &Arc<tokio::sync::Semaphore>,
+    ) -> Result<(u64, tokio::sync::OwnedSemaphorePermit), &'static str> {
+        let unsettled = admission.admit(address, limits, sessions)?;
+        Ok((unsettled.id, admission.settle(unsettled.id).expect("its own slot")))
+    }
+
     /// A test's admission on a clock it moves
     fn admission_at(
         limits: &NetLimits,
@@ -1312,20 +1497,107 @@ mod tests {
         };
         let (a, b): (IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into());
         let (mut admission, clock) = admission_at(&limits);
-        assert!(admission.admit(a, &limits).is_ok() && admission.admit(a, &limits).is_ok());
-        assert_eq!(admission.admit(a, &limits), Err("its address's sessions at once"));
-        assert!(admission.admit(b, &limits).is_ok(), "another address");
-        admission.release(a);
-        assert!(admission.admit(a, &limits).is_ok(), "a released one makes room: the third start of a burst of 3");
-        admission.release(a);
-        assert_eq!(admission.admit(a, &limits), Err("its address's new sessions"), "the burst's starts used");
+        let sessions = Arc::new(tokio::sync::Semaphore::new(64));
+        let start = |admission: &mut Admission<_>, at: IpAddr| settled(admission, at, &limits, &sessions);
+        let (a1, _p1) = start(&mut admission, a).unwrap();
+        let (a2, _p2) = start(&mut admission, a).unwrap();
+        assert_eq!(start(&mut admission, a).err(), Some("its address's sessions at once"));
+        let (b1, _p3) = start(&mut admission, b).expect("another address");
+        admission.release(a, a1);
+        let (a3, _p4) = start(&mut admission, a).expect("a released one makes room: the third start of a burst of 3");
+        admission.release(a, a3);
+        assert_eq!(start(&mut admission, a).err(), Some("its address's new sessions"), "the burst's starts used");
         clock.advance(Duration::from_millis(500));
-        assert!(admission.admit(a, &limits).is_ok(), "the rates' two a second: one again half a second on");
-        admission.release(a);
-        admission.release(a);
-        admission.release(b);
-        assert!(admission.active.is_empty());
+        let (a4, _p5) = start(&mut admission, a).expect("the rates' two a second: one again half a second on");
+        admission.release(a, a2);
+        admission.release(a, a4);
+        admission.release(b, b1);
+        assert!(admission.active.is_empty() && admission.networks.is_empty() && admission.waiting.is_empty());
         assert_eq!(NetLimits::default().per_address, 64);
+    }
+
+    /// SEC-SRV-01: a session that hasn't said its hello gives way, the oldest first, to a newcomer the server, its address
+    /// or its network has no room for; one that has said it never does. So slots held by sessions that say nothing can't
+    /// keep a player out
+    #[test]
+    fn sessions_still_to_say_their_hello_give_way_the_oldest_first() {
+        let limits = NetLimits { max_sessions: 3, per_address: 2, per_network: Some(3), ..NetLimits::default() };
+        let (mut admission, _clock) = admission_at(&limits);
+        let sessions = Arc::new(tokio::sync::Semaphore::new(limits.max_sessions));
+        let at = |n: u8| -> IpAddr { [10, n, 0, 1].into() };
+        // (the server's: three silent sessions hold every slot; a fourth takes the oldest's)
+        let silent: Vec<Unsettled> = (1..=3).map(|n| admission.admit(at(n), &limits, &sessions).unwrap()).collect();
+        assert_eq!(sessions.available_permits(), 0);
+        let newcomer = admission.admit(at(4), &limits, &sessions).expect("the oldest silent session gives way");
+        let gave_way = |u: &Unsettled| {
+            // (told at once: a stored wake-up, taken without waiting)
+            tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap().block_on(async {
+                tokio::time::timeout(Duration::from_millis(10), u.gave_way.notified()).await.is_ok()
+            })
+        };
+        assert!(gave_way(&silent[0]), "the oldest");
+        assert!(!gave_way(&silent[1]) && !gave_way(&silent[2]) && !gave_way(&newcomer));
+        assert!(admission.settle(silent[0].id).is_none(), "its slot gone: its session ends");
+        // (settled sessions hold theirs: with every slot a settled one's, the newcomer is refused)
+        let held: Vec<_> =
+            [&silent[1], &silent[2], &newcomer].map(|u| admission.settle(u.id).expect("its slot")).into();
+        assert_eq!(admission.admit(at(5), &limits, &sessions).err(), Some("the server's most sessions"));
+        drop(held);
+        for (n, u) in [(1, &silent[0]), (2, &silent[1]), (3, &silent[2]), (4, &newcomer)] {
+            admission.release(at(n), u.id);
+        }
+        assert!(admission.active.is_empty() && admission.networks.is_empty());
+        // (an address's: its own oldest silent session, never another address's)
+        let a: IpAddr = [10, 9, 0, 1].into();
+        let other = admission.admit([10, 8, 0, 1].into(), &limits, &sessions).unwrap();
+        let (first, second) =
+            (admission.admit(a, &limits, &sessions).unwrap(), admission.admit(a, &limits, &sessions).unwrap());
+        let third = admission.admit(a, &limits, &sessions).expect("its address's oldest gives way");
+        assert!(gave_way(&first) && !gave_way(&second) && !gave_way(&other) && !gave_way(&third));
+        // (its settled ones don't: at its most with both settled, refused)
+        let _held = [admission.settle(second.id).unwrap(), admission.settle(third.id).unwrap()];
+        assert_eq!(admission.admit(a, &limits, &sessions).err(), Some("its address's sessions at once"));
+    }
+
+    /// SEC-SRV-01: an address's wider network (an IPv4 /24, an IPv6 /48) has its own sessions at once and its own starts,
+    /// so a block of addresses, or one host's routed IPv6 prefix, isn't a fresh allowance each
+    #[test]
+    fn a_network_has_its_own_sessions_at_once_and_starts() {
+        let net = |s: &str| network_key(s.parse().unwrap());
+        assert_eq!(net("203.0.113.7"), net("203.0.113.200"));
+        assert_ne!(net("203.0.113.7"), net("203.0.114.7"));
+        assert_eq!(net("2001:db8:1:2::1"), net("2001:db8:1:ffff::9"), "one /48");
+        assert_ne!(net("2001:db8:1::1"), net("2001:db8:2::1"));
+        assert_eq!(net("::ffff:203.0.113.7"), net("203.0.113.9"), "a dual-stack socket's IPv4 client");
+        let limits = NetLimits { per_address: 2, ..NetLimits::default() };
+        assert_eq!(limits.network_sessions(), 4, "twice an address's unless set");
+        let (mut admission, _clock) = admission_at(&limits);
+        let sessions = Arc::new(tokio::sync::Semaphore::new(64));
+        let key = |n: u8| address_key(format!("2001:db8:1:{n}::1").parse().unwrap());
+        let held: Vec<_> = (1..=4).map(|n| settled(&mut admission, key(n), &limits, &sessions).unwrap()).collect();
+        assert_eq!(
+            settled(&mut admission, key(5), &limits, &sessions).err(),
+            Some("its network's sessions at once"),
+            "a fifth /64 of the /48"
+        );
+        assert!(settled(&mut admission, address_key("2001:db8:2::1".parse().unwrap()), &limits, &sessions).is_ok());
+        drop(held);
+        // (its starts: twice an address's burst, four times its rate)
+        let limits = NetLimits {
+            per_address: 100,
+            per_network: Some(1000),
+            claims: Rate { burst: 2, per_minute: 60 },
+            pings: Rate { burst: 1, per_minute: 60 },
+            ..NetLimits::default()
+        };
+        let (mut admission, _clock) = admission_at(&limits);
+        let started = (0..20u8)
+            .filter(|&n| {
+                let at: IpAddr = [198, 51, 100, n].into();
+                settled(&mut admission, at, &limits, &sessions).map(|(id, _)| admission.release(at, id)).is_ok()
+            })
+            .count();
+        assert_eq!(started, 6, "twenty addresses of one /24, a start each: the network's burst of 6");
     }
 
     /// The user's decision of 2026-10-23 (LAN parties): claims and rejoins, and region pings, each their own allowance, a
@@ -1364,12 +1636,13 @@ mod tests {
             pings: Rate { burst: 2, per_minute: 60 },
             ..NetLimits::default()
         };
-        let (a, b, c): (IpAddr, IpAddr, IpAddr) = ([10, 0, 0, 1].into(), [10, 0, 0, 2].into(), [10, 0, 0, 3].into());
+        let (a, b, c): (IpAddr, IpAddr, IpAddr) = ([10, 0, 1, 1].into(), [10, 0, 2, 2].into(), [10, 0, 3, 3].into());
         let (mut admission, clock) = admission_at(&limits);
+        let sessions = Arc::new(tokio::sync::Semaphore::new(64));
+        // (each on a network of its own: the networks' starts apart)
+        let limits = &limits;
         let start = |admission: &mut Admission<_>, at: IpAddr| {
-            let ok = admission.admit(at, &limits).is_ok();
-            admission.release(at);
-            ok
+            settled(admission, at, limits, &sessions).map(|(id, _)| admission.release(at, id)).is_ok()
         };
         assert!(start(&mut admission, a)); // (the first sweep, at 0 s)
         clock.advance(Duration::from_secs(59));
@@ -1414,18 +1687,22 @@ mod tests {
         // Two hosts of one /64 share its limits
         let limits = NetLimits { per_address: 2, ..NetLimits::default() };
         let (mut admission, _clock) = admission_at(&limits);
-        assert!(
-            admission.admit(key("2001:db8::1"), &limits).is_ok()
-                && admission.admit(key("2001:db8::2"), &limits).is_ok()
-        );
-        assert!(admission.admit(key("2001:db8::3"), &limits).is_err());
-        assert!(admission.admit(key("2001:db8:0:1::1"), &limits).is_ok());
+        let sessions = Arc::new(tokio::sync::Semaphore::new(64));
+        let _held = [
+            settled(&mut admission, key("2001:db8::1"), &limits, &sessions).unwrap(),
+            settled(&mut admission, key("2001:db8::2"), &limits, &sessions).unwrap(),
+        ];
+        assert!(settled(&mut admission, key("2001:db8::3"), &limits, &sessions).is_err());
+        assert!(settled(&mut admission, key("2001:db8:0:1::1"), &limits, &sessions).is_ok());
     }
 
     #[test]
-    fn the_handshakes_deadlines_are_4_s_for_quic_and_10_s_through_the_hello() {
+    fn the_handshakes_deadlines_are_4_s_for_quic_then_3_s_for_the_hello_7_s_in_all() {
         let limits = NetLimits::default();
-        assert_eq!((limits.quic_handshake, limits.handshake), (Duration::from_secs(4), Duration::from_secs(10)));
+        assert_eq!(
+            (limits.quic_handshake, limits.hello, limits.handshake),
+            (Duration::from_secs(4), Duration::from_secs(3), Duration::from_secs(7))
+        );
     }
 
     #[test]
@@ -1440,12 +1717,13 @@ mod tests {
         assert_eq!(sessions.available_permits(), 1);
         assert!(admission.lock().unwrap().active.is_empty());
         assert_eq!(admission.lock().unwrap().starts.len(), 0, "a Retry charged nothing");
-        let Admit::Admit(permit) = admit(true, a, &sessions, &admission, &limits) else {
+        let Admit::Admit(unsettled) = admit(true, a, &sessions, &admission, &limits) else {
             panic!("a proven address admitted")
         };
+        let permit = admission.lock().unwrap().settle(unsettled.id);
         assert!(
             matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits), Admit::Refuse(_)),
-            "the global cap"
+            "the global cap, its one session's hello said"
         );
         drop(permit);
     }

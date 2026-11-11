@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -26,9 +27,33 @@ const (
 	signinOff       = "unavailable"
 )
 
+// navigation reports whether a request is a page's own top-level navigation as the browser's fetch metadata tells it
+// (Sec-Fetch-*: every current browser sends them; one that doesn't is let through, as before): `document`, a top-level
+// document's navigation (no image's, script's, frame's or fetch's request); `own`, begun by this site or by the player
+// (the address bar, a bookmark), not by another site's page
+func navigation(r *http.Request) (document, own bool) {
+	is := func(header string, values ...string) bool {
+		v := r.Header.Get(header)
+		return v == "" || slices.Contains(values, v)
+	}
+	return is("Sec-Fetch-Mode", "navigate") && is("Sec-Fetch-Dest", "document"),
+		is("Sec-Fetch-Site", "same-origin", "same-site", "none")
+}
+
 // start begins a sign-in: a flow bound to this browser by the pre-auth cookie (AC-1), then the provider
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
+	// (the page's own navigation alone, before anything is charged or stored: this GET has side effects (the address's
+	// allowance, a flow's row), and an image tag on any other site's page fired it in each of its visitors' browsers,
+	// from their own addresses, until everyone's sign-ins in progress were at their ceiling and every sign-in was
+	// refused as busy: the audit's SEC-API-01)
+	if document, own := navigation(r); !document {
+		writeError(w, http.StatusForbidden, "not-a-navigation")
+		return
+	} else if !own {
+		s.redirectPage(w, r, nil)
+		return
+	}
 	if !s.allowAddress(r, now, s.signIns, s.signInsWide) {
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return

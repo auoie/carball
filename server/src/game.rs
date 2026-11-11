@@ -629,6 +629,9 @@ pub struct Game {
     /// The tests' panic in a match's tick (the host's SEC-7 test)
     #[cfg(test)]
     pub panic_next_tick: bool,
+    /// The tests' golden goal: the next tick puts the match in overtime with the ball on its way into orange's goal
+    #[cfg(test)]
+    pub golden_goal_next_tick: bool,
     /// The tests' record of what each update carried (the network tests' T6: notes/netcode-live.md §13)
     #[cfg(test)]
     replicated: Vec<Replicated>,
@@ -721,6 +724,8 @@ impl Game {
             over: false,
             #[cfg(test)]
             panic_next_tick: false,
+            #[cfg(test)]
+            golden_goal_next_tick: false,
             #[cfg(test)]
             replicated: Vec::new(),
         }
@@ -1151,9 +1156,26 @@ impl Game {
             self.scoreboard_dirty = true;
             if self.players.is_empty() {
                 // Everyone gone: no contest (`ForceNoContest`: straight to the end screen, no podium; the arena stops until
-                // the next player starts a match)
+                // the next player starts a match). Not a match decided already (`has_winner`: a team forfeiting after a
+                // goal, the golden goal scored, the clock out with the scores apart): the game's no contest is every
+                // team forfeiting, and none can once there's a winner (MR-7.10, 7.11), so it plays on to `EndGame` and
+                // its result. No one's here to play it on for, and an empty game doesn't tick, so its winner is settled
+                // now, as `new_round` would have (the audit's MATCH-01: a 1v1's winner leaving in the goal's replay, its
+                // menu saying Leave Match with no warning, lost the win)
                 if !self.phase.match_over() {
-                    self.no_contest = true;
+                    if self.has_winner() {
+                        let (winner, forfeit) = match self.forfeiting {
+                            Some(team) => (1 - team.min(1), true),
+                            None => (u8::from(self.score[1] > self.score[0]), false),
+                        };
+                        self.winner = Some(winner);
+                        self.forfeit = forfeit;
+                        self.forfeiting = None;
+                        self.votes = [None, None];
+                        self.award_match_end(winner);
+                    } else {
+                        self.no_contest = true;
+                    }
                     self.finish(tick);
                 }
             } else {
@@ -1819,6 +1841,12 @@ impl Game {
     pub fn tick(&mut self, now: f64) {
         #[cfg(test)]
         assert!(!self.panic_next_tick, "the test's panic");
+        #[cfg(test)]
+        if std::mem::take(&mut self.golden_goal_next_tick) {
+            self.overtime = true;
+            self.clock_ticks = 0;
+            self.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]);
+        }
         // (a player whose queue is full isn't reading: their session goes, as a lost connection)
         let stuck: Vec<PlayerId> =
             self.players.iter().filter(|(_, p)| p.out.capacity() == 0).map(|(&id, _)| id).collect();
@@ -3616,6 +3644,52 @@ mod tests {
         game.ready_up(1);
         game.tick(0.0);
         assert_eq!((game.phase, game.winner, game.forfeit), (Phase::PrePodium, Some(0), true));
+    }
+
+    /// A match decided but not yet ended (`has_winner`), everyone gone: its winner settled, not a no contest (MATCH-01)
+    #[test]
+    fn everyone_leaving_a_decided_match_settles_its_winner() {
+        init_engine();
+        // (the golden goal: orange leaves in its replay's wait, then blue)
+        let (mut game, _rxs) = match_with(MatchType::Ranked, 1, &[(1, 0, 1), (2, 1, 2)]);
+        game.overtime = true;
+        game.clock_ticks = 0;
+        game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]); // blue scores
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        game.leave(2);
+        game.leave(1);
+        let state = game.match_state();
+        assert_eq!(
+            (state.phase, state.winner, state.forfeit, state.no_contest),
+            (Phase::Finished, Some(0), false, false)
+        );
+        // (a forfeit pending after a goal: the team left with no one forfeits at the next round; everyone gone before it)
+        let (mut game, _rxs) = match_with(MatchType::Ranked, 1, &[(1, 0, 1), (2, 1, 2)]);
+        game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        game.leave(1);
+        ticks(&mut game, 5);
+        assert_eq!((game.forfeiting, game.winner), (Some(0), None));
+        game.leave(2);
+        let state = game.match_state();
+        assert_eq!(
+            (state.phase, state.winner, state.forfeit, state.no_contest),
+            (Phase::Finished, Some(1), true, false)
+        );
+        // (the clock out with the scores apart, the ball still in the air)
+        let (mut game, _rxs) = match_with(MatchType::Ranked, 1, &[(1, 0, 1), (2, 1, 2)]);
+        game.score = [0, 2];
+        game.clock_ticks = 0;
+        game.arena.set_ball([0.0, 0.0, 1500.0], [0.0, 0.0, 300.0]);
+        ticks(&mut game, 5);
+        assert!(game.has_winner() && game.winner.is_none());
+        game.leave(1);
+        game.leave(2);
+        let state = game.match_state();
+        assert_eq!(
+            (state.phase, state.winner, state.forfeit, state.no_contest),
+            (Phase::Finished, Some(1), false, false)
+        );
     }
 
     #[test]

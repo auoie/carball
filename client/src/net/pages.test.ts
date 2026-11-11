@@ -220,6 +220,10 @@ describe("the pages' handoffs", () => {
     expect(pageUrl("match", { pathname: "/", search: "?render=off" })).toBe("/?render=off&match");
     expect(pageUrl("menu", { pathname: "/", search: "?render=off&match" })).toBe("/?render=off");
     expect(pageUrl("menu", { pathname: "/x/", search: "?match&server=a:1" })).toBe("/x/");
+    // (never another site's: a path of two slashes or more, or a backslash's, is this site's one)
+    expect(pageUrl("menu", { pathname: "//other.example/", search: "?match" })).toBe("/other.example/");
+    expect(pageUrl("match", { pathname: "///other.example/a", search: "" })).toBe("/other.example/a?match");
+    expect(pageUrl("menu", { pathname: "/\\other.example/", search: "" })).toBe("/other.example/");
     // (the offline match against bots: its own page, ?bots)
     expect(pageUrl("bots", { pathname: "/", search: "?render=off" })).toBe("/?render=off&bots");
     expect(pageUrl("menu", { pathname: "/", search: "?bots" })).toBe("/");

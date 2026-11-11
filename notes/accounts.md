@@ -260,6 +260,14 @@ With no ranked gate, it rests on:
   - in memory, each key forgotten once idle for its window, generous enough for a household or a NAT;
   - a wider limit per network too (an IPv6 /48, an IPv4 /24), so a block of addresses can't take a fresh key each; and
     ceilings on the sign-ins in progress and the sign-ups waiting, everyone's (AP-2);
+  - a sign-in starts only from the page's own top-level navigation (`navigation` in auth.go: the browser's fetch
+    metadata, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, and a site that's this one's or none; a browser
+    that sends none is let through): another site's image tag, script, frame or fetch is a 403, its link sent back to
+    the page, each before anything is charged or stored. The start is a GET with side effects (the address's allowance,
+    a flow's row), and a tag on a busy page elsewhere would have filled the ceiling from its visitors' own addresses (the
+    2026-11-11 audit's SEC-API-01);
+  - one sign-up waiting per identity (migration 00008's unique index; `CreatePending` replaces its row): the ceiling
+    counts identities, each a real provider account, not sign-ins (SEC-API-02);
   - applied before any outbound call (no amplification);
   - the address is `CF-Connecting-IP` only from `TRUSTED_PROXIES` (cloudflared's: AC-4, AP-1); from anything else the
     header is ignored and the connection's address counts. `TRUSTED_PROXIES` is required outside `--dev`, logged at
