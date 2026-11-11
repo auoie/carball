@@ -178,6 +178,10 @@ pub fn server_config(identity: Identity, port: u16) -> anyhow::Result<ServerConf
         .stream_receive_window(256_000u32.into())
         .receive_window(1_000_000u32.into())
         .datagram_receive_buffer_size(Some(64 * 1024))
+        // (a session's updates waiting to be sent: three datagrams' room, the oldest dropped for a newer. quinn's own
+        // megabyte kept a stalled connection's whole backlog, sent oldest first once it was back: a second and more of
+        // stale updates the client replayed before the present's, the audit's NET-03)
+        .datagram_send_buffer_size(3 * (crate::game::MAX_DATAGRAM + DATAGRAM_ROOM))
         .send_window(1_000_000);
     // (dual-stack, [::]: IPv6 clients served too, the hosts on host networking, RV-406 lifted 2026-10-23)
     Ok(ServerConfig::builder()
@@ -252,6 +256,55 @@ pub struct NetLimits {
     /// The accounts service, asked before a rejoin is let in (RV-1008); None, no one to ask (a development server without
     /// one: its rejoins unconfirmed)
     pub api: Option<Arc<crate::outbox::Api>>,
+    /// The game thread's heartbeat: a region's ping is answered only while it's fresh (the audit's SEC-SRV-03); None,
+    /// always (the tests' servers)
+    pub alive: Option<Liveness>,
+}
+
+/// The game thread's heartbeat (the time of its last pass, ms since `start`) as the network side reads it
+#[derive(Clone, Debug)]
+pub struct Liveness {
+    pub heartbeat: Arc<std::sync::atomic::AtomicU64>,
+    pub start: Instant,
+}
+
+/// The game thread makes a pass every few ms: no heartbeat this long (ms) and it's stuck (the health check's 503, no
+/// Pong for a region's ping)
+const STUCK_MS: u64 = 2000;
+
+impl Liveness {
+    /// Whether the game thread made a pass within `STUCK_MS`
+    pub fn fresh(&self) -> bool {
+        let beat = self.heartbeat.load(std::sync::atomic::Ordering::Relaxed);
+        (self.start.elapsed().as_millis() as u64).saturating_sub(beat) < STUCK_MS
+    }
+}
+
+/// The game thread's watchdog: `stuck` once its heartbeat hasn't moved over `STUCK_CHECKS` checks in a row, a second
+/// apart (counted in checks, not by the clock: a machine paused and resumed isn't a stuck thread, which gets its next
+/// checks to show a pass). The process then ends for its supervisor to restart it: a stuck thread's server answered
+/// its health check 503 for good, which restarts nothing, while claims spent their tickets on a match that never came
+/// (the audit's SEC-SRV-03)
+#[derive(Debug, Default)]
+pub struct Watchdog {
+    last: u64,
+    unchanged: u32,
+}
+
+/// The checks in a row without a heartbeat before the watchdog calls the game thread stuck
+pub const STUCK_CHECKS: u32 = 10;
+
+impl Watchdog {
+    /// A check, the heartbeat `beat` now: whether the thread is stuck
+    pub fn stuck(&mut self, beat: u64) -> bool {
+        if beat == self.last {
+            self.unchanged += 1;
+        } else {
+            self.last = beat;
+            self.unchanged = 0;
+        }
+        self.unchanged >= STUCK_CHECKS
+    }
 }
 
 impl Default for NetLimits {
@@ -269,6 +322,7 @@ impl Default for NetLimits {
             tickets: None,
             server_name: None,
             api: None,
+            alive: None,
         }
     }
 }
@@ -279,8 +333,16 @@ impl NetLimits {
     }
 }
 
+/// A queued datagram's own share of the send buffer beside its bytes (quinn's bookkeeping: a few words)
+const DATAGRAM_ROOM: usize = 128;
+
 /// How long a ping's session waits for its Pong to go out before it closes (RV-856: its slot free at once)
 const PING_FLUSH: Duration = Duration::from_millis(100);
+
+/// How long a session's last message (a Refused, a Pong) has to be written and its stream finished. Neither had a
+/// deadline: the write waits for the client's flow-control credit and the finish for its acknowledgement, so a client
+/// that withheld either kept its session, and the slot it held, for good (RV-1291)
+const LAST_WRITE: Duration = Duration::from_secs(2);
 
 /// Each session's rates (SEC-3), a second and a burst: input datagrams (a client sends one a frame; more are dropped, as
 /// lost packets) and control messages (more are dropped)
@@ -633,7 +695,7 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
 }
 
 /// An admitted session's address and its admission: its hello's kind charged, its refusals logged a line a minute, its
-/// slot held once its hello's read; its counts given back as it's dropped (however its session ends)
+/// slot held once it's a player's (`settles`); its counts given back as it's dropped (however its session ends)
 pub struct Admitted {
     admission: Arc<Mutex<Admission>>,
     address: IpAddr,
@@ -652,7 +714,7 @@ impl Admitted {
         log_refused(&self.admission, self.address, peer, why);
     }
 
-    /// Its hello read: no longer one to give way; false if it gave way meanwhile
+    /// A player's from here (`settles`): no longer one to give way; false if it gave way meanwhile
     fn settle(&self) -> bool {
         let permit = self.admission.lock().unwrap().settle(self.waiting.id);
         let settled = permit.is_some();
@@ -660,9 +722,11 @@ impl Admitted {
         settled
     }
 
-    /// Its slot let go before its session's end (a refusal's wait for the client's close holds none: SEC-SRV-01)
+    /// Its slot let go before its session's end, settled or waiting still (a refusal's or a Pong's write and its wait
+    /// for the client's close hold none: SEC-SRV-01, RV-1291)
     fn free(&self) {
         self.slot.lock().unwrap().take();
+        drop(self.admission.lock().unwrap().settle(self.waiting.id));
     }
 }
 
@@ -744,18 +808,77 @@ fn session_end_line(id: PlayerId, peer: std::net::SocketAddr, e: &anyhow::Error)
     format!("player {id} ({peer}): {}", one_line(&format!("{e:#}")))
 }
 
-/// Refuses a session's hello with `reason`, then gives the client a moment to close (its slot let go first: the wait
-/// holds none)
+/// Refuses a session's hello with `reason`, then gives the client a moment to close. Its slot let go first: neither
+/// the write nor the wait holds one (RV-1291: the write came first, and could wait on the client for good)
 async fn refuse(
     send: &mut wtransport::SendStream,
     connection: &wtransport::Connection,
     reason: u8,
     admitted: &Admitted,
 ) {
-    let _ = send.write_all(&Control::Refused { reason }.encode()).await;
-    let _ = send.finish().await;
     admitted.free();
-    let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+    last_words(
+        last_message(send, Control::Refused { reason }),
+        connection.closed(),
+        LAST_WRITE,
+        Duration::from_secs(2),
+    )
+    .await;
+}
+
+/// A session's last message written and its stream finished
+async fn last_message(send: &mut wtransport::SendStream, message: Control) {
+    if send.write_all(&message.encode()).await.is_ok() {
+        let _ = send.finish().await;
+    }
+}
+
+/// A session's end after its last message: the `write` (the message and its stream's finish) given `deadline`, then the
+/// client's close `wait` at most. Bounded whatever the client does
+async fn last_words(write: impl Future<Output = ()>, closed: impl Future, deadline: Duration, wait: Duration) {
+    let _ = tokio::time::timeout(deadline, write).await;
+    let _ = tokio::time::timeout(wait, closed).await;
+}
+
+/// A hello's ticket checked for what the hello asks of this server (`server_name`), each ticket for its own: a match
+/// ticket for a claim of its seat here (a server with no name takes none: failing closed, RV-956), a rejoin's for that
+/// match's rejoin alone (AP3, RV-850). Offline: a signature's and its claims'
+fn check_ticket(
+    tickets: &crate::ticket::Tickets,
+    server_name: Option<&str>,
+    intent: u8,
+    token: u64,
+    ticket: &str,
+    peer: std::net::SocketAddr,
+) -> Result<crate::ticket::Ticket, crate::ticket::Refusal> {
+    let checked = tickets.verify(ticket, crate::ticket::unix_now())?;
+    let fits = match &checked.purpose {
+        crate::ticket::Purpose::Seat(s) => {
+            if let Some(own) = server_name.filter(|own| *own != s.server) {
+                // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863)
+                tracing::warn!(
+                    "session from {peer}: a match ticket for server {:?}, this server is {own:?}: refused",
+                    s.server
+                );
+            }
+            intent == protocol::INTENT_CLAIM && server_name.is_some_and(|own| own == s.server)
+        }
+        crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && *m == token,
+    };
+    if fits { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
+}
+
+/// Whether a hello makes its session a player's, its slot its own from there (`Admitted::settle`): a queue server's
+/// (`queue`: it checks tickets) claim or rejoin whose ticket verifies for it (`ticket_good`), a development server's
+/// join of its open match. Any other hello (a region's ping, a claim with no good ticket, an intent not served) is
+/// answered and gone, and until then still one to give way: a hello alone settled a session, so one with no ticket
+/// that then never took its answer held its slot for good (RV-1291)
+fn settles(queue: bool, intent: u8, ticket_good: bool) -> bool {
+    if queue {
+        matches!(intent, protocol::INTENT_CLAIM | protocol::INTENT_REJOIN) && ticket_good
+    } else {
+        intent == protocol::INTENT_JOIN
+    }
 }
 
 async fn read_control(recv: &mut wtransport::RecvStream) -> anyhow::Result<Control> {
@@ -835,9 +958,8 @@ async fn session(
     let Some((connection, mut send, mut recv, hello)) = handshaken else {
         return Ok(false);
     };
-    if !admitted.settle() {
-        bail!("gave way to a newer session before its hello");
-    }
+    // (its hello read, but not yet a player's: until its ticket's checked it's still one to give way, and every wait on
+    // the way there (a refusal's, a Pong's) has its deadline: `settles`, RV-1291)
     let hello = match hello {
         Ok(hello) => hello,
         Err(version) => {
@@ -850,13 +972,16 @@ async fn session(
     // page's dash), a claim past the claims' refused. A claim or rejoin whose ticket verifies isn't charged: it's an
     // account's and good once, its own limit, so a neighbour behind the same address with no ticket can't use up the
     // allowance a player's real claim needs (the audit's SEC-SRV-02); the check is offline, a signature's)
+    // (verified for what it asks, here: a good ticket for something else, another server's seat or the other intent's,
+    // is charged like any that doesn't verify. It's never spent, so uncharged its replays came free, RV-1295)
     let ping = matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING);
-    let proven = match (&limits.tickets, &hello) {
-        (Some(tickets), Control::Hello { ticket, .. }) if !ping => {
-            tickets.verify(ticket, crate::ticket::unix_now()).is_ok()
+    let checked = match (&limits.tickets, &hello) {
+        (Some(tickets), Control::Hello { ticket, intent, token, .. }) if !ping => {
+            Some(check_ticket(tickets, limits.server_name.as_deref(), *intent, *token, ticket, peer))
         }
-        _ => false,
+        _ => None,
     };
+    let proven = matches!(checked, Some(Ok(_)));
     if !proven && !admitted.charge(if ping { Kind::Ping } else { Kind::Claim }) {
         if !ping {
             refuse(&mut send, &connection, protocol::REFUSED_FULL, admitted).await;
@@ -867,10 +992,16 @@ async fn session(
     // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip; its
     // session closed after a moment's flush, its slot free at once, not after the page's close: RV-856)
     if ping {
+        // (unanswered while the game thread is stuck: the page's dash, so no search is sent to a server that can't host
+        // its match, the audit's SEC-SRV-03)
+        if limits.alive.as_ref().is_some_and(|alive| !alive.fresh()) {
+            admitted.refused(peer, "the game thread is stuck: its ping unanswered");
+            return Ok(false);
+        }
         let server = limits.server_name.clone().unwrap_or_default();
-        let _ = send.write_all(&Control::Pong { server }.encode()).await;
-        let _ = send.finish().await;
-        let _ = tokio::time::timeout(PING_FLUSH, connection.closed()).await;
+        admitted.free();
+        last_words(last_message(&mut send, Control::Pong { server }), connection.closed(), LAST_WRITE, PING_FLUSH)
+            .await;
         return Ok(false);
     }
     let ticket = if let Control::Hello { ticket, .. } = &hello { ticket.clone() } else { String::new() };
@@ -882,10 +1013,13 @@ async fn session(
     // match alone: no search or decline anywhere (the accounts service's matchmaker has the one queue), and no other
     // intent, 0's or one unknown, taken to the game thread: refused here, RV-992)
     let ticketed = matches!(intent, protocol::INTENT_CLAIM | protocol::INTENT_REJOIN);
-    let served = if limits.tickets.is_some() { ticketed } else { intent == protocol::INTENT_JOIN };
-    if !served {
+    if !settles(limits.tickets.is_some(), intent, true) {
         refuse(&mut send, &connection, protocol::REFUSED_MODE, admitted).await;
         bail!("a hello with intent {intent}: not served here");
+    }
+    // (a development server's join: a player's from here)
+    if limits.tickets.is_none() && !admitted.settle() {
+        bail!("gave way to a newer session before it was let in");
     }
     // (a claim and a rejoin are an account's: its ticket checked here alone, never in the match code the browser's local
     // host shares; the account's key and name in place of the hello's)
@@ -893,15 +1027,6 @@ async fn session(
     if let Some(tickets) = &limits.tickets
         && ticketed
     {
-        // (each ticket for its own: a match ticket for a claim of its seat at this server, a rejoin's for that match's
-        // rejoin alone, AP3, RV-850)
-        let purpose_fits = |purpose: &crate::ticket::Purpose| match purpose {
-            crate::ticket::Purpose::Seat(s) => {
-                // (a server with no name takes no match ticket: failing closed, RV-956)
-                intent == protocol::INTENT_CLAIM && limits.server_name.as_ref().is_some_and(|own| *own == s.server)
-            }
-            crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && *m == token,
-        };
         // (verified, then its use decided, then spent: a ticket shown for something else, or a rejoin the matchmaker
         // refuses, stays good, RV-973)
         let refused = |why: crate::ticket::Refusal| {
@@ -913,24 +1038,17 @@ async fn session(
             };
             anyhow::anyhow!("ticket refused: {why:?}{rejoin}")
         };
-        let checked = match tickets.verify(&ticket, crate::ticket::unix_now()).and_then(|checked| {
-            if let crate::ticket::Purpose::Seat(s) = &checked.purpose
-                && let Some(own) = limits.server_name.as_ref().filter(|own| **own != s.server)
-            {
-                // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863)
-                tracing::warn!(
-                    "session from {peer}: a match ticket for server {:?}, this server is {own:?}: refused",
-                    s.server
-                );
-            }
-            if purpose_fits(&checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
-        }) {
+        let checked = match checked.unwrap_or(Err(crate::ticket::Refusal::Malformed)) {
             Ok(checked) => checked,
             Err(why) => {
                 refuse(&mut send, &connection, protocol::REFUSED_TICKET, admitted).await;
                 return Err(refused(why));
             }
         };
+        // (its ticket good for this: a player's session from here, never one to give way)
+        if !admitted.settle() {
+            bail!("gave way to a newer session before its ticket was checked");
+        }
         if let crate::ticket::Purpose::Seat(s) = &checked.purpose {
             seat = Some(crate::match_host::SeatClaim {
                 match_id: s.match_id,
@@ -1224,12 +1342,11 @@ pub async fn serve_health(
     start: Instant,
 ) -> anyhow::Result<()> {
     use axum::http::StatusCode;
+    let alive = Liveness { heartbeat, start };
     let app = axum::Router::new().route(
         "/healthz",
         axum::routing::get(move || {
-            let beat = heartbeat.load(std::sync::atomic::Ordering::Relaxed);
-            let now = start.elapsed().as_millis() as u64;
-            std::future::ready(if now.saturating_sub(beat) < 2000 {
+            std::future::ready(if alive.fresh() {
                 (StatusCode::OK, "ok")
             } else {
                 (StatusCode::SERVICE_UNAVAILABLE, "the game thread is stuck")
@@ -1655,6 +1772,86 @@ mod tests {
             2,
             "b's use remembered: a second's refill alone"
         );
+    }
+
+    /// RV-1291: a hello alone makes no session a player's. A queue server's claim or rejoin settles once its ticket is
+    /// good for it; a ping, a claim with no good ticket, an intent not served never do (they stay ones to give way)
+    #[test]
+    fn a_session_settles_by_its_ticket_not_its_hello() {
+        use protocol::{INTENT_CLAIM, INTENT_DECLINE, INTENT_JOIN, INTENT_PING, INTENT_REJOIN, INTENT_SEARCH};
+        for intent in [INTENT_CLAIM, INTENT_REJOIN] {
+            assert!(settles(true, intent, true), "a queue server's ticketed {intent}");
+            assert!(!settles(true, intent, false), "no good ticket: {intent}");
+            assert!(!settles(false, intent, true), "a development server serves no {intent}");
+        }
+        for queue in [true, false] {
+            for good in [true, false] {
+                assert!(!settles(queue, INTENT_PING, good), "a ping never");
+                for unserved in [INTENT_SEARCH, INTENT_DECLINE, 200] {
+                    assert!(!settles(queue, unserved, good), "an intent not served never: {unserved}");
+                }
+            }
+        }
+        assert!(!settles(true, INTENT_JOIN, true), "a queue server serves no join");
+        assert!(settles(false, INTENT_JOIN, false), "a development server's join");
+    }
+
+    /// RV-1291: a refused (or pinging) session lets its slot go before its last message is written, settled or waiting
+    /// still, and its end is bounded though the client never takes the message nor closes: the write's deadline, then
+    /// the close's wait
+    #[tokio::test]
+    async fn a_refused_sessions_slot_is_free_at_once_and_its_end_bounded() {
+        let limits = NetLimits { max_sessions: 2, ..NetLimits::default() };
+        let sessions = Arc::new(tokio::sync::Semaphore::new(limits.max_sessions));
+        let admission = Arc::new(Mutex::new(Admission::new(&limits)));
+        let address: IpAddr = [10, 0, 0, 1].into();
+        let admit = || {
+            let waiting = admission.lock().unwrap().admit(address, &limits, &sessions).unwrap();
+            Admitted { admission: admission.clone(), address, waiting, slot: Mutex::new(None) }
+        };
+        // (one refused before it settled: a ping, a claim with no ticket; one after: a rejoin the matchmaker refuses)
+        let (waiting, player) = (admit(), admit());
+        assert!(player.settle());
+        assert_eq!((sessions.available_permits(), admission.lock().unwrap().waiting.len()), (0, 1));
+        waiting.free();
+        assert_eq!((sessions.available_permits(), admission.lock().unwrap().waiting.len()), (1, 0));
+        assert!(!waiting.settle(), "freed: no slot to make its own");
+        player.free();
+        assert_eq!(sessions.available_permits(), 2);
+        // (its counts stay its address's until its session ends)
+        assert_eq!(admission.lock().unwrap().active.get(&address), Some(&2));
+        // (a client that never takes the message, never closes: the write and the wait each end at their deadline)
+        let started = Instant::now();
+        let (deadline, wait) = (Duration::from_millis(60), Duration::from_millis(40));
+        last_words(std::future::pending(), std::future::pending::<()>(), deadline, wait).await;
+        let took = started.elapsed();
+        assert!(took >= deadline + wait && took < Duration::from_secs(2), "{took:?}");
+        // (one that takes it and closes: no waiting)
+        let started = Instant::now();
+        last_words(std::future::ready(()), std::future::ready(()), Duration::from_secs(5), Duration::from_secs(5))
+            .await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop((waiting, player));
+        assert_eq!(admission.lock().unwrap().active.get(&address), None);
+    }
+
+    /// The audit's SEC-SRV-03: the watchdog calls the game thread stuck after `STUCK_CHECKS` checks in a row without a
+    /// heartbeat (a thread that never made its first pass too), and not before; a pass between starts the count again.
+    /// A heartbeat older than 2 s isn't fresh (no Pong, the health check's 503)
+    #[test]
+    fn the_watchdog_counts_checks_without_a_heartbeat() {
+        let mut watchdog = Watchdog::default();
+        assert!((1..STUCK_CHECKS).all(|_| !watchdog.stuck(0)), "not before its tenth check");
+        assert!(watchdog.stuck(0), "never a first pass: stuck");
+        let mut watchdog = Watchdog::default();
+        assert!((0..100).all(|beat| !watchdog.stuck(1000 * (beat + 1))), "a pass every check: never");
+        assert!((1..STUCK_CHECKS).all(|_| !watchdog.stuck(100_000)));
+        assert!(!watchdog.stuck(100_500), "a pass: the count starts again");
+        assert!((1..STUCK_CHECKS).all(|_| !watchdog.stuck(100_500)));
+        assert!(watchdog.stuck(100_500));
+        let start = Instant::now() - Duration::from_secs(10);
+        let alive = |beat| Liveness { heartbeat: Arc::new(std::sync::atomic::AtomicU64::new(beat)), start };
+        assert!(alive(9_500).fresh() && !alive(7_000).fresh() && !alive(0).fresh());
     }
 
     /// RV-970: a refusal's line once a minute for each address and reason, the ones between counted (said with the next

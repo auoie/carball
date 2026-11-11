@@ -9,6 +9,7 @@ import type { CameraView } from "../camera/carballCamera";
 import type { Vec3 } from "../math/vec";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
+import { watchPixelRatio } from "./pixelRatio";
 
 /** The most device pixels a CSS pixel is drawn at: 2, or 1.5 on a touch device (a phone's GPU, its 60 fps: notes/mobile.md) */
 export function maxPixelRatio(): number {
@@ -62,6 +63,7 @@ export class Renderer {
   readonly #viewDirection = new Vector3();
   #horizontalFov = 90;
   readonly #observer: ResizeObserver;
+  readonly #unwatchRatio: () => void;
   /** Work with the WebGL renderer before the next frame, once each (the arena's reflection capture) */
   readonly #beforeNextFrame: ((gl: WebGLRenderer, scene: Scene) => void)[] = [];
 
@@ -85,7 +87,6 @@ export class Renderer {
   constructor(readonly canvas: HTMLCanvasElement) {
     // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
     this.#gl = new WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
-    this.#gl.setPixelRatio(Math.min(maxPixelRatio(), window.devicePixelRatio));
     this.#gl.toneMapping = NoToneMapping;
     this.#gl.outputColorSpace = LinearSRGBColorSpace;
     // (the translucents in the game's order, the reflection capture's faces too: TRN1)
@@ -100,6 +101,10 @@ export class Renderer {
     });
     this.#observer.observe(canvas);
     window.addEventListener("resize", this.#readRect);
+    // (the screen's pixel ratio as it changes, another screen's or the zoom's: no resize of the canvas need come with it)
+    this.#unwatchRatio = watchPixelRatio(() => {
+      this.#resize();
+    });
     this.#resize();
   }
 
@@ -115,12 +120,12 @@ export class Renderer {
   set renderScale(scale: number) {
     if (scale === this.#renderScale) return;
     this.#renderScale = scale;
-    this.#gl.setPixelRatio(Math.min(maxPixelRatio(), window.devicePixelRatio) * scale);
     this.#resize();
   }
 
   dispose(): void {
     this.#observer.disconnect();
+    this.#unwatchRatio();
     window.removeEventListener("resize", this.#readRect);
     this.#post.dispose();
     this.#gl.dispose();
@@ -277,6 +282,9 @@ export class Renderer {
   #resize(): void {
     const width = Math.max(1, this.canvas.clientWidth);
     const height = Math.max(1, this.canvas.clientHeight);
+    // (the screen's ratio as it is now, not as it was at the load: REN-04; Render Quality's share of it)
+    const ratio = Math.min(maxPixelRatio(), window.devicePixelRatio) * this.#renderScale;
+    if (ratio !== this.#gl.getPixelRatio()) this.#gl.setPixelRatio(ratio);
     this.#gl.setSize(width, height, false);
     this.#camera.aspect = width / height;
     this.#camera.updateProjectionMatrix();

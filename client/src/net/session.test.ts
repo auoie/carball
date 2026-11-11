@@ -9,6 +9,7 @@ import { LocalHost } from "../local/host";
 import { arenaMeshes } from "../testing/arena";
 import { type NetRunResult, circleDriver, netRun } from "../testing/netRun";
 import { type Profile, constantProfile } from "../testing/netsim";
+import { STALE_TICKS, freshUpdates } from "./session";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
 let host: LocalHost;
@@ -33,6 +34,22 @@ function report(name: string, r: NetRunResult): void {
       `phases ${r.phases.map((p) => `${p.phase}@${p.at.toFixed(2)}`).join(" ")}`,
   );
 }
+
+describe("stale updates (NET-03)", () => {
+  it("an update more than a second of ticks behind the newest heard isn't applied: a stall's held ones, the present kept", () => {
+    const at = (serverTick: number): { update: { serverTick: number } } => ({ update: { serverTick } });
+    const ticks = (updates: { update: { serverTick: number } }[]): number[] => updates.map((u) => u.update.serverTick);
+    // (a second's stall: sixty held updates, two ticks apart, then the present's)
+    const held = Array.from({ length: 60 }, (_, i) => at(1000 + 2 * i));
+    expect(ticks(freshUpdates([...held, at(1240), at(1242)], 998))).toEqual([1240, 1242]);
+    // (within the second: kept, in their order)
+    expect(ticks(freshUpdates([at(1242 - STALE_TICKS), at(1200), at(1242)], 998))).toEqual([1242 - STALE_TICKS, 1200, 1242]);
+    // (a held one alone, the present heard already: dropped; the usual stream: all kept)
+    expect(freshUpdates([at(1000)], 1242)).toEqual([]);
+    expect(ticks(freshUpdates([at(1244), at(1246)], 1242))).toEqual([1244, 1246]);
+    expect(freshUpdates([], 1242)).toEqual([]);
+  });
+});
 
 describe("play over a network path (in process)", () => {
   it("keeps the local car predicted and the server's input buffer steady on a clean 77 ms path", () => {

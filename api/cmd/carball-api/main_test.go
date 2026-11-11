@@ -109,6 +109,16 @@ func TestRoleRefusal(t *testing.T) {
 	}
 }
 
+// serve refuses a schema behind its build's migrations, not one at or ahead of them (BLD-01)
+func TestSchemaRefusal(t *testing.T) {
+	if schemaRefusal(7, 8) == nil || schemaRefusal(0, 1) == nil {
+		t.Error("a schema behind the build's accepted")
+	}
+	if schemaRefusal(8, 8) != nil || schemaRefusal(9, 8) != nil {
+		t.Error("refused when it may run")
+	}
+}
+
 // help, -h and --help list every command with its arguments and where the admin runs them; a command's -h its flags;
 // an unknown command the same list, as an error (the user's report: --help showed serve's flag alone)
 func TestHelp(t *testing.T) {

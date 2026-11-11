@@ -229,6 +229,11 @@ struct Hosted {
     started_told: bool,
     /// Its end told (`Report::Result`, or `Over` without one): once, at its winner or its teardown
     result_told: bool,
+    /// A team emptied by a lost connection, no winner yet, in a match whose empty team forfeits: the team and when. Its
+    /// forfeit's result waits out `OUTAGE_WINDOW` from then (`result_ready`)
+    forfeit_hold: Option<(u8, f64)>,
+    /// That forfeit ruled the server's outage: the match ends with no result (`Report::Over`), no rating changed
+    voided: bool,
 }
 
 impl Hosted {
@@ -365,6 +370,8 @@ impl MatchHost {
             armed: false,
             ticked_at: now,
             pending_quit: None,
+            forfeit_hold: None,
+            voided: false,
             started_told: false,
             result_told: false,
         };
@@ -493,6 +500,14 @@ impl MatchHost {
         if lost {
             slot.lost_at = Some(now);
         }
+        // (a team emptied by a lost connection, where an empty team forfeits: that forfeit's result waits out the outage's
+        // window, `result_ready`; a leave the player chose never does)
+        let team = slot.team;
+        let emptied = !hosted.reservations.iter().any(|r| r.team == team && r.here_since.is_some());
+        if started && !decided && lost && emptied && hosted.playlist.match_type.auto_forfeit() {
+            hosted.forfeit_hold = Some((team, now));
+        }
+        let slot = &mut hosted.reservations[seat];
         // (an armed leave by a lost connection waits out OUTAGE_WINDOW before it's decided: its seat told left then, with
         // its report, so that its player can't search and be matched before the ban comes, RV-964; a deliberate one's
         // report goes before its seat's Left for the same reason, RV-1025)
@@ -662,11 +677,46 @@ impl MatchHost {
         std::mem::take(&mut self.reports)
     }
 
-    /// A match's end told, once: its result, if it has a winner and every seat a ticket (a no contest, the local host's or
-    /// an unverified match has none: then, for a matchmaker's match that started, its end with no result). Told at its
-    /// winner (`tick`), else at its teardown; a match told already tells nothing more
-    fn report_result(&mut self, match_id: MatchId) {
-        if self.matches.get(&match_id).is_none_or(|m| m.result_told) {
+    /// Whether a match's result may be told now. Not while a forfeit by a team its last player's lost connection
+    /// emptied waits out `OUTAGE_WINDOW` (`last`: the match is being let go, decided now with what's known): if more
+    /// than half the match's seats lost their connection within the window of that leave, it was the server's network
+    /// outage, each session timing out in its turn, and the match is void: no result, no rating changed, as the leave's
+    /// ban is waived (`decide_pending_quit`'s rule; the user's decision of 2026-11-11 on the audit's MATCH-02, RV-1292).
+    /// The result went out the moment the first team to be timed out forfeited, a rated loss by the order the timeouts
+    /// were handled in. A forfeit not that team's (a vote's, another's), or any other win: at once
+    fn result_ready(&mut self, match_id: MatchId, last: bool) -> bool {
+        let now = self.now;
+        let Some(hosted) = self.matches.get_mut(&match_id) else { return true };
+        let Some((team, since)) = hosted.forfeit_hold else { return true };
+        if hosted.game.as_ref().and_then(Game::forfeit_loser) != Some(team) {
+            return true;
+        }
+        if !last && now - since < OUTAGE_WINDOW {
+            return false;
+        }
+        hosted.forfeit_hold = None;
+        let lost_together = hosted
+            .reservations
+            .iter()
+            .filter(|r| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW))
+            .count();
+        if 2 * lost_together > hosted.reservations.len() {
+            hosted.voided = true;
+            tracing::info!(
+                "{}: {lost_together} of {} connections lost at once: an outage, its forfeit void (no result)",
+                hosted.label(match_id),
+                hosted.reservations.len()
+            );
+        }
+        true
+    }
+
+    /// A match's end told, once: its result, if it has a winner and every seat a ticket (a no contest, a forfeit void for
+    /// the server's outage, the local host's or an unverified match has none: then, for a matchmaker's match that
+    /// started, its end with no result). Told at its winner (`tick`: `last` false, a lost connection's forfeit waiting
+    /// out its window first, `result_ready`), else at its teardown; a match told already tells nothing more
+    fn report_result(&mut self, match_id: MatchId, last: bool) {
+        if self.matches.get(&match_id).is_none_or(|m| m.result_told) || !self.result_ready(match_id, last) {
             return;
         }
         let reported = self.result(match_id);
@@ -687,6 +737,9 @@ impl MatchHost {
             return false; // (an open match)
         }
         let state = game.match_state();
+        if hosted.voided {
+            return false; // (said at its ruling)
+        }
         let Some(winning_team) = state.winner.filter(|_| !state.no_contest) else {
             tracing::info!("{}: no winner, no result (a no contest)", hosted.label(match_id));
             return false;
@@ -741,7 +794,7 @@ impl MatchHost {
             }
             self.cancel(match_id);
         } else if hosted.player_count() == 0 && !hosted.open {
-            self.report_result(match_id);
+            self.report_result(match_id, true);
             self.drop_match(match_id);
         }
     }
@@ -871,7 +924,8 @@ impl MatchHost {
         }
         // (a match's result told the moment it has its winner (the final result, a forfeit, a team emptied), its
         // quitters and times played as they stand then, after this step's kicks: the menu's first read after the match
-        // shows the new rating, not one after the end screen, the user's report; a leave after it is no quitter)
+        // shows the new rating, not one after the end screen, the user's report; a leave after it is no quitter. But a
+        // forfeit by a team a lost connection emptied: after the outage's window, `result_ready`)
         let won: Vec<MatchId> = self
             .matches
             .iter()
@@ -879,13 +933,13 @@ impl MatchHost {
             .map(|(&id, _)| id)
             .collect();
         for match_id in won {
-            self.report_result(match_id);
+            self.report_result(match_id, false);
         }
         for (match_id, cancelled) in done {
             if cancelled {
                 self.cancel(match_id);
             } else {
-                self.report_result(match_id);
+                self.report_result(match_id, true);
                 self.drop_match(match_id);
             }
         }
@@ -1212,6 +1266,143 @@ mod tests {
         assert_eq!(result.winning_team, 0);
         assert!(result.players.iter().all(|p| !p.quitter));
         assert_eq!(host.match_count(), 0);
+    }
+
+    /// A ranked 1v1 at 5 s, both seats claimed and playing
+    fn ones_playing(test_goal_after: Option<u64>) -> (MatchHost, Receiver<Outgoing>) {
+        init_engine();
+        let mut host = MatchHost::new(1, test_goal_after);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), tx.clone()));
+        assert!(host.claim(tokens[1], 2, seat(2), tx));
+        run_to(&mut host, 0.0, 5.0);
+        host.take_reports();
+        host.observe(5.0);
+        (host, rx)
+    }
+
+    /// The reports' ends: each `Result` (its winning team) or `Over` (None)
+    fn ends(reports: &[Report]) -> Vec<Option<u8>> {
+        reports
+            .iter()
+            .filter_map(|r| match r {
+                Report::Result(result) => Some(Some(result.winning_team)),
+                Report::Over { .. } => Some(None),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The audit's MATCH-02 (the user's decision: an outage voids the match). A team emptied by a lost connection
+    /// forfeits, but its result waits out the outage's window: one connection lost alone is the player's, the result
+    /// and the ban told once the window's over, not before
+    #[test]
+    fn a_lost_connections_forfeit_is_told_after_the_outage_window() {
+        let (mut host, _rx) = ones_playing(None);
+        host.leave(1, true);
+        run_to(&mut host, 5.0, 5.0 + OUTAGE_WINDOW - 0.5);
+        assert_eq!(host.game_of(2).unwrap().winner(), Some(1), "the forfeit itself at once");
+        assert!(ranked(host.take_reports()).is_empty(), "within the window: nothing told");
+        run_to(&mut host, 5.0 + OUTAGE_WINDOW - 0.5, 5.0 + OUTAGE_WINDOW + 0.5);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [Some(1)], "{reports:?}");
+        assert!(reports.iter().any(|r| matches!(r, Report::Quitter { ticket, .. } if ticket == "t1")), "{reports:?}");
+        let Some(Report::Result(result)) = reports.iter().find(|r| matches!(r, Report::Result(_))) else { panic!() };
+        assert!(result.players.iter().all(|p| p.quitter == (p.ticket == "t1")));
+    }
+
+    /// And the outage itself: the other connection lost too, a few ticks after the forfeit (each session timing out in
+    /// its turn). No result, no ban: the match ends with no rating changed. It was the first team's rated loss, by the
+    /// order the timeouts were handled in
+    #[test]
+    fn an_outages_forfeit_is_void() {
+        let (mut host, _rx) = ones_playing(None);
+        host.leave(1, true);
+        run_to(&mut host, 5.0, 5.05);
+        assert_eq!(host.game_of(2).unwrap().winner(), Some(1), "the forfeit landed");
+        assert!(ranked(host.take_reports()).is_empty());
+        host.observe(5.05);
+        host.leave(2, true);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [None], "{reports:?}");
+        assert!(!reports.iter().any(|r| matches!(r, Report::Quitter { .. })), "{reports:?}");
+        assert_eq!(host.match_count(), 0);
+        // (2v2: one side timed out, then one of the other, the fourth still there: three of four, void all the same,
+        // told when the window's over)
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            assert!(host.claim(token, i as PlayerId + 1, seat(i as u8 + 1), tx.clone()));
+        }
+        run_to(&mut host, 0.0, 5.0);
+        host.take_reports();
+        host.observe(5.0);
+        let team = |host: &MatchHost, t: u8| -> Vec<PlayerId> {
+            let hosted = host.matches.values().next().unwrap();
+            hosted.reservations.iter().filter(|r| r.team == t).filter_map(|r| r.claimed).collect()
+        };
+        let (first, second) = (team(&host, 0), team(&host, 1));
+        host.leave(first[0], true);
+        host.leave(first[1], true);
+        run_to(&mut host, 5.0, 5.05);
+        host.observe(5.05);
+        host.leave(second[0], true);
+        run_to(&mut host, 5.05, 5.0 + OUTAGE_WINDOW - 0.5);
+        assert!(ends(&host.take_reports()).is_empty(), "within the window");
+        run_to(&mut host, 5.0 + OUTAGE_WINDOW - 0.5, 5.0 + OUTAGE_WINDOW + 0.5);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [None], "{reports:?}");
+        assert!(!reports.iter().any(|r| matches!(r, Report::Quitter { .. })), "{reports:?}");
+    }
+
+    /// A leave the player chose never counts as lost: after a lost connection's forfeit the winner leaves by the menu,
+    /// and the result is told then (the match let go), the lost one the quitter; and a team emptied by a chosen leave
+    /// has its result at once, as ever
+    #[test]
+    fn a_chosen_leave_is_no_outage() {
+        let (mut host, _rx) = ones_playing(None);
+        host.leave(1, true);
+        run_to(&mut host, 5.0, 5.05);
+        host.observe(5.05);
+        host.leave(2, false);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [Some(1)], "{reports:?}");
+        assert!(reports.iter().any(|r| matches!(r, Report::Quitter { ticket, .. } if ticket == "t1")), "{reports:?}");
+        let (mut host, _rx) = ones_playing(None);
+        host.leave(1, false);
+        run_to(&mut host, 5.0, 5.05);
+        assert_eq!(ends(&host.take_reports()), [Some(1)], "a chosen leave's forfeit: told at once");
+    }
+
+    /// RV-1292: both connections lost in a goal's replay in regulation, a few ticks apart. The first's team forfeits
+    /// (pending the next round), the second's leave settles that forfeit as the match goes (MATCH-01): an outage's, so
+    /// void, no result. One lost and the other leaving by the menu: the forfeit's result
+    #[test]
+    fn an_outage_in_a_goals_replay_is_void_too() {
+        for chosen in [false, true] {
+            let (mut host, _rx) = ones_playing(Some(60));
+            let mut t = 5.0;
+            while host.game_of(1).unwrap().phase() != Phase::PostGoal {
+                t += 1.0 / 120.0;
+                host.tick(t);
+                assert!(t < 12.0, "no goal");
+            }
+            assert!(!host.game_of(1).unwrap().has_winner(), "a goal in regulation: nothing decided");
+            host.take_reports();
+            host.observe(t);
+            host.leave(1, true);
+            run_to(&mut host, t, t + 0.05);
+            assert!(host.game_of(2).unwrap().has_winner(), "the forfeit pending");
+            assert!(ends(&host.take_reports()).is_empty());
+            host.observe(t + 0.05);
+            host.leave(2, !chosen);
+            let reports = host.take_reports();
+            assert_eq!(ends(&reports), [if chosen { Some(1) } else { None }], "chosen {chosen}: {reports:?}");
+            assert_eq!(reports.iter().any(|r| matches!(r, Report::Quitter { .. })), chosen, "{reports:?}");
+            assert_eq!(host.match_count(), 0);
+        }
     }
 
     /// A match's end screen run out with its winner still there: its result told once, at the winner, nothing at its

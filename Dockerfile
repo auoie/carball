@@ -105,6 +105,29 @@ RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registr
        cargo build --release --locked --manifest-path server/Cargo.toml \
     && mkdir /out && cp /target/release/carball-server /out/
 
+# The engine's Rust bindings (server/src/engine_ffi.rs, committed) checked against its C header as it is now
+# (server/tests/engine_bindings.rs), here, where the check can't be skipped: Rust links the engine by its functions'
+# names alone, so bindings behind the header build and pass everywhere else, and call with the wrong arguments (the
+# 2026-11-11 audit's BLD-02). libclang (bindgen loads it) and its headers from the dated snapshot, their version pinned
+# (update with the date); rustfmt the toolchain's own
+FROM rust AS bindings-check
+ARG JOBS
+RUN echo "deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] https://snapshot.debian.org/archive/debian/20261023T000000Z trixie main" > /etc/apt/snapshot.list \
+    && apt="apt-get -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
+    && $apt update --error-on=any && $apt install -y --no-install-recommends libclang1-19=1:19.1.7-3+b1 libclang-common-19-dev=1:19.1.7-3+b1 \
+    && rm -rf /var/lib/apt/lists/* /etc/apt/snapshot.list \
+    && rustup component add rustfmt
+WORKDIR /src
+COPY rustfmt.toml ./
+COPY engine/capi/rlengine.h engine/capi/rlengine.h
+COPY server/ server/
+COPY --from=server-engine /out/ /engine/
+RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=carball-target,target=/target,sharing=locked \
+    CARGO_BUILD_JOBS="$JOBS" CARBALL_ENGINE_NATIVE=/engine CARGO_TARGET_DIR=/target CARBALL_REQUIRE_BINDINGS=1 \
+    cargo test --locked --manifest-path server/Cargo.toml --test engine_bindings \
+    && touch /bindings-checked
+
 # The server's e2e build (`--features e2e`: the browser tests' hooks, server/README.md), for the game-e2e image alone (the
 # release build's flags: the same dependencies' builds in the shared target)
 FROM rust AS server-e2e
@@ -173,7 +196,8 @@ COPY --from=host /out/ engine/build-wasm-host/
 WORKDIR /src/client
 RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts src/net/versionFile.test.ts
 
-# The checks (scripts/build_images.sh builds this first): the engine native = WebAssembly (above); the Rust notices as
+# The checks (scripts/build_images.sh builds this first): the engine native = WebAssembly (above); the server's
+# bindings the engine's header's (above); the Rust notices as
 # committed, as they ship (the build's copies, RV-1019); the names guard (no game's,
 # maker's or mode names, RV-384/423) over each image's files and its stage of this file (what ships of it: its
 # instructions, in the image's history; the build stages never ship), and no build paths in either binary (the home,
@@ -185,6 +209,7 @@ RUN npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts
 # its hooks refused (each within 10 s: a hook that leaked would start a server, not hang the build, RV-1055)
 FROM client AS checks
 COPY --from=engine-check /engine-identical /tmp/engine-identical
+COPY --from=bindings-check /bindings-checked /tmp/bindings-checked
 COPY --from=rust-notices /out/ /tmp/rust-notices/
 COPY --from=server /out/carball-server /game/carball-server
 COPY out/arena/collision_meshes/ /game/collision_meshes/

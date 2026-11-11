@@ -33,7 +33,9 @@ What a session may do (the security review's SEC-2/3/5/7/8, RX13's RV-366/373; e
 table): its address proven first (a QUIC Retry: a spoofed packet takes no slot), 512 sessions at once, 64 at once per
 address (an IPv6 one by its /64: a LAN party's players together) and 128 per network (an IPv4 /24, an IPv6 /48:
 `--max-per-network`), a session that hasn't said its hello giving way, the oldest first, to a newcomer there's no room
-for (one that has, never: the audit's SEC-SRV-01), each address's new sessions as governor's buckets
+for (the audit's SEC-SRV-01; a session is a player's, never to give way, once its ticket verifies for its claim or
+rejoin, not at its hello: a ping, a ticketless claim and a refused session free their slot before their answer, which
+has 2 s to be written, RV-1291), each address's new sessions as governor's buckets
 allow (claims and rejoins 64 at once then 60 a minute, region pings 192 then 240, charged at admission as both
 together: `--max-sessions`, `--max-per-address`, `--claims-per-address`, `--pings-per-address`: the browser tests raise
 them), 4 s for the QUIC handshake, 3 s more for the hello (7 s from the first packet), pages only from `ALLOWED_ORIGIN` when it's

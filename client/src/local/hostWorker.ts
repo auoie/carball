@@ -66,7 +66,8 @@ async function run(): Promise<void> {
     let next = h.nextTick();
     for (let n = 0; next !== null && next <= now() && n < TICKS_PER_PASS; n++) {
       await b.beforeTick(h);
-      h.tick(next);
+      // (far behind (the worker's start-up, a suspended tab): the host's own slip, not the backlog played back, NET-02)
+      h.tick(LocalHost.tickTime(next, now()));
       next = h.nextTick();
     }
     flush(h);

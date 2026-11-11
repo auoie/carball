@@ -145,6 +145,31 @@ func (s *Store) CanCreate(ctx context.Context) (bool, error) {
 	return can, err
 }
 
+// SchemaVersion: the newest migration the database has had (0: none), from the migrations' own record, which the
+// service's role may read (`grant`) and nothing more
+func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
+	var version int64
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version)
+	return version, err
+}
+
+// LatestMigration: the newest migration this build holds
+func LatestMigration() (int64, error) {
+	entries, err := fs.ReadDir(migrations, "migrations")
+	if err != nil {
+		return 0, err
+	}
+	var latest int64
+	for _, e := range entries {
+		version, err := goose.NumericComponent(e.Name())
+		if err != nil {
+			return 0, fmt.Errorf("migration %s: %w", e.Name(), err)
+		}
+		latest = max(latest, version)
+	}
+	return latest, nil
+}
+
 // ErrSameRole: the migrations' role and the service's are one (the service's would own the schema: AP-4)
 var ErrSameRole = errors.New("MIGRATE_DATABASE_URL and DATABASE_URL name the same role: the service's must be its own, rows only")
 
@@ -187,8 +212,9 @@ func Migrate(ctx context.Context, dsn, passwordFile, appRole string, sameRole bo
 	return grant(ctx, db, appRole)
 }
 
-// (rows of every table but the migrations' own record; the schema used, never changed: no CREATE for anyone but its
-// owner, as Postgres 15's default, said for 13 and 14 too: AP-5)
+// (rows of every table but the migrations' own record, which it may read alone: `serve` checks its schema is its
+// build's, the 2026-11-11 audit's BLD-01; the schema used, never changed: no CREATE for anyone but its owner, as
+// Postgres 15's default, said for 13 and 14 too: AP-5)
 func grant(ctx context.Context, db *sql.DB, role string) error {
 	r := pgx.Identifier{role}.Sanitize()
 	for _, q := range []string{
@@ -196,6 +222,7 @@ func grant(ctx context.Context, db *sql.DB, role string) error {
 		"GRANT USAGE ON SCHEMA public TO " + r,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + r,
 		"REVOKE ALL ON goose_db_version FROM " + r,
+		"GRANT SELECT ON goose_db_version TO " + r,
 	} {
 		if _, err := db.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("granting %s its rows: %w", role, err)

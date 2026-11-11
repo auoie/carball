@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use carball_server::game::MatchType;
@@ -669,6 +669,7 @@ async fn run() -> anyhow::Result<()> {
     let start = Instant::now();
     let heartbeat = Arc::new(AtomicU64::new(0));
     let game_heartbeat = heartbeat.clone();
+    args.limits.alive = Some(net::Liveness { heartbeat: heartbeat.clone(), start });
     // (a queue server's ranked calls: the outbox, sending to the accounts service)
     let reports = if args.queue {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -699,13 +700,21 @@ async fn run() -> anyhow::Result<()> {
     let game = std::thread::Builder::new()
         .name("game".into())
         .spawn(move || game_loop::run_with_reports(messages, mode, test_goal_after, game_heartbeat, start, reports))?;
-    // (the game thread gone, by a panic outside a match's tick: the process ends, for its supervisor to restart it, SEC-7)
+    // (the game thread gone, by a panic outside a match's tick, or stuck, no pass in ten checks: the process ends, for
+    // its supervisor to restart it, SEC-7 and the audit's SEC-SRV-03)
+    let watched = heartbeat.clone();
     tokio::spawn(async move {
         let mut every = tokio::time::interval(Duration::from_secs(1));
+        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut watchdog = net::Watchdog::default();
         loop {
             every.tick().await;
             if game.is_finished() {
                 tracing::error!("the game thread ended: exiting");
+                exit(1);
+            }
+            if watchdog.stuck(watched.load(Ordering::Relaxed)) {
+                tracing::error!("the game thread made no pass in {} s: stuck, exiting", net::STUCK_CHECKS);
                 exit(1);
             }
         }

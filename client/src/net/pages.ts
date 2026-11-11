@@ -407,6 +407,18 @@ export async function openClaim<T>(open: () => Promise<T>): Promise<T> {
   }
 }
 
+/** A match's claim opened, tried once more if its session ended with no answer of the server's (not a refusal: lost on
+ *  the way, or its hello not in within the server's 3 s on a poor link). Its match ticket isn't spent until the server
+ *  welcomes it, and a claim not made is a no-show: the match cancelled for everyone in it (RV-1299) */
+export async function openSeat<T>(open: () => Promise<T>): Promise<T> {
+  try {
+    return await open();
+  } catch (e) {
+    if (e instanceof RefusedError) throw e;
+    return open();
+  }
+}
+
 /** What the menu does after a claim that failed (`matchGone`: the search's warning line, MM-18): refused while still in
  *  its time, a match cancelled for someone else, so back to the queue's front (RV-367); a rejoin's seat live in another
  *  tab: said so, the seat kept (RX30C); a match over: its offer gone; a rejoin's ticket refused for a ban from another

@@ -111,7 +111,7 @@ impl MatchType {
 
     /// A team left without players forfeits (`CanCheckForForfeit`: public match types, once their 30 s wait for players
     /// is over, which our matches don't have; private matches never)
-    fn auto_forfeit(self) -> bool {
+    pub(crate) fn auto_forfeit(self) -> bool {
         self != Self::Private
     }
 
@@ -770,6 +770,11 @@ impl Game {
     /// The match's winning team, once it has ended with one (`EndGame`: the final result, a forfeit, a team emptied)
     pub fn winner(&self) -> Option<u8> {
         self.winner
+    }
+
+    /// The team that forfeited, when the match was won by a forfeit
+    pub fn forfeit_loser(&self) -> Option<u8> {
+        self.winner.filter(|_| self.forfeit).map(|winner| 1 - winner.min(1))
     }
 
     /// A team has won (`HasWinner`: the match ended, a team forfeited, or the clock ran out with the scores apart)

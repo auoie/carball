@@ -22,6 +22,7 @@ import {
   leaveMatchSeat,
   matchPlayedElsewhere,
   openClaim,
+  openSeat,
   pageOutdated,
   pageUrl,
   type Region,
@@ -58,9 +59,9 @@ import { carChoice, storedCar, storedTeam } from "./game/cars";
 import type { BotListing } from "./bots/listing";
 import { BOT_MATCH_TEXT } from "./local/botText";
 import type { Theme } from "./render/themes/theme";
-import { type Settings, loadSettings, resolveSettings } from "./settings/settings";
+import { SETTINGS_KEY, type Settings, loadSettings, resolveSettings } from "./settings/settings";
 import type { Vec3 } from "./math/vec";
-import { AutoVideoGuard, RENDER_QUALITY_SCALE, guardStep, guardWanted, isWeakGpu } from "./settings/video";
+import { AutoVideoGuard, GUARD_PROBE, RENDER_QUALITY_SCALE, guardStep, guardWanted, isWeakGpu } from "./settings/video";
 import { applyWorldDetail, sceneDetail } from "./render/detail";
 import { particleDetail } from "./render/particles";
 import { applyShaderQuality } from "./render/shaderQuality";
@@ -296,8 +297,9 @@ async function main(): Promise<void> {
     }
     // (a bot match's player named as its setup has it: their account's, else "Player", RV-1186)
     const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings, storedCar(), botMatch?.playerName ?? ""), match);
-    // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
-    const opened = claim?.rejoin ? openClaim(open) : open();
+    // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is: its claim tried
+    // once more only if its session ended unanswered, RV-1299)
+    const opened = claim?.rejoin ? openClaim(open) : claim ? openSeat(open) : open();
     opened.catch(claimFailed);
     const session = await opened;
     // (every join saves the record anew, a rejoin's too: a ranked 2v2 or 3v3 offered back for 900 s from this join if it's
@@ -418,6 +420,11 @@ async function main(): Promise<void> {
     },
     resolve,
   );
+  // (another tab's save: this page's copy from here, applied; its own next change is then made to that, not to what it
+  // read at its load: the audit's CLI-03)
+  window.addEventListener("storage", (event) => {
+    if (event.key === SETTINGS_KEY && event.newValue !== null) panel.adopt(loadSettings());
+  });
   // (the Touch tab's layout editor: over everything, the settings under it again when it's done)
   panel.touchLayout = {
     edit: () => {
@@ -1445,6 +1452,8 @@ async function main(): Promise<void> {
           const stepped = guardStep(settings.video);
           if (stepped) panel.apply({ ...settings, video: stepped });
         }
+        // (its probe: the view at a lower resolution for a second, to tell the GPU's load from a display's cap, REN-05)
+        if (guard) renderer.renderScale = RENDER_QUALITY_SCALE[settings.video.renderQuality] * (guard.probing ? GUARD_PROBE.scale : 1);
       },
     };
   } else {

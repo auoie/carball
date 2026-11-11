@@ -36,7 +36,7 @@ if [ $WORKTREE = 1 ]; then
 	fi
 fi
 TAG=${1:-$("$R/scripts/image_tag.sh")}
-PATHS=(Dockerfile client engine server protocol api scripts/build_host.sh out/arena/collision_meshes)
+PATHS=(Dockerfile rustfmt.toml client engine server protocol api scripts/build_host.sh out/arena/collision_meshes)
 # (the context made once, every build below from the same files; group and others never given write: what the images
 # copy keeps its mode, RV-926)
 CONTEXT=$(mktemp "${TMPDIR:-/tmp}/carball-context-XXXXXX.tar")

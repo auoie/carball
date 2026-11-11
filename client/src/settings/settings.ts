@@ -323,6 +323,8 @@ export function resolveSettings(s: Settings, weakGpu: boolean): Settings {
 }
 
 const STORAGE_KEY = "carball.settings.v1";
+/** The storage key the settings are kept under (another tab's save comes as a `storage` event with it) */
+export const SETTINGS_KEY = STORAGE_KEY;
 
 // --- validation: anything unexpected falls back to the default, field by field ---
 
@@ -483,9 +485,38 @@ export function loadSettings(storage: Pick<Storage, "getItem"> | null = safeStor
   }
 }
 
-export function saveSettings(settings: Settings, storage: Pick<Storage, "setItem"> | null = safeStorage()): void {
+/** What a save writes: the groups this page changed (`settings`' that differ from `before`'s, its copy before the
+ *  change) onto what storage holds now (`stored`), whose other groups stay, those this page's code doesn't know
+ *  included. The page's whole copy was written at every change, so a second tab (or a page from before a deploy) put
+ *  back its old bindings and camera over the ones set since in another, at any change of its own, the video guard's
+ *  automatic step among them (the 2026-11-11 audit's CLI-03). With no `before`, or nothing usable stored: the whole */
+export function mergeForSave(stored: unknown, settings: Settings, before: Settings | null): Record<string, unknown> {
+  const whole: Record<string, unknown> = { ...settings };
+  if (!before || !isRecord(stored)) return whole;
+  const was: Record<string, unknown> = { ...before };
+  const out: Record<string, unknown> = { ...stored };
+  for (const [group, value] of Object.entries(whole)) {
+    if (!(group in stored) || JSON.stringify(value) !== JSON.stringify(was[group])) out[group] = value;
+  }
+  return out;
+}
+
+/** Saves the settings: with `before` (the page's copy before this change), the changed groups alone onto what's stored
+ *  (`mergeForSave`) */
+export function saveSettings(
+  settings: Settings,
+  storage: (Pick<Storage, "setItem"> & Partial<Pick<Storage, "getItem">>) | null = safeStorage(),
+  before: Settings | null = null,
+): void {
   try {
-    storage?.setItem(STORAGE_KEY, JSON.stringify(settings));
+    let stored: unknown = null;
+    try {
+      const raw = before ? storage?.getItem?.(STORAGE_KEY) : null;
+      stored = raw ? JSON.parse(raw) : null;
+    } catch {
+      // (what's stored isn't JSON: the whole written)
+    }
+    storage?.setItem(STORAGE_KEY, JSON.stringify(mergeForSave(stored, settings, before)));
   } catch {
     // Storage full or blocked (private mode): settings just won't persist
   }

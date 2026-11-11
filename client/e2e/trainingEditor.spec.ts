@@ -105,6 +105,22 @@ test("the editor's rules as the game's (notes/training-editor.md): 4 tags at mos
   await expect(modal.locator(".modal-title")).toHaveText("INVALID NAME");
   await expect(modal).toContainText("Please enter a valid name.");
   await modal.getByRole("button", { name: /^ok$/i }).click();
+  // (Import over unsaved changes asks first (CLI-04): CANCEL keeps the pack being made, NO takes the file's; the file
+  // here this pack's own export under another name)
+  await editor.locator(".editor-name").fill("Exported Pack");
+  await editor.locator(".editor-name").press("Enter");
+  const [download] = await Promise.all([page.waitForEvent("download"), editor.getByRole("button", { name: /^export$/i }).click()]);
+  const exported = await download.path();
+  await editor.locator(".editor-name").fill("Being Made");
+  await editor.locator(".editor-name").press("Enter");
+  await editor.locator('input[type="file"]').setInputFiles(exported);
+  await expect(modal.locator(".modal-title")).toHaveText("IMPORT");
+  await expect(modal.locator(".modal-choices button")).toHaveText(["YES", "NO", "CANCEL"]);
+  await modal.getByRole("button", { name: /^cancel$/i }).click();
+  await expect(editor.locator(".editor-name")).toHaveValue("Being Made");
+  await editor.locator('input[type="file"]').setInputFiles(exported);
+  await modal.getByRole("button", { name: /^no$/i }).click();
+  await expect(editor.locator(".editor-name")).toHaveValue("Exported Pack");
   // (leaving unsaved: SAVE AND EXIT, YES / NO / CANCEL; CANCEL stays, YES saves and leaves)
   await editor.locator(".editor-name").fill("Rules Pack");
   await editor.locator(".editor-name").press("Enter");

@@ -51,6 +51,9 @@ export const EDITOR_TEXT = {
   tooBig: "the file is over 1 MB",
   exportPack: "Export",
   importPack: "Import",
+  /** Import over unsaved changes: this editor's own question (the game has no import), in the game's prompt's form */
+  importTitle: "IMPORT",
+  importBody: "Save changes to this sequence before importing another?",
   share: "Share",
   sharing: "Sharing…",
   /** The game's code panel, verbatim (notes/custom-training.md §9, PACKS1): "COPIED TO CLIPBOARD" shown 5 s */
@@ -696,6 +699,8 @@ export class TrainingEditor {
     file.hidden = true;
     file.addEventListener("change", () => {
       const f = file.files?.[0];
+      // (the choice let go: the same file picked again, after the question's CANCEL, is a change again)
+      file.value = "";
       if (f) void this.#import(f);
     });
     const hint = document.createElement("div");
@@ -989,10 +994,35 @@ export class TrainingEditor {
         this.#render();
         return;
       }
-      this.open({ ...editorPack(pack), id: newPackId() });
-      // (an imported pack not kept until saved)
-      this.#dirty = true;
-      this.#render();
+      const open = (): void => {
+        this.open({ ...editorPack(pack), id: newPackId() });
+        // (an imported pack not kept until saved)
+        this.#dirty = true;
+        this.#render();
+      };
+      // (over unsaved changes: asked first, as leaving asks. The file replaced the pack being made at once, never to
+      // be got back: the 2026-11-11 audit's CLI-04)
+      if (!this.#dirty) {
+        open();
+        return;
+      }
+      const T = EDITOR_TEXT;
+      this.#actions.choose(
+        T.importTitle,
+        T.importBody,
+        [
+          {
+            label: T.yes,
+            act: () => {
+              if (this.#save()) open();
+            },
+          },
+          { label: T.no, act: open },
+          { label: T.cancel },
+        ],
+        2,
+        2, // (B and Escape: CANCEL)
+      );
     } catch (e) {
       this.#status = `${EDITOR_TEXT.importPack}: ${e instanceof Error ? e.message : String(e)}`;
       this.#render();

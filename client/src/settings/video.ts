@@ -155,6 +155,17 @@ export function resolveVideo(s: VideoState, weakGpu: boolean): VideoState {
  *  `capSpread` of their 10th) read as a cap. A frame `hitch` s or longer, or one in a hidden tab, isn't counted */
 export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45, trim: 0.05, capMargin: 1.1, capSpread: 1.08, hitch: 0.25 } as const;
 
+/** The guard's probe (the 2026-11-11 audit's REN-05). A page whose GPU needs two refreshes for every frame from its
+ *  first runs at a steady half refresh: the refresh measured from its frames reads half too, and its slow frames pass
+ *  for a display's cap. So a window that's slow and capped at `maxHz` or less (a 60 Hz display's half; never one at a
+ *  real 60) is probed once: the view drawn at `scale` of its resolution each way for `settle` + `measure` s (the
+ *  first `settle` s not counted), then restored. Frames then faster than `gain` of the window's median (two refreshes
+ *  down to one is 0.5, three to two 0.67; a display's cap gives 1): the GPU's load, the step taken. Else a real cap
+ *  (a 30 Hz display, a browser's power saving): no step, and no second probe */
+export const GUARD_PROBE = { maxHz: 50, scale: 0.5, settle: 0.3, measure: 1, gain: 0.75 } as const;
+
+const median = (values: readonly number[]): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
+
 /** The step's decision from the measured intervals (s), the display's refresh (Hz; null: not measured) and the page's own
  *  frame cap (Hz: a touch device's Frame Rate; null: none): frames at the cap aren't slow, only ones slower than it */
 export function guardDecision(
@@ -191,6 +202,9 @@ export class AutoVideoGuard {
   #frames: number[] = [];
   #done = false;
   readonly #rolling: boolean;
+  /** The probe under way: the slow window's median frame (s), its own time and frames; and whether one was made */
+  #probe: { readonly before: number; time: number; frames: number[] } | null = null;
+  #probed = false;
 
   constructor({ rolling = false }: { readonly rolling?: boolean } = {}) {
     this.#rolling = rolling;
@@ -200,14 +214,39 @@ export class AutoVideoGuard {
    *  `capHz` the page's own frame cap (null: none) */
   frame(seconds: number, visible = true, refreshHz: number | null = null, capHz: number | null = null): boolean {
     if (this.#done || !(seconds > 0) || !visible || seconds >= AUTO_GUARD.hitch) return false;
+    const probe = this.#probe;
+    if (probe) {
+      probe.time += seconds;
+      if (probe.time <= GUARD_PROBE.settle) return false;
+      probe.frames.push(seconds);
+      if (probe.time < GUARD_PROBE.settle + GUARD_PROBE.measure) return false;
+      this.#probe = null;
+      return this.#decided(median(probe.frames) <= probe.before * GUARD_PROBE.gain);
+    }
     this.#time += seconds;
     if (this.#time <= AUTO_GUARD.warmUp) return false;
     this.#frames.push(seconds);
     if (this.#time < AUTO_GUARD.warmUp + AUTO_GUARD.measure) return false;
-    const step = guardDecision(this.#frames, refreshHz, capHz).step;
+    const { slow, capped, step } = guardDecision(this.#frames, refreshHz, capHz);
+    // (slow at what reads as a cap, a low one: the GPU's two refreshes a frame, or a display's? Probed, once)
+    if (slow && capped && !this.#probed && (refreshHz ?? 0) <= GUARD_PROBE.maxHz) {
+      this.#probed = true;
+      this.#probe = { before: median(this.#frames), time: 0, frames: [] };
+      return false;
+    }
+    return this.#decided(step);
+  }
+
+  /** A window's (or its probe's) decision taken: done on a step, or after the one window when not rolling */
+  #decided(step: boolean): boolean {
     if (step || !this.#rolling) this.#done = true;
     else [this.#time, this.#frames] = [AUTO_GUARD.warmUp, []];
     return step;
+  }
+
+  /** The probe under way: the view drawn at `GUARD_PROBE.scale` of its resolution meanwhile */
+  get probing(): boolean {
+    return this.#probe !== null;
   }
 
   get done(): boolean {

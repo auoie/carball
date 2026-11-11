@@ -555,14 +555,23 @@ func TestStartIsAPagesOwnNavigation(t *testing.T) {
 		{"navigate", "iframe", "cross-site"},
 		{"cors", "empty", "same-origin"},
 	} {
-		// (many more than the address's allowance: none of them charged)
-		for range 5 {
-			resp := e.get(b, "/api/auth/steam/start", "CF-Connecting-IP", from,
-				"Sec-Fetch-Mode", c.mode, "Sec-Fetch-Dest", c.dest, "Sec-Fetch-Site", c.site)
-			if resp.StatusCode != http.StatusForbidden {
-				t.Fatalf("%+v: %d", c, resp.StatusCode)
+		// (many more than the address's allowance: none of them charged; the providers' callbacks the same, RV-1293)
+		for _, path := range []string{"/api/auth/steam/start", "/api/auth/steam/callback?flow=x", "/api/auth/google/callback?state=x"} {
+			for range 5 {
+				resp := e.get(b, path, "CF-Connecting-IP", from,
+					"Sec-Fetch-Mode", c.mode, "Sec-Fetch-Dest", c.dest, "Sec-Fetch-Site", c.site)
+				if resp.StatusCode != http.StatusForbidden {
+					t.Fatalf("%s %+v: %d", path, c, resp.StatusCode)
+				}
 			}
 		}
+	}
+	// (a provider's own redirect back, another site's top-level navigation: served (no flow of this browser's: failed),
+	// from an address of its own here, since it's charged)
+	back := e.get(b, "/api/auth/steam/callback?flow=x", "CF-Connecting-IP", "203.0.113.51",
+		"Sec-Fetch-Mode", "navigate", "Sec-Fetch-Dest", "document", "Sec-Fetch-Site", "cross-site")
+	if q := e.page(back); q.Get("signin") != "failed" {
+		t.Errorf("a provider's redirect back: %d, %v", back.StatusCode, q)
 	}
 	// (another site's link: back to the page, no flow)
 	link := e.get(b, "/api/auth/steam/start", "CF-Connecting-IP", from,

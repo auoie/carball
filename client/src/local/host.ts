@@ -36,6 +36,9 @@ export interface BotControls {
 
 const KINDS = ["control", "datagram", "end"] as const;
 
+/** Further behind its ticks than this (s: a dozen of them), the local host slips its clock instead of catching up */
+export const SLIP_SECONDS = 0.1;
+
 export class LocalHost {
   readonly #m: HostModule;
   /** A buffer in the module for bytes going in, grown as needed */
@@ -88,6 +91,16 @@ export class LocalHost {
   /** The ticks due by `now` s */
   tick(now: number): void {
     this.#m._host_tick(now);
+  }
+
+  /** The time to tick with at `now`, the next tick due at `next`: the tick's own, so each due tick runs in its turn;
+   *  or, further behind than `SLIP_SECONDS`, `now` itself, which has the host run its few catch-up ticks and skip the
+   *  rest (MatchHost's own slip, the game server's rule). Ticked each at its own time whatever the backlog, the clock never
+   *  slipped: the worker's start-up (its modules compiled, the bots' policies loaded: seconds) came off the first
+   *  kickoff's countdown, and a tab or phone suspended for a minute came back fast-forwarding the whole minute (the
+   *  2026-11-11 audit's NET-02) */
+  static tickTime(next: number, now: number): number {
+    return now - next > SLIP_SECONDS ? now : next;
   }
 
   /** When the next tick is due (s), or null with no match running */

@@ -585,6 +585,38 @@ async fn a_ticketed_claim_gets_in_past_an_addresss_spent_claims() {
     assert_eq!(replay, refused(protocol::REFUSED_FULL));
 }
 
+/// RV-1295: a good ticket that isn't for this (another server's seat) is charged to its address's claims like one that
+/// doesn't verify: it's never spent, so uncharged its replays came free
+#[tokio::test(flavor = "multi_thread")]
+async fn a_good_ticket_for_another_server_is_charged_to_its_addresss_claims() {
+    let limits = NetLimits {
+        claims: net::Rate { burst: 2, per_minute: 1 },
+        pings: net::Rate { burst: 100, per_minute: 1 },
+        ..open_limits()
+    };
+    let (port, cert_hash, key) = ticketed_server_limited(false, limits).await;
+    let elsewhere = seat_ticket(&key, 1, "Ada", 0xb2, 0, 2, "elsewhere.example:4433");
+    let claim = || any_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, elsewhere.clone()));
+    for _ in 0..2 {
+        assert_eq!(claim().await, Some(Control::Refused { reason: protocol::REFUSED_TICKET }));
+    }
+    assert_eq!(claim().await, Some(Control::Refused { reason: protocol::REFUSED_FULL }), "the address's claims spent");
+}
+
+/// The audit's SEC-SRV-03: a region's ping goes unanswered while the game thread is stuck (no heartbeat within 2 s), so
+/// no page takes the server for one that can host its match; answered again once it runs
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ping_goes_unanswered_while_the_game_thread_is_stuck() {
+    let start = Instant::now() - Duration::from_secs(60);
+    let beat = Arc::new(AtomicU64::new(0));
+    let limits = NetLimits { alive: Some(net::Liveness { heartbeat: beat.clone(), start }), ..open_limits() };
+    let (port, cert_hash, _key) = ticketed_server_limited(false, limits).await;
+    let ping = || any_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0));
+    assert_eq!(ping().await, None, "its last pass a minute ago: no Pong");
+    beat.store(start.elapsed().as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+    assert!(matches!(ping().await, Some(Control::Pong { .. })), "a pass just now: answered");
+}
+
 /// A session's first control message; none if it's refused, or ends without one (an unanswered ping)
 async fn any_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> Option<Control> {
     let config = ClientConfig::builder()
@@ -856,9 +888,10 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     }
     let first = connect(Some("https://carball.zolt.top")).await.expect("the page's origin");
     let second = connect(Some("https://Carball.Zolt.Top")).await.expect("a second session from the address");
-    // (SEC-SRV-01: neither has said its hello, so a third at once takes the older's slot: the first is closed)
+    // (SEC-SRV-01: neither has said its hello, so a third at once takes the older's slot: the first is closed, at once
+    // (well inside the 3 s its hello has: by the give-way's word, not that deadline, RV-1297))
     let third = connect(Some("https://carball.zolt.top")).await.expect("a third: the oldest silent one gives way");
-    assert!(tokio::time::timeout(Duration::from_secs(5), first.closed()).await.is_ok(), "the first gave way");
+    assert!(tokio::time::timeout(Duration::from_secs(1), first.closed()).await.is_ok(), "the first gave way");
     // (their hellos said, they hold their slots: the next at once is refused)
     joined(&second).await;
     joined(&third).await;
@@ -881,7 +914,7 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     let silent = connect_capped().await.expect("the one session");
     // (SEC-SRV-01: it says nothing, so the next takes its slot)
     let only = connect_capped().await.expect("the silent session gives way");
-    assert!(tokio::time::timeout(Duration::from_secs(5), silent.closed()).await.is_ok(), "the silent one closed");
+    assert!(tokio::time::timeout(Duration::from_secs(1), silent.closed()).await.is_ok(), "the silent one closed");
     joined(&only).await;
     assert!(connect_capped().await.is_err(), "past the most sessions, the one there a player's");
     drop(only);

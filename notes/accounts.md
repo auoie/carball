@@ -215,7 +215,9 @@ player by the account (RX29C).
 - **The leavers' queue ban** (LV1): the game server reports a quitter to the API **when they leave**, if the penalty
   was armed (the lobby full of humans, no winner yet; the first leaver only; none in a server outage), with that
   player's ticket (spent on that match): `POST /api/quitters`. A leave by a lost connection waits 5 s first: if most of
-  the match's seats lose theirs within 5 s of it, it's the server's network outage and no one is banned (AP3). The report
+  the match's seats lose theirs within 5 s of it, it's the server's network outage and no one is banned (AP3), and a
+  forfeit by a team that leave emptied is void: no result, no rating change (the user's decision of 2026-11-11, the
+  audit's MATCH-02; one connection lost alone: the forfeit's result, told after those 5 s). The report
   carries the leave's time, and the ban runs from it (held within the acceptance window: a report that gets through late
   bans for what's left). The API raises the account's `queue_bans` row by the ladder (ours, the user's choice of LV1's: 5 min → 15 min → 1 h → 6 h →
   24 h cap, one step forgiven for every 24 h without a leave); the matchmaker refuses a search while it runs, and the

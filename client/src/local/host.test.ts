@@ -7,7 +7,7 @@ import { World, initEngine } from "../engine/world";
 import { type ControlMessage, PROTOCOL_VERSION, decodeControl, decodeDatagram, encodeControl } from "../net/protocol";
 import { arenaMeshes } from "../testing/arena";
 import { LocalBots, chaser } from "./bots";
-import { type HostMessage, LocalHost } from "./host";
+import { type HostMessage, LocalHost, SLIP_SECONDS } from "./host";
 
 let host: LocalHost;
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -73,6 +73,43 @@ describe("the local host", () => {
     expect(car.team).toBe(1);
     expect(Math.hypot(car.vel.x, car.vel.y)).toBeGreaterThan(1000);
     world.dispose();
+  });
+
+  it("far behind its ticks the clock slips, the backlog not played back: a slow start keeps its whole countdown, a suspended tab no fast-forward (NET-02)", () => {
+    expect(LocalHost.tickTime(5, 5.05)).toBe(5);
+    expect(LocalHost.tickTime(5, 5 + SLIP_SECONDS + 0.01)).toBe(5 + SLIP_SECONDS + 0.01);
+    // (the worker's start-up took 3 s: the match opened at 0 s, its players in at 3 s)
+    host.open(1, 7);
+    host.connect(1);
+    host.control(1, hello(0, "Player"), 3);
+    host.connect(2);
+    host.control(2, hello(1, "Bot"), 3);
+    host.drain();
+    /** A pass of the worker's at `now`: the ticks run, the phases they told */
+    const pass = (now: number): { ticks: number; phases: string[] } => {
+      let ticks = 0;
+      const phases: string[] = [];
+      for (let next = host.nextTick(); next !== null && next <= now && ticks < 12; next = host.nextTick()) {
+        host.tick(LocalHost.tickTime(next, now));
+        ticks++;
+        phases.push(...controls(host.drain(), 1).flatMap((m) => (m.type === "match" ? [m.phase] : [])));
+      }
+      return { ticks, phases };
+    };
+    // (the first pass: a tick with the time now, the host's few catch-up ticks in it and the rest skipped, then the one
+    // due at that time; not the 360 behind)
+    expect(pass(3).ticks).toBeLessThanOrEqual(2);
+    expect(host.nextTick()).toBeGreaterThan(3);
+    // (the kickoff's countdown whole from there: play no sooner than 6.9 s on, where the backlog played back had it
+    // 3 s sooner)
+    let active: number | null = null;
+    for (let t = 3; t < 12 && active === null; t += 1 / 60) if (pass(t).phases.includes("active")) active = t;
+    expect(active).toBeGreaterThan(3 + 6.9);
+    expect(active).toBeLessThan(3 + 7.3);
+    // (a minute suspended in play: one pass, no fast-forward)
+    const before = host.nextTick() ?? 0;
+    expect(pass(before + 60).ticks).toBeLessThanOrEqual(2);
+    expect(host.nextTick()).toBeGreaterThan(before + 60);
   });
 
   it("a bot's brain is given the match's state after every tick: the chaser hits the kickoff's ball (the player idle)", async () => {

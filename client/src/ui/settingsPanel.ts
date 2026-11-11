@@ -330,10 +330,21 @@ export class SettingsPanel {
     this.#update(next);
   }
 
+  /** The settings as another tab saved them (the `storage` event): this page's copy from here, applied, not saved
+   *  again; its own later changes are then made to them (CLI-03) */
+  adopt(stored: Settings): void {
+    this.#stopCapture();
+    this.#settings = this.resolve(stored);
+    this.onChange(this.#settings);
+    this.#render();
+  }
+
   #update(change: Settings): void {
     const next = this.resolve(change);
+    const before = this.#settings;
     this.#settings = next;
-    saveSettings(next);
+    // (the groups this change touched alone, onto what's stored: another tab's changes since stay, CLI-03)
+    saveSettings(next, undefined, before);
     this.onChange(next);
     this.#render();
   }

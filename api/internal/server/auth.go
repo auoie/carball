@@ -121,7 +121,22 @@ func (s *Server) takeFlow(w http.ResponseWriter, r *http.Request, provider store
 
 func equal(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 
+// callbackNavigation: a provider's callback is the browser's top-level navigation back from it (another site's, so
+// `own` can't be asked); an image tag's or a script's request for it refused before the address is charged: a page of
+// such tags spent each visitor's address's and network's sign-ins, and their players' real ones were refused as busy
+// (RV-1293: SEC-API-01's rule, here)
+func callbackNavigation(w http.ResponseWriter, r *http.Request) bool {
+	document, _ := navigation(r)
+	if !document {
+		writeError(w, http.StatusForbidden, "not-a-navigation")
+	}
+	return document
+}
+
 func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
+	if !callbackNavigation(w, r) {
+		return
+	}
 	if !s.allowAddress(r, s.Now(), s.signIns, s.signInsWide) {
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return
@@ -146,6 +161,9 @@ func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) steamCallback(w http.ResponseWriter, r *http.Request) {
+	if !callbackNavigation(w, r) {
+		return
+	}
 	if !s.allowAddress(r, s.Now(), s.signIns, s.signInsWide) {
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return

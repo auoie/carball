@@ -402,5 +402,10 @@ the present, G5/G7). Remote cars recompute wheel contacts instead of reusing sto
 | T11 | **No-pawn prediction** (after G5) | demolition at RTT 100 | resim depth | depth 0 while demolished with smoothing on; after respawn back to RTT·120 + 7 |
 | T12 | **Nightly end-to-end smoke** | Playwright + a Node UDP relay (the fixture serves its own `/info` with the relay port and the real certificate hash); 100 ms RTT, 10 ms jitter, 2 % loss | ping; mispredictions; buffer; errors | ping 100–140 ms; local mispredictions / corrections < 5 %; buffer target ≤ 9; no page errors |
 
-Unverified [I]: the wtransport 0.7 / quinn defaults for datagram send buffering and congestion control (their source is in
-the cargo registry outside the repo; check them in the repo's vendored or documented API before G1-2).
+The quinn defaults, read 2026-11-11 (quinn-proto 0.11.19, `config/transport.rs`, `connection/datagrams.rs`): the
+datagram send buffer is 1 MiB, first in first out, the oldest dropped only when a new one doesn't fit
+(`send_datagram` passes `drop = true`). So a stalled downlink kept its whole backlog and sent it oldest first when the
+path came back. **G1 (2) done** (the audit's NET-03): the server's buffer is three datagrams' room
+(`datagram_send_buffer_size`, `net.rs` `server_config`), a newer update pushing out an older; and the client drops an
+update more than a second of ticks behind the newest heard (`session.ts` `freshUpdates`). Not measured on a stalled
+link here (the drop is quinn's own, by its source); G1 (5), the client's stale inputs, is still open.

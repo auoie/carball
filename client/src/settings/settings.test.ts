@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS } from "../input/bindings";
 import { DEFAULT_CAMERA_SETTINGS } from "../camera/carballCamera";
-import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, resolveSettings, saveSettings } from "./settings";
+import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, mergeForSave, parseSettings, resolveSettings, saveSettings } from "./settings";
 import { DEFAULT_SLOTS } from "../game/quickChat";
 
 class MemoryStorage {
@@ -40,6 +40,29 @@ describe("settings", () => {
     };
     saveSettings(custom, storage);
     expect(loadSettings(storage)).toEqual(custom);
+  });
+
+  it("a save writes the changed groups onto what's stored: another tab's changes since, and groups it doesn't know, stay (CLI-03)", () => {
+    const storage = new MemoryStorage();
+    const key = "carball.settings.v1";
+    // (tab A's copy, from before tab B set the camera and a newer page's code saved a group A's doesn't know)
+    const a = DEFAULT_SETTINGS;
+    const b = { ...DEFAULT_SETTINGS, camera: { ...DEFAULT_SETTINGS.camera, fov: 105 } };
+    storage.setItem(key, JSON.stringify({ ...b, later: { flag: 7 } }));
+    // (A moves a volume slider: its audio saved, B's camera kept, the unknown group too)
+    const changed = { ...a, audio: { ...a.audio, master: 0.25 } };
+    saveSettings(changed, storage, a);
+    const stored = JSON.parse(storage.getItem(key) ?? "{}") as Record<string, unknown>;
+    expect(stored["later"]).toEqual({ flag: 7 });
+    expect(loadSettings(storage)).toEqual({ ...b, audio: changed.audio });
+    // (a group nothing's stored of is written; with no copy from before, or what's stored unusable, the whole)
+    expect(mergeForSave({ audio: a.audio }, changed, a)).toEqual({ ...changed });
+    expect(mergeForSave({ ...b }, changed, null)["camera"]).toEqual(a.camera);
+    for (const junk of ["{not json", "[1]", "7"]) {
+      storage.setItem(key, junk);
+      saveSettings(changed, storage, a);
+      expect(loadSettings(storage)).toEqual(changed);
+    }
   });
 
   it("falls back to defaults for nothing stored or broken JSON", () => {

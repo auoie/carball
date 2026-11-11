@@ -184,3 +184,37 @@ test("a slider at 3840 x 2160 (the menus at 2.5): a click on its thumb's drawn e
   await page.mouse.click(box.x + box.width - thumb / 2, box.y + box.height / 2);
   await expect(slider).toHaveAttribute("aria-valuenow", String(max));
 });
+
+test("two tabs: a setting changed in one stays when the other, open since before it, changes another (CLI-03)", async ({ page, context }) => {
+  const key = "carball.settings.v1";
+  /** The settings' `tab` opened from the main menu, its first slider set to its lowest; what's stored then */
+  const lowest = async (tab: Page, name: string): Promise<{ camera: unknown; audio: unknown }> => {
+    await tab
+      .locator("#main-menu")
+      .getByRole("button", { name: /^settings$/i })
+      .click();
+    await tab.locator(".settings-tab", { hasText: name }).click();
+    const slider = tab.locator("#settings .control-slider").first();
+    const box = await slider.boundingBox();
+    if (!box) throw new Error("no slider");
+    await tab.mouse.click(box.x + 4, box.y + box.height / 2);
+    await expect(slider).toHaveAttribute("aria-valuenow", (await slider.getAttribute("aria-valuemin")) ?? "");
+    return tab.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "{}") as { camera: unknown; audio: unknown }, key);
+  };
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  // (another tab, opened after this one: its camera's first slider changed there, and the tab closed)
+  const other = await context.newPage();
+  await other.goto("/?render=off");
+  await expect(other.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const theirs = await lowest(other, "Camera");
+  await other.close();
+  // (this tab changes its audio: the other's camera stays, where this tab's whole copy from its load went over it)
+  const both = await lowest(page, "Audio");
+  expect(both.camera).toEqual(theirs.camera);
+  expect(both.audio).not.toEqual(theirs.audio);
+  // (and it shows the other's camera: its copy taken at the other's save)
+  await page.locator(".settings-tab", { hasText: "Camera" }).click();
+  const slider = page.locator("#settings .control-slider").first();
+  await expect(slider).toHaveAttribute("aria-valuenow", (await slider.getAttribute("aria-valuemin")) ?? "");
+});

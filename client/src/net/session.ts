@@ -56,6 +56,16 @@ interface Captured {
   readonly predicting: boolean;
 }
 
+/** An update this many server ticks behind the newest heard is stale: a second's, the history the prediction keeps */
+export const STALE_TICKS = 120;
+
+/** The updates worth applying: those within `STALE_TICKS` of the newest tick heard (these among them; `newest`: before
+ *  them) */
+export function freshUpdates<T extends { readonly update: { readonly serverTick: number } }>(updates: readonly T[], newest: number): T[] {
+  const latest = updates.reduce((tick, u) => Math.max(tick, u.update.serverTick), newest);
+  return updates.filter((u) => u.update.serverTick >= latest - STALE_TICKS);
+}
+
 export class NetSession {
   readonly predictor: Predictor;
   readonly ball: Interpolated<BodyState>;
@@ -69,6 +79,8 @@ export class NetSession {
   /** The round trip, smoothed (ms) */
   ping: number | null = null;
   bufferText = "";
+  /** The updates not applied for being stale (`freshUpdates`) */
+  staleDropped = 0;
   /** The connection closed: nothing more is sent */
   disconnected = false;
   /** Keep the measures (the tests) */
@@ -112,6 +124,12 @@ export class NetSession {
     const updates: CompleteUpdate[] = [];
     for (const part of this.#received.splice(0)) updates.push(...this.#updates.add(part));
     updates.push(...this.#updates.flush()); // (a part was lost: the others still apply)
+    // (an update far behind the newest heard isn't applied: after a stall on the way down the held ones come first, in
+    // order, and each replayed the outage in fast motion before the present arrived: the 2026-11-11 audit's NET-03)
+    const fresh = freshUpdates(updates, this.#ackTick);
+    this.staleDropped += updates.length - fresh.length;
+    updates.length = 0;
+    updates.push(...fresh);
     if (updates.length === 0) return;
     const pre = this.#capture();
     // (every frame replayed in this frame, a direct apply's own replay of the staged ones included: RV-336)

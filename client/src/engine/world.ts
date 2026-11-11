@@ -322,6 +322,7 @@ export class World {
   /** The match's end (FreezePawns): while frozen nothing simulates; ticks still count (online: the server's phase) */
   setFrozen(on: boolean): void {
     this.#changed();
+    this.#frozen = on;
     this.#sim.setFrozen(on);
   }
 
@@ -329,6 +330,7 @@ export class World {
    *  jumps short (online: the server's phase, so the prediction agrees) */
   setPodium(on: boolean): void {
     this.#changed();
+    this.#podium = on;
     this.#sim.setPodium(on);
   }
 
@@ -361,6 +363,8 @@ export class World {
 
   /** Whether demolitions are on (this world's own setting: kept over a loaded state's, RV-137) */
   #demolitions = true;
+  #frozen = false;
+  #podium = false;
 
   /** Ticks left of the kickoff countdown (cars get no input while it runs; a match server starts it). */
   kickoffCountdown(): number {
@@ -657,5 +661,11 @@ export class World {
     // or an online client predicts demolitions after every join and leave, RV-137)
     if (!this.#demolitions) this.#sim.setDemolitions(false);
     for (const id of this.#componentsOff) this.#sim.setCarComponents(id, false);
+    // (frozen and podium mode are the arena's own, in no saved state: a state with another count of cars (a player
+    // joined or left: the server's World message) makes a new arena, which has neither. This world's again, or a join
+    // or leave after the final whistle set the client stepping a world the server holds still, its cars and ball
+    // pulled back at every update: the 2026-11-11 audit's NET-01)
+    this.#sim.setFrozen(this.#frozen);
+    this.#sim.setPodium(this.#podium);
   }
 }

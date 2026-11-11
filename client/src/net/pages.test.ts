@@ -29,6 +29,7 @@ import {
   matchLock,
   matchPlayedElsewhere,
   openClaim,
+  openSeat,
   pageOutdated,
   pageUrl,
   queueAddress,
@@ -176,6 +177,20 @@ describe("the pages' handoffs", () => {
     const gone = vi.fn<() => Promise<string>>().mockRejectedValue(new RefusedError(REFUSED_TOKEN));
     await expect(openClaim(gone)).rejects.toBeInstanceOf(RefusedError);
     expect(gone).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a match's claim once more after a session that ended unanswered, never after a refusal (RV-1299)", async () => {
+    const lost = vi.fn<() => Promise<string>>().mockRejectedValueOnce(new Error("the session closed")).mockResolvedValue("in");
+    expect(await openSeat(lost)).toBe("in");
+    expect(lost).toHaveBeenCalledTimes(2);
+    const down = vi.fn<() => Promise<string>>().mockRejectedValue(new Error("the session closed"));
+    await expect(openSeat(down)).rejects.toThrow("the session closed");
+    expect(down).toHaveBeenCalledTimes(2);
+    for (const reason of [REFUSED_TICKET, REFUSED_TOKEN]) {
+      const refused = vi.fn<() => Promise<string>>().mockRejectedValue(new RefusedError(reason));
+      await expect(openSeat(refused)).rejects.toBeInstanceOf(RefusedError);
+      expect(refused).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("tries a claim's config.json and its ticket again inside its window, not a sign-in gone or a ban (RX31)", async () => {

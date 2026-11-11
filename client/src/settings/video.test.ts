@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_GUARD,
   AutoVideoGuard,
+  GUARD_PROBE,
   DEFAULT_VIDEO_SETTINGS,
   RENDER_QUALITY_SCALE,
   guardDecision,
@@ -184,6 +185,48 @@ describe("the automatic default", () => {
     const once = new AutoVideoGuard();
     for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 0.1; t += 1 / 60) once.frame(1 / 60);
     expect(once.done).toBe(true);
+  });
+
+  it("a page slow at a steady half refresh is probed once: faster at the probe's resolution, the GPU's load, a step; no faster, a display's cap, none (REN-05)", () => {
+    /** The guard fed `frame` s frames (the refresh read from them, as the meter reads it) until it probes or is done */
+    const until = (guard: AutoVideoGuard, frame: number, hz: number, stop: () => boolean, limit = 30): boolean[] => {
+      const steps: boolean[] = [];
+      for (let t = 0; t < limit && !stop(); t += frame) steps.push(guard.frame(frame, true, hz));
+      return steps;
+    };
+    // (a 60 Hz screen, a GPU needing two refreshes a frame from the first: 30 a second, the refresh read as 30)
+    const bound = new AutoVideoGuard();
+    expect(until(bound, 1 / 30, 30, () => bound.probing).some(Boolean)).toBe(false);
+    expect([bound.probing, bound.done]).toEqual([true, false]);
+    // (at the probe's resolution it makes every refresh: stepped, the probe over)
+    const steps = until(bound, 1 / 60, 30, () => bound.done);
+    expect(steps.filter(Boolean)).toEqual([true]);
+    expect(steps.length / 60).toBeCloseTo(GUARD_PROBE.settle + GUARD_PROBE.measure, 1);
+    expect([bound.probing, bound.done]).toEqual([false, true]);
+    // (a 30 Hz display: no faster in the probe, no step; three refreshes down to two counts as the GPU's too)
+    const capped = new AutoVideoGuard();
+    until(capped, 1 / 30, 30, () => capped.probing);
+    expect(until(capped, 1 / 30, 30, () => capped.done).some(Boolean)).toBe(false);
+    expect([capped.probing, capped.done]).toEqual([false, true]);
+    const three = new AutoVideoGuard();
+    until(three, 1 / 20, 20, () => three.probing);
+    expect(until(three, 1 / 30, 20, () => three.done).filter(Boolean)).toEqual([true]);
+    // (rolling, a phone's: probed once in the session, its later capped windows not; a later slow window still steps)
+    const phone = new AutoVideoGuard({ rolling: true });
+    until(phone, 1 / 30, 30, () => phone.probing);
+    until(phone, 1 / 30, 30, () => !phone.probing);
+    expect(until(phone, 1 / 30, 30, () => phone.probing, 20).some(Boolean)).toBe(false);
+    expect([phone.probing, phone.done]).toEqual([false, false]);
+    expect(until(phone, 1 / 30, 60, () => phone.done).filter(Boolean)).toEqual([true]);
+    // (never one at a real 60 or over, nor a frame cap the player set: not slow, not probed)
+    for (const [frame, hz, cap] of [
+      [1 / 60, 60, null],
+      [1 / 30, 120, 30],
+    ] as const) {
+      const guard = new AutoVideoGuard({ rolling: true });
+      for (let t = 0; t < 20; t += frame) expect(guard.frame(frame, true, hz, cap)).toBe(false);
+      expect(guard.probing).toBe(false);
+    }
   });
 
   it("hitches: a few long frames trimmed, none 0.25 s or longer counted", () => {

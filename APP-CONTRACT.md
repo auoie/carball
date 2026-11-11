@@ -52,7 +52,8 @@ the engine's WebAssembly and the local host's (`emscripten/emsdk`, the host with
 (`rust`: the engine's libraries in their own stage, then `cargo build --release`; no debug info, symbols stripped, the
 registry's and home directory's paths remapped), the client (`node`: `npm ci`, `npm run build`, then the shipped-data and
 names checks on what it built) and the accounts service (`golang`: static, `-trimpath`, stripped). The script first
-builds `--target checks` (the names check over the game and API images' files too, and no build paths in either binary),
+builds `--target checks` (the names check over the game and API images' files too, no build paths in either binary, and
+the server's committed engine bindings made again from the engine's C header with nothing changed: BLD-02),
 then `--target web`, `game` and `api` as `carball-web:TAG`, `carball-game:TAG` and `carball-api:TAG`. Each stage is
 cached by its inputs, so a release that doesn't touch the engine builds no C++; cargo's registry and target, npm's and
 Go's caches are BuildKit cache mounts (the server's own crate always built again). The first build downloads the
@@ -167,7 +168,12 @@ services instead (the browser tests' stacks, `client/e2e/services`).
   first player to leave while the lobby is full and there's no winner yet is reported at the leave (`POST
   /api/quitters`, their queue ban; a lost connection after 5 s, its seat told left to the matchmaker then, after the report, so it can't search and be matched before the ban: RV-964); a rejoin that fills the lobby again undoes it (`POST
   /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
-  their connection within 5 s of each other (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
+  their connection within 5 s of each other (the server's own outage). **An outage voids the match** (the user's
+  decision of 2026-11-11, the audit's MATCH-02): when a team is emptied by a lost connection and so forfeits, that
+  forfeit's result waits 5 s (or until the match is let go); if more than half the match's seats lost their
+  connection within 5 s of that leave, the match ends with no result and no rating change (the matchmaker told its
+  end); else the result goes out then. A leave the player chose never counts as lost, and its forfeit's result is told
+  at once. A ranked 2v2 or 3v3 seat left by accident is
   held for a rejoin until the match ends (a rejoin's ticket, for that match; a rejoin before the old session timed out
   takes the seat over). The matches are the accounts service's matchmaker's (notes/matchmaking.md, the central
   matchmaker): it pairs by rating (ours: ±100, wider by 50 every 10 s the oldest searcher has waited, uncapped; teams by
@@ -191,7 +197,10 @@ services instead (the browser tests' stacks, `client/e2e/services`).
   each reload, or failure, is one log line.
 - **Health:** `carball-server --healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET http://127.0.0.1:$HEALTH_PORT/healthz`
   answers 200 while the game thread runs (its heartbeat within 2 s), else 503; the check follows no redirect (only that
-  200 is healthy) and gives up in 2 s; its own bad arguments exit 1. The check reads `HEALTH_PORT` (or `--health-port`)
+  200 is healthy) and gives up in 2 s; its own bad arguments exit 1. A game thread that makes no pass over ten checks a
+  second apart is stuck: the process exits 1 for the restart policy (an unhealthy container alone restarts nothing), and
+  meanwhile a region's ping goes unanswered, so no page searches at a server that can't host its match (the audit's
+  SEC-SRV-03). The check reads `HEALTH_PORT` (or `--health-port`)
   alone. A variable that isn't a number stops the server with its name in the error. The endpoint listens on
   127.0.0.1 alone and takes 16 connections at once, each 2 s for its request's headers (16 KiB at most): a process in
   the container's own network namespace holding 16 slow connections could keep the check failing (only that
@@ -231,8 +240,11 @@ IPv4 address or an IPv6 /64 (a LAN party's players behind one address count toge
 2026-10-23); its wider network an IPv4 /24 or an IPv6 /48, as the accounts service's; a bucket is a burst at once, then
 a steady rate (governor's GCRA). A session that hasn't said its hello holds its slot only until it's needed: at the
 server's, its address's or its network's most sessions, the oldest such (anyone's, its address's, its network's) is
-closed for the newcomer; one that has said its hello (a player's, its ticket checked) never is (the audit's
-SEC-SRV-01).
+closed for the newcomer (the audit's SEC-SRV-01). A hello alone makes no session a player's: one whose ticket
+verified for its claim or rejoin never gives way; a region's ping, a claim with no good ticket and any refused
+session stay ones to give way, let their slot go before their answer is written, and that answer (its write and its
+stream's end) has 2 s, whatever the client does (RV-1291). A good ticket that isn't for this (another server's seat,
+the other intent's) is charged to its address's claims like one that doesn't verify (RV-1295).
 
 | Limit | Counted per | Value | Set by |
 |---|---|---|---|
@@ -300,7 +312,11 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   no Domain), so the page must be https (http on localhost in development).
 - **Database:** Postgres 15 or later (tested with 18), on the same private network, never exposed. Two roles: the
   schema's owner (`carball-api migrate`, a one-shot run before each new image) and the service's (rows only: `serve`
-  refuses to start if its role may create in the schema). Encrypted backups off the box (notes/accounts.md §2). Start
+  refuses to start if its role may create in the schema). `serve` also refuses to start on a schema behind its own
+  migrations (the `migrate` run skipped or failed: every route reading a newer column would answer 500 under a green
+  health check), naming both versions; on a newer one (an older image rolled back) it warns and runs. It reads the
+  migrations' record for that, which `migrate` lets the service's role read (and nothing more): **run `migrate` from
+  this image before `serve`, even when it adds no migration** (the audit's BLD-01). Encrypted backups off the box (notes/accounts.md §2). Start
   the database first: `serve` waits up to a minute for it, then exits (restarted by the policy).
 - **Outbound:** https to Google (`accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`), Steam
   (`steamcommunity.com`, `api.steampowered.com`) and Cloudflare (`challenges.cloudflare.com`), each call with a 10 s

@@ -225,6 +225,36 @@ describe("World", () => {
     world.dispose();
   });
 
+  it("frozen and podium mode outlast a loaded state with another count of cars (a join or leave after the final whistle: NET-01)", () => {
+    const ZERO = vec3(0, 0, 0);
+    const world = World.create(engine);
+    const id = world.addCar(0, CarBody.Standard);
+    world.resetKickoff(3);
+    world.setKickoffCountdown(0);
+    world.setBall({ pos: vec3(0, 0, 800), vel: vec3(300, 0, 0), angVel: ZERO });
+    world.setFrozen(true);
+    world.setPodium(true);
+    // (the server's world after a player joined: two cars, so the load can't be in place: a new arena)
+    const server = World.create(engine);
+    server.addCar(0, CarBody.Standard);
+    server.addCar(1, CarBody.Standard);
+    server.resetKickoff(3);
+    server.setKickoffCountdown(0);
+    server.setBall({ pos: vec3(0, 0, 800), vel: vec3(300, 0, 0), angVel: ZERO });
+    world.loadState(server.saveState());
+    const before = world.ball().pos;
+    for (let i = 0; i < 60; i++) world.step();
+    expect(world.ball().pos, "still frozen: the ball where it was").toEqual(before);
+    // (podium mode still: a jump there is the short one, the car held at its place; thawed, the world runs again)
+    world.setFrozen(false);
+    const at = world.car(id).pos;
+    world.setControls(id, { ...NO_CONTROLS, throttle: 1, boost: true });
+    for (let i = 0; i < 60; i++) world.step();
+    const moved = world.car(id).pos;
+    expect(Math.hypot(moved.x - at.x, moved.y - at.y), "held at its spot").toBeLessThan(1);
+    expect(world.ball().pos.x).toBeGreaterThan(before.x + 100);
+  });
+
   it("takeImpacts after a loadState: the ticks simulated again come once (RV-163)", () => {
     const world = World.create(engine);
     const id = world.addCar(0);

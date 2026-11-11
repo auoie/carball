@@ -56,7 +56,9 @@ func TestMigrateAndGrants(t *testing.T) {
 		"CREATE TABLE x (y int)",
 		"DROP TABLE bans",
 		"ALTER TABLE accounts ADD COLUMN z int",
-		"SELECT * FROM goose_db_version",
+		"DELETE FROM goose_db_version",
+		"UPDATE goose_db_version SET version_id = 0",
+		"INSERT INTO goose_db_version (version_id, is_applied) VALUES (99, true)",
 	} {
 		if _, err := conn.Exec(ctx, q); err == nil {
 			t.Errorf("the service's role may %q", q)
@@ -72,6 +74,10 @@ func TestMigrateAndGrants(t *testing.T) {
 	if err := store.Migrate(ctx, owner, "", testdb.OwnerRole, true); err != nil {
 		t.Errorf("one role for both, development's: %v", err)
 	}
+	latest, err := store.LatestMigration()
+	if err != nil || latest < 8 {
+		t.Fatalf("LatestMigration = %d, %v", latest, err)
+	}
 	for _, c := range []struct {
 		url  string
 		want bool
@@ -79,6 +85,10 @@ func TestMigrateAndGrants(t *testing.T) {
 		s, err := store.Open(ctx, c.url, "")
 		if err != nil {
 			t.Fatal(err)
+		}
+		// (the migrations' record read, by the service's role too: the schema this build's, BLD-01)
+		if version, err := s.SchemaVersion(ctx); err != nil || version != latest {
+			t.Errorf("SchemaVersion (%s) = %d, %v; want %d", c.url, version, err, latest)
 		}
 		if can, err := s.CanCreate(ctx); err != nil || can != c.want {
 			t.Errorf("CanCreate (%s) = %v, %v; want %v", c.url, can, err, c.want)
