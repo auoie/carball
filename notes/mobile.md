@@ -151,6 +151,8 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
 5. RX82's findings: the frame pacer phase-locked, the Skip Goal Replay wait, the online offsets per tick, the editor's
    cover, the layout record kept whole, the clamps (2026-11-10).
 6. The camera at the display's rate (RV-1251 (b), notes/camera.md), RX83's findings (2026-11-10).
+7. RX84's findings: the camera at the screen's refresh (a dividing cap's rate on a phone), every frame on a step, the
+   pacer's refresh to it, resets, stalls, time away (2026-11-10).
 
 ## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
 

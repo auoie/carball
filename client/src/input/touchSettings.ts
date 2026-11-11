@@ -90,6 +90,25 @@ export class FramePacer {
   #drawn: number | null = null;
   #last: number | null = null;
   readonly #intervals: number[] = [];
+  /** The last 120 callbacks' intervals (ms), for the refresh to the camera: each over the whole refreshes it spans, a
+   *  missed vsync two, averaged (a timer's jitter cancels) */
+  readonly #long: number[] = [];
+  #refresh: number | null = null;
+  #rephased = false;
+
+  /** The screen's refresh as measured from every animation frame (Hz; null before eight): exact once its jitter averages
+   *  out (camera/pacedCamera.ts steps on it) */
+  get refreshHz(): number | null {
+    const m = this.#refresh;
+    if (m === null || this.#long.length < 8) return null;
+    const shares = this.#long.filter((v) => v <= 4.5 * m).map((v) => v / Math.max(1, Math.round(v / m)));
+    return shares.length > 0 ? 1000 / (shares.reduce((a, b) => a + b, 0) / shares.length) : 1000 / m;
+  }
+
+  /** The last frame drawn started the cadence again (a vsync missed, a stall: the camera's steps start from it too) */
+  get rephased(): boolean {
+    return this.#rephased;
+  }
 
   due(now: number, hz: number): boolean {
     if (this.#last !== null) {
@@ -97,16 +116,20 @@ export class FramePacer {
       if (d > 0 && d < 100) {
         this.#intervals.push(d);
         if (this.#intervals.length > 31) this.#intervals.shift();
+        this.#long.push(d);
+        if (this.#long.length > 120) this.#long.shift();
       }
     }
     this.#last = now;
+    const sorted = [...this.#intervals].sort((a, b) => a - b);
+    this.#refresh = sorted[Math.floor(sorted.length / 2)] ?? this.#refresh;
     if (hz <= 0 || this.#drawn === null) {
       this.#drawn = now;
+      this.#rephased = false;
       return true;
     }
     const interval = 1000 / hz;
-    const sorted = [...this.#intervals].sort((a, b) => a - b);
-    const refresh = sorted[Math.floor(sorted.length / 2)] ?? interval;
+    const refresh = this.#refresh ?? interval;
     const early = Math.min(interval / 4, 0.45 * refresh);
     const next = this.#drawn + interval;
     if (now < next - early) return false;
@@ -114,7 +137,8 @@ export class FramePacer {
     // (a whole interval late: the cadence starts again from here; most of a refresh late (a vsync missed), the cadence
     // too, so the next frame keeps the interval (3 then 2 refreshes at 120/60, not 3 then 1: RV-1254), never on a ratio's
     // own half-refresh lateness (90/60)); else on the cadence, pulled toward the frames)
-    this.#drawn = late >= interval || late >= 0.75 * refresh ? now : next + 0.1 * clamp(late, -early, early);
+    this.#rephased = late >= interval || late >= 0.75 * refresh;
+    this.#drawn = this.#rephased ? now : next + 0.1 * clamp(late, -early, early);
     return true;
   }
 }

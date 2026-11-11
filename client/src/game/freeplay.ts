@@ -4,7 +4,7 @@ import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/carballCamera";
-import { PacedCamera } from "../camera/pacedCamera";
+import { type FrameClock, PacedCamera } from "../camera/pacedCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type Team, type World } from "../engine/world";
 import { DEFAULT_CAR, carChoice } from "./cars";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
@@ -109,8 +109,10 @@ export class Freeplay {
   #playerId: number;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
-  /** The camera at the display's rate, the scene drawn at its moment (camera/pacedCamera.ts) */
+  /** The camera at the screen's rate, the car drawn as it sees it (camera/pacedCamera.ts) */
   readonly #view = new PacedCamera(this.#camera);
+  /** A touch device's frames as its pacer knows them (the page's; none on a desktop) */
+  frameClock: () => FrameClock | null = () => null;
   #carView: CarView;
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers();
@@ -1068,7 +1070,7 @@ export class Freeplay {
     // last step saw it, at that step's moment (the frame's to within half a step), so the two agree whatever the frames)
     const ownCamera = this.#garageCamera === null && !(this.#editing && this.editorCamera);
     const alpha = this.#clock.alpha;
-    if (ownCamera) this.#view.plan(realSeconds, alpha);
+    if (ownCamera) this.#view.plan(realSeconds, alpha, this.frameClock());
     const subject = ownCamera ? this.#view.subject : null;
     const carPosition = (): Vector3 => (subject ? toThreeVector(subject.pos, this.#pos) : this.#car.position(alpha, this.#pos));
     const car = this.#car.current;

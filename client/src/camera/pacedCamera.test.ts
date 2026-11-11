@@ -1,14 +1,16 @@
-// The camera at the display's rate (src/camera/pacedCamera.ts; notes/camera.md): at even frames it's the game's camera
+// The camera at the screen's rate (src/camera/pacedCamera.ts; notes/camera.md): at even frames it's the game's camera
 // exactly (stepped once a frame with the frame's time), so its lag behind a turning car is the game's at that rate; at
-// uneven ones (a phone's dropped frames, Firefox's timer, a hitch) it runs whole steps and holds the car still on screen;
-// it follows the display's rate as it changes, a touch device's cap, a goal's slow motion; the mouse's free look whole.
+// uneven ones (dropped frames, a timer's jitter, a hitch, a variable-refresh screen, a phone's cap) every frame lands on
+// a step and the car is drawn as its camera saw it: no wobble, the car with the camera and the scene; a reset, a stall, a
+// time away handled; the mouse's free look whole. The touch cases run through the page's own FramePacer.
 import { describe, expect, it } from "vitest";
 import type { CarState } from "../engine/world";
 import { Interpolated } from "../game/interpolated";
+import { FramePacer } from "../input/touchSettings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { type Rot3, type Vec3, vec3 } from "../math/vec";
 import { type CameraControls, type CameraView, PlayerCamera } from "./carballCamera";
-import { PacedCamera } from "./pacedCamera";
+import { type FrameClock, PacedCamera } from "./pacedCamera";
 
 const UP = vec3(0, 0, 1);
 const BALL = vec3(0, 3000, 93);
@@ -59,6 +61,11 @@ function turning(t: number): CarState {
   return car(vec3(653 * Math.sin(-th) * -1, 653 - 653 * Math.cos(th), 17), vec3(f.x * 1410, f.y * 1410, 0), { forward: f, right: r, up: UP });
 }
 
+/** Straight along x at 2300 uu/s: the car's distance from the camera steady unless the two are drawn apart */
+function straight(t: number): CarState {
+  return car(vec3(-3000 + 2300 * t, 0, 17), vec3(2300, 0, 0), { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: UP });
+}
+
 /** The turn for 2 s, then in the air turned a quarter turn (its velocity too), flying on: the air camera's settle */
 function turnThenAir(t: number): CarState {
   if (t < 2) return turning(t);
@@ -75,14 +82,24 @@ function turnThenAir(t: number): CarState {
 
 interface Frame {
   readonly view: CameraView;
+  /** The followed car as drawn, and the rest of the scene's moment for it (the car at the frame's alpha) */
   readonly car: CarState;
+  readonly scene: CarState;
+  /** The steps the frame ran */
+  readonly steps: number;
 }
 
-/** A run of frames (`dts`: real seconds; `dilation`: world over real), physics on its own clock, the car on `path` (world
- *  time) at each tick and drawn between the last two (as the game draws it). `game`: the game's camera, stepped once a
- *  frame with the frame's time, the car as drawn at the frame's alpha; else ours, the car drawn at the alpha it gives */
-function frames(
-  dts: readonly number[],
+/** A frame's real seconds, and (touch) the pacer's clock */
+interface Shown {
+  readonly dt: number;
+  readonly clock: FrameClock | null;
+}
+
+/** A run of frames, physics on its own clock, the car on `path` (world time) at each tick and drawn between the last two
+ *  (as the game draws it). `game`: the game's camera, stepped once a frame with the frame's time, the car as drawn at the
+ *  frame's alpha; else ours, the followed car drawn as it gives */
+function run(
+  shown: readonly Shown[],
   path: (t: number) => CarState,
   o: { game?: boolean; dilation?: (i: number) => number; controls?: (i: number, dt: number) => CameraControls } = {},
 ): Frame[] {
@@ -91,7 +108,7 @@ function frames(
   const game = new PlayerCamera();
   const body = new Interpolated(path(0));
   let index = 0;
-  return dts.map((dt, i) => {
+  return shown.map(({ dt, clock: frame }, i) => {
     const world = dt * (o.dilation?.(i) ?? 1);
     const ticks = clock.advance(world);
     for (let k = 0; k < ticks; k++) {
@@ -100,14 +117,33 @@ function frames(
       paced.tick(body.current, BALL, null);
     }
     const controls = o.controls?.(i, dt) ?? CAR_CAM;
-    if (o.game) {
-      const drawn = body.blended(clock.alpha);
-      return { view: game.update(world, drawn, BALL, controls, null, dt), car: drawn };
-    }
-    paced.plan(dt, clock.alpha);
-    const drawn = paced.subject ?? body.blended(clock.alpha);
-    return { view: paced.run(controls, { car: drawn, ball: BALL, respawn: null }), car: drawn };
+    const scene = body.blended(clock.alpha);
+    if (o.game) return { view: game.update(world, scene, BALL, controls, null, dt), car: scene, scene, steps: 1 };
+    paced.plan(dt, clock.alpha, frame);
+    const steps = paced.stepsPlanned;
+    const drawn = paced.subject ?? scene;
+    return { view: paced.run(controls, { car: drawn, ball: BALL, respawn: null }), car: drawn, scene, steps };
   });
+}
+
+/** A desktop's frames (every one shown) */
+const desktop = (dts: readonly number[]): Shown[] => dts.map((dt) => ({ dt, clock: null }));
+
+/** A touch device's frames: a screen's vsyncs (`hz`, each one's time off by up to ±`jitter` s, `missed` of them skipped)
+ *  through the page's FramePacer at `cap` */
+function touch(hz: number, cap: number, seconds: number, o: { jitter?: number; missed?: number } = {}): Shown[] {
+  const pacer = new FramePacer();
+  const r = rng(5);
+  const out: Shown[] = [];
+  let last: number | null = null;
+  for (let i = 0; i < hz * seconds; i++) {
+    if (i > 10 && r() < (o.missed ?? 0)) continue;
+    const now = (i * 1000) / hz + (r() - 0.5) * 2 * (o.jitter ?? 0) * 1000;
+    if (!pacer.due(now, cap)) continue;
+    if (last !== null) out.push({ dt: (now - last) / 1000, clock: { refreshHz: pacer.refreshHz, capHz: cap, rephased: pacer.rephased } });
+    last = now;
+  }
+  return out;
 }
 
 /** The car's yaw on screen (degrees: its heading less the view's) */
@@ -115,16 +151,29 @@ function onScreen(f: Frame): number {
   const d = Math.atan2(f.car.rot.forward.y, f.car.rot.forward.x) - Math.atan2(f.view.forward.y, f.view.forward.x);
   return (Math.atan2(Math.sin(d), Math.cos(d)) * 180) / Math.PI;
 }
+/** The car's distance from the camera (uu) */
+const fromCamera = (f: Frame): number => Math.hypot(f.car.pos.x - f.view.position.x, f.car.pos.y - f.view.position.y);
+/** The followed car's distance from where the scene's moment has it (uu) */
+const fromScene = (f: Frame): number => Math.hypot(f.car.pos.x - f.scene.pos.x, f.car.pos.y - f.scene.pos.y);
 
-const tail = (run: readonly Frame[]): number[] => run.slice(Math.floor(run.length / 2)).map(onScreen);
+const half = (frames: readonly Frame[]): Frame[] => frames.slice(Math.floor(frames.length / 2));
 const mean = (v: readonly number[]): number => v.reduce((a, b) => a + b, 0) / v.length;
 const range = (v: readonly number[]): number => Math.max(...v) - Math.min(...v);
 const even = (hz: number, seconds: number): number[] => Array.from({ length: Math.round(hz * seconds) }, () => 1 / hz);
-/** Frames on a steady clock (`hz`), each one's time off by up to ±`by` s (a timer's jitter: the clock itself steady), as
- *  the intervals between them */
+/** Frames on a steady clock (`hz`), each one's time off by up to ±`by` s (a timer's jitter), as intervals */
 function jittered(hz: number, seconds: number, by: number, r: () => number): number[] {
   const times = Array.from({ length: Math.round(hz * seconds) + 1 }, (_, i) => i / hz + (i === 0 ? 0 : (r() - 0.5) * 2 * by));
   return times.slice(1).map((t, i) => t - (times[i] ?? 0));
+}
+/** Frames on a `hz` screen, `share` of them two refreshes long (dropped) */
+function dropping(hz: number, seconds: number, share: number, r: () => number): number[] {
+  const out: number[] = [];
+  for (let t = 0; t < seconds;) {
+    const n = r() < share ? 2 : 1;
+    out.push(n / hz);
+    t += n / hz;
+  }
+  return out;
 }
 
 /** A seeded generator (the same frames each run) */
@@ -136,13 +185,13 @@ function rng(seed: number): () => number {
   };
 }
 
-describe("the camera at the display's rate", () => {
+describe("the camera at the screen's rate", () => {
   it("at even frames it is the game's camera, frame for frame: a turn, then the air's quarter turn settling, a goal's slow motion", () => {
-    const dts = even(60, 5);
+    const dts = desktop(even(60, 5));
     const slow = (i: number): number => (i >= 60 && i < 120 ? 0.25 : 1);
     for (const dilation of [(): number => 1, slow]) {
-      const ours = frames(dts, turnThenAir, { dilation });
-      const game = frames(dts, turnThenAir, { game: true, dilation });
+      const ours = run(dts, turnThenAir, { dilation });
+      const game = run(dts, turnThenAir, { game: true, dilation });
       ours.forEach((f, i) => {
         const g = game[i];
         expect(Math.abs(f.view.forward.x - (g?.view.forward.x ?? 0)) + Math.abs(f.view.forward.y - (g?.view.forward.y ?? 0))).toBeLessThan(1e-9);
@@ -150,62 +199,108 @@ describe("the camera at the display's rate", () => {
     }
   });
 
-  it("follows a steady turn as the game does at the display's rate: 3.23° at 60, 3.76° at 144, 3.92° at 240; 2.45° at a phone's 30", () => {
+  it("follows a steady turn as the game does at the screen's rate: 3.23° at 60, 3.68° at 120, 3.76° at 144, 3.81° at 165, 3.92° at 240", () => {
     for (const [hz, lag] of [
       [60, 3.23],
+      [120, 3.68],
       [144, 3.76],
+      [165, 3.81],
       [240, 3.92],
-      [30, 2.45],
     ] as const) {
-      const ours = mean(tail(frames(even(hz, 6), turning)));
-      const game = mean(tail(frames(even(hz, 6), turning, { game: true })));
+      const ours = mean(half(run(desktop(even(hz, 6)), turning)).map(onScreen));
+      const game = mean(half(run(desktop(even(hz, 6)), turning, { game: true })).map(onScreen));
       expect(ours, `${String(hz)} Hz`).toBeCloseTo(game, 3);
       expect(Math.abs(ours), `${String(hz)} Hz`).toBeCloseTo(lag, 2);
     }
   });
 
-  it("holds a steady turn still on screen at uneven frames, at the display's lag: dropped frames, Firefox's timer, a hitch, a display off its rate", () => {
+  it("a phone at its cap: the cap's lag where it divides the screen's refresh (120 Hz at 60 or 30), the screen's where it doesn't (90 at 60)", () => {
+    for (const [hz, cap, lag] of [
+      [120, 60, 3.23],
+      [120, 30, 2.45],
+      [60, 30, 2.45],
+      [90, 60, 3.53],
+      [144, 60, 3.76],
+    ] as const) {
+      const seen = half(run(touch(hz, cap, 8, { jitter: 0.0003 }), turning)).map(onScreen);
+      expect(Math.abs(mean(seen)), `${String(hz)}/${String(cap)}`).toBeCloseTo(lag, 1);
+      expect(range(seen), `${String(hz)}/${String(cap)}`).toBeLessThan(0.01);
+    }
+  });
+
+  it("every frame on a step, the car with its camera and the scene, at uneven frames: drops, a timer, a variable-refresh screen, a phone's cap (RV-1259, RV-1262)", () => {
     const r = rng(1);
-    const at = (hz: number, seconds: number): number[] => Array.from({ length: Math.round(hz * seconds) }, () => 1 / hz);
-    const cases: [string, number[], number, number][] = [
-      ["60 Hz, 15 % dropped (a phone)", Array.from({ length: 600 }, () => (r() < 0.15 ? 2 / 60 : 1 / 60)), 3.23, 0.01],
-      [
-        "Firefox's 16/17 ms (headless Firefox's recorded alternation, around 60 Hz)",
-        Array.from({ length: 600 }, (_, i) => (i % 2 ? 0.01717 : 0.01617)),
-        3.23,
-        0.01,
-      ],
-      ["a 16/17 ms alternation off 60 Hz (16.56 ms on average)", Array.from({ length: 600 }, (_, i) => (i % 2 ? 0.01706 : 0.01606)), 3.23, 0.01],
-      ["60 Hz, each frame's time ±1 ms", jittered(60, 10, 0.001, r), 3.23, 0.01],
-      ["144 Hz, each frame's time ±0.5 ms", jittered(144, 10, 0.0005, r), 3.76, 0.01],
-      ["60 Hz with a hitch of two refreshes every second", Array.from({ length: 600 }, (_, i) => (i % 60 === 59 ? 2 / 60 : 1 / 60)), 3.23, 0.01],
-      ["a 143.9 Hz display", at(143.9, 10), 3.76, 0.01],
-      ["a variable-refresh display at 110 a second", at(110, 10), 3.6, 0.01],
-      // (a stress past any browser's timer: ±2 ms at 144 Hz, 29 % of a frame either way; the game's camera, stepped with
-      // each frame's time, wobbles 0.5° there)
-      ["144 Hz, each frame's time ±2 ms", jittered(144, 10, 0.002, r), 3.76, 0.03],
+    const cases: [string, Shown[]][] = [
+      ["60 Hz, a third of the frames dropped", desktop(dropping(60, 10, 0.33, r))],
+      ["144 Hz, 30 % dropped", desktop(dropping(144, 10, 0.3, r))],
+      ["144 Hz, 45 % dropped", desktop(dropping(144, 10, 0.45, r))],
+      ["120 Hz through a 1 ms timer (8, 8, 9 ms)", desktop(Array.from({ length: 1200 }, (_, i) => (i % 3 === 2 ? 0.009 : 0.008)))],
+      ["a window from a 60 Hz screen to a 144 Hz one", desktop([...even(60, 2), ...even(144, 6)])],
+      ["Firefox's 16/17 ms", desktop(Array.from({ length: 600 }, (_, i) => (i % 2 ? 0.01717 : 0.01617)))],
+      ["60 Hz, each frame's time ±1 ms", desktop(jittered(60, 10, 0.001, r))],
+      ["a phone, 144 Hz at 60, 2 % of vsyncs missed", touch(144, 60, 10, { jitter: 0.0003, missed: 0.02 })],
+      ["a phone, 144 Hz at 30, 2 % missed", touch(144, 30, 10, { jitter: 0.0003, missed: 0.02 })],
+      ["a phone, 90 Hz at 60, 2 % missed", touch(90, 60, 10, { jitter: 0.0003, missed: 0.02 })],
+      ["a phone, 120 Hz at 60, 2 % missed", touch(120, 60, 10, { jitter: 0.0003, missed: 0.02 })],
     ];
-    for (const [name, dts, lag, still] of cases) {
-      const seen = tail(frames(dts, turning));
+    for (const [name, shown] of cases) {
+      const frames = half(run(shown, straight));
+      expect(frames.filter((f) => f.steps === 0).length, `${name}: frames without a step`).toBe(0);
+      expect(range(frames.map(fromCamera)), `${name}: the car from its camera`).toBeLessThan(0.5);
+      expect(Math.max(...frames.map(fromScene)), `${name}: the car from the scene`).toBeLessThan(3);
+    }
+  });
+
+  it("holds a steady turn still on screen at uneven frames, at the screen's lag", () => {
+    const r = rng(2);
+    const cases: [string, Shown[], number, number][] = [
+      ["60 Hz, 15 % dropped", desktop(dropping(60, 10, 0.15, r)), 3.23, 0.01],
+      ["60 Hz, a third dropped", desktop(dropping(60, 10, 0.33, r)), 3.23, 0.01],
+      ["Firefox's 16/17 ms", desktop(Array.from({ length: 600 }, (_, i) => (i % 2 ? 0.01717 : 0.01617))), 3.23, 0.01],
+      ["144 Hz, each frame's time ±0.5 ms", desktop(jittered(144, 10, 0.0005, r)), 3.76, 0.01],
+      ["60 Hz, a hitch of two refreshes a second", desktop(Array.from({ length: 600 }, (_, i) => (i % 60 === 59 ? 2 / 60 : 1 / 60))), 3.23, 0.01],
+      ["a 143.9 Hz screen", desktop(even(143.9, 10)), 3.76, 0.01],
+
+      // (a stress past any browser's timer: ±2 ms at 144 Hz, 29 % of a frame either way; the game's camera wobbles 0.5°)
+      ["144 Hz, each frame's time ±2 ms", desktop(jittered(144, 10, 0.002, r)), 3.76, 0.05],
+    ];
+    for (const [name, shown, lag, still] of cases) {
+      const seen = half(run(shown, turning)).map(onScreen);
       expect(range(seen), name).toBeLessThan(still);
       expect(Math.abs(mean(seen)), name).toBeCloseTo(lag, 1);
     }
-    // (a stall past what the physics clock runs in a frame, 66 ms, its last frame in each second: its lost time a short
-    // swing, settled within a quarter of a second)
-    const stalls = frames(
-      Array.from({ length: 600 }, (_, i) => (i % 60 === 59 ? 0.066 : 1 / 60)),
-      turning,
-    ).map(onScreen);
-    const settled = stalls.filter((_, i) => i >= 300 && i % 60 >= 15 && i % 60 < 59);
-    expect(range(settled)).toBeLessThan(0.01);
     // (where the game's camera, stepped with each frame's time, wobbles)
-    expect(range(tail(frames(cases[0]?.[1] ?? [], turning, { game: true })))).toBeGreaterThan(0.3);
+    expect(range(half(run(cases[0]?.[1] ?? [], turning, { game: true })).map(onScreen))).toBeGreaterThan(0.3);
+    // (a phone at its cap, vsyncs missed: a late frame's one step of the time that passed, as the game's at 60 on it: no
+    // more swing than the game's camera on the same frames)
+    for (const [hz, cap] of [
+      [120, 60],
+      [120, 30],
+      [90, 60],
+    ] as const) {
+      const shown = touch(hz, cap, 10, { jitter: 0.0003, missed: 0.02 });
+      const ours = range(half(run(shown, turning)).map(onScreen));
+      const game = range(half(run(shown, turning, { game: true })).map(onScreen));
+      expect(ours, `${String(hz)}/${String(cap)}`).toBeLessThanOrEqual(game + 0.01);
+    }
   });
 
-  it("follows the display's rate as it changes (a window moved from a 144 Hz display to a 60 Hz one): the new rate's lag, still", () => {
-    const run = frames([...even(144, 3), ...even(60, 6)], turning);
-    const before = run.slice(300, 432).map(onScreen);
-    const after = run.slice(run.length - 120).map(onScreen);
+  it("a hitch at 240 Hz swings no more than the game's; a stall past a quarter second, one step of the scene's time (RV-1261)", () => {
+    const hitch = (ms: number): Shown[] => desktop(Array.from({ length: 1200 }, (_, i) => (i % 240 === 239 ? ms / 1000 : 1 / 240)));
+    for (const ms of [40, 66, 100]) {
+      const ours = range(half(run(hitch(ms), turning)).map(onScreen));
+      const game = range(half(run(hitch(ms), turning, { game: true })).map(onScreen));
+      expect(ours, `${String(ms)} ms`).toBeLessThanOrEqual(game + 0.01);
+    }
+    // (a tab shown again after 0.4 s: no swing past the game's)
+    const away = desktop([...even(60, 3), 0.4, ...even(60, 3)]);
+    expect(range(half(run(away, turning)).map(onScreen))).toBeLessThanOrEqual(range(half(run(away, turning, { game: true })).map(onScreen)) + 0.01);
+  });
+
+  it("follows the screen's rate as it changes (a window from 144 Hz to 60): the new rate's lag, still", () => {
+    const frames = run(desktop([...even(144, 3), ...even(60, 6)]), turning);
+    const before = frames.slice(300, 432).map(onScreen);
+    const after = frames.slice(frames.length - 120).map(onScreen);
     expect(Math.abs(mean(before))).toBeCloseTo(3.76, 2);
     expect(Math.abs(mean(after))).toBeCloseTo(3.23, 2);
     expect(range(after)).toBeLessThan(0.01);
@@ -217,13 +312,12 @@ describe("the camera at the display's rate", () => {
       ...CAR_CAM,
       freeLook: { axes: { pitch: 0, yaw, source: "mouse" }, settings: { smoothing: false, accelRate: 1, decelRate: 1, freeLookSpeed: 1 }, ballCamHold: false },
     });
-    const yawOf = (run: readonly Frame[]): number => {
-      const v = run[run.length - 1]?.view;
+    const yawOf = (frames: readonly Frame[]): number => {
+      const v = frames[frames.length - 1]?.view;
       return v ? Math.atan2(v.forward.y, v.forward.x) : 0;
     };
     // (6 counts a 60th of a second, each frame its time's worth)
-    const evenRun = frames(even(60, 2), still, { controls: (_, dt) => look(Math.round(dt * 360)) });
-    // (a phone's few dropped frames: a 60 Hz display still)
+    const evenRun = run(desktop(even(60, 2)), still, { controls: (_, dt) => look(Math.round(dt * 360)) });
     const pattern = [1, 1, 1, 2, 1, 1, 1, 1, 1, 3, 1, 1, 1];
     const uneven: number[] = [];
     for (let left = 120, i = 0; left > 0; i++) {
@@ -231,21 +325,49 @@ describe("the camera at the display's rate", () => {
       uneven.push(n / 60);
       left -= n;
     }
-    const unevenRun = frames(uneven, still, { controls: (_, dt) => look(Math.round(dt * 360)) });
+    const unevenRun = run(desktop(uneven), still, { controls: (_, dt) => look(Math.round(dt * 360)) });
     expect(Math.abs(yawOf(evenRun))).toBeGreaterThan(0.02);
     expect(yawOf(unevenRun)).toBeCloseTo(yawOf(evenRun), 6);
   });
 
-  it("a new car (a reset) starts it over at once; a teleport between two ticks is not blended through", () => {
+  it("a reset forgets the ticks before it: the new car drawn at once, the view behind it, even with no tick since (RV-1260)", () => {
     const paced = new PacedCamera();
-    paced.tick(turning(0), BALL, null);
-    paced.tick({ ...turning(TICK_SECONDS), pos: vec3(4000, 0, 17) }, BALL, null);
-    paced.plan(1 / 60, 0.5);
-    const view = paced.run(CAR_CAM, { car: turning(0), ball: BALL, respawn: null });
-    // (the camera behind the car where it was put, not halfway between)
-    expect(view.position.x).toBeGreaterThan(3000);
+    for (let i = 1; i <= 8; i++) paced.tick({ ...straight(i * TICK_SECONDS), pos: vec3(3996, 1000, 17) }, BALL, null);
+    paced.plan(1 / 240, 0.5);
+    paced.run(CAR_CAM, { car: straight(0), ball: BALL, respawn: null });
     paced.reset();
+    const fresh = { ...straight(0), pos: vec3(0, -4608, 17) };
+    paced.plan(1 / 240, 0.5);
+    expect(paced.subject).toBeNull();
+    const view = paced.run(CAR_CAM, { car: fresh, ball: BALL, respawn: null });
+    // (behind the new car, looking along it)
+    expect(Math.hypot(view.position.x - fresh.pos.x, view.position.y - fresh.pos.y)).toBeLessThan(600);
+    expect(view.forward.x).toBeGreaterThan(0.9);
+  });
+
+  it("a teleport between two ticks is not blended through", () => {
+    const paced = new PacedCamera();
+    paced.tick(straight(0), BALL, null);
+    paced.tick({ ...straight(TICK_SECONDS), pos: vec3(4000, 0, 17) }, BALL, null);
     paced.plan(1 / 60, 0.5);
-    expect(paced.run(CAR_CAM, { car: turning(0), ball: BALL, respawn: null }).forward.x).toBeGreaterThan(0.9);
+    expect(paced.subject?.pos.x).toBe(4000);
+  });
+
+  it("back after frames it didn't plan (the editor's camera, a replay): only the frame's time stepped (RV-1264)", () => {
+    const paced = new PacedCamera();
+    const clock = new FixedStep();
+    let index = 0;
+    const frame = (planned: boolean): number => {
+      const ticks = clock.advance(1 / 60);
+      for (let k = 0; k < ticks; k++) paced.tick(turning(++index * TICK_SECONDS), BALL, null);
+      if (!planned) return 0;
+      paced.plan(1 / 60, clock.alpha);
+      const world = paced.worldPlanned;
+      paced.run(CAR_CAM, { car: turning(index * TICK_SECONDS), ball: BALL, respawn: null });
+      return world;
+    };
+    for (let i = 0; i < 120; i++) frame(true);
+    for (let i = 0; i < 600; i++) frame(false);
+    expect(frame(true)).toBeLessThan(1 / 60 + 1e-6);
   });
 });

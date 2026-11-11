@@ -8,7 +8,7 @@
 import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/carballCamera";
-import { PacedCamera } from "../camera/pacedCamera";
+import { type FrameClock, PacedCamera } from "../camera/pacedCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add } from "../math/vec";
 import { type NetGraphFeed, rawRoundTrip } from "../net/netStats";
@@ -179,8 +179,10 @@ export class Online {
   readonly #predictor: Predictor;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
-  /** The camera at the display's rate, the scene drawn at its moment (camera/pacedCamera.ts) */
+  /** The camera at the screen's rate, the car drawn as it sees it (camera/pacedCamera.ts) */
   readonly #view = new PacedCamera(this.#camera);
+  /** A touch device's frames as its pacer knows them (the page's; none on a desktop) */
+  frameClock: () => FrameClock | null = () => null;
   readonly #cars = new Map<number, CarEntry>();
   readonly #ballView = new BallView();
   /** The ball arrow by the player's car (HUD-17) */
@@ -991,7 +993,7 @@ export class Online {
     // (the camera's steps planned; the local car drawn as its last step saw it, at that step's moment (the frame's to
     // within half a step), its correction's offset on it, so the two agree whatever the frames)
     const alpha = this.#clock.alpha;
-    if (this.#cars.has(this.#localCar)) this.#view.plan(realSeconds, alpha);
+    if (this.#cars.has(this.#localCar)) this.#view.plan(realSeconds, alpha, this.frameClock());
     const subject = this.#view.subject;
     let localDrawn: Vec3 | null = null;
     for (const [id, { view, state, error }] of this.#cars) {
