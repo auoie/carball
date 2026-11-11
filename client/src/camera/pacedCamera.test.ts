@@ -134,61 +134,19 @@ const desktop = (dts: readonly number[]): Shown[] => dts.map((dt) => ({ dt, cloc
 
 /** A touch device's frames: a screen's vsyncs (`hz`, each one's time off by up to ±`jitter` s, `missed` of them skipped)
  *  through the page's FramePacer at `cap` */
-function touch(hz: number, cap: number, seconds: number, o: { jitter?: number; missed?: number; seed?: number; skip?: (i: number) => boolean } = {}): Shown[] {
+function touch(hz: number, cap: number, seconds: number, o: { jitter?: number; missed?: number; seed?: number } = {}): Shown[] {
   const pacer = new FramePacer();
   const r = rng(o.seed ?? 5);
   const out: Shown[] = [];
   let last: number | null = null;
   for (let i = 0; i < hz * seconds; i++) {
-    if (i > 10 && (r() < (o.missed ?? 0) || o.skip?.(i))) continue;
+    if (i > 10 && r() < (o.missed ?? 0)) continue;
     const now = (i * 1000) / hz + (r() - 0.5) * 2 * (o.jitter ?? 0) * 1000;
     if (!pacer.due(now, cap)) continue;
     if (last !== null) out.push({ dt: (now - last) / 1000, clock: { refreshHz: pacer.refreshHz, capHz: cap, rephased: pacer.rephased } });
     last = now;
   }
   return out;
-}
-
-/** A touch device not holding its cap: a screen's vsyncs (`hz`) through the page's FramePacer at `cap`, no animation frame
- *  while the page is busy with the last one drawn (`busy` ms; `slow` ms for a share `late` of them, from `from` s to `to`
- *  s): a frame late by a refresh or two; a page busy past a refresh never gets every refresh's frame */
-function busyPhone(
-  hz: number,
-  cap: number,
-  seconds: number,
-  o: { busy: number; slow: number; late: number; seed?: number; from?: number; to?: number },
-): Shown[] {
-  const pacer = new FramePacer();
-  const r = rng(o.seed ?? 5);
-  const out: Shown[] = [];
-  let last: number | null = null;
-  let busyUntil = 0;
-  for (let i = 0; i < hz * seconds; i++) {
-    const now = (i * 1000) / hz + (r() - 0.5) * 0.6;
-    if (now < busyUntil || !pacer.due(now, cap)) continue;
-    if (last !== null) out.push({ dt: (now - last) / 1000, clock: { refreshHz: pacer.refreshHz, capHz: cap, rephased: pacer.rephased } });
-    last = now;
-    const slow = now >= (o.from ?? 1) * 1000 && now < (o.to ?? seconds) * 1000 && r() < o.late;
-    busyUntil = now + (slow ? o.slow : o.busy);
-  }
-  return out;
-}
-
-/** A desktop's frames on a `hz` screen, the page busy `busy` ms a frame (`slow` ms for a share `late`): each frame at the
- *  first refresh after it's done */
-function busyDesktop(hz: number, seconds: number, o: { busy: number; slow: number; late: number; seed?: number }): Shown[] {
-  const r = rng(o.seed ?? 5);
-  const out: number[] = [];
-  let last = 0;
-  let busyUntil = 0;
-  for (let i = 1; i < hz * seconds; i++) {
-    const now = (i * 1000) / hz;
-    if (now < busyUntil) continue;
-    out.push((now - last) / 1000);
-    last = now;
-    busyUntil = now + (r() < o.late ? o.slow : o.busy);
-  }
-  return desktop(out);
 }
 
 /** The car's yaw on screen (degrees: its heading less the view's) */
@@ -386,73 +344,17 @@ describe("the camera at the screen's rate", () => {
     }
     // (where the game's camera, stepped with each frame's time, wobbles)
     expect(range(half(run(cases[0]?.[1] ?? [], turning, { game: true })).map(onScreen))).toBeGreaterThan(0.3);
-    // (a phone holding its cap but for a frame now and then, one every 4 s: the late frame's one step of the time that
-    // passed, as the game's at the cap on it: no more swing than the game's camera on the same frames, the cap's lag)
-    for (const [hz, cap, lag] of [
-      [120, 60, 3.23],
-      [120, 30, 2.45],
+    // (a phone at its cap, vsyncs missed: a late frame's one step of the time that passed, as the game's at 60 on it: no
+    // more swing than the game's camera on the same frames)
+    for (const [hz, cap] of [
+      [120, 60],
+      [120, 30],
+      [90, 60],
     ] as const) {
-      const shown = touch(hz, cap, 12, { jitter: 0.0003, skip: (i) => i % (4 * hz) === 2 * hz });
-      const ours = half(run(shown, turning)).map(onScreen);
+      const shown = touch(hz, cap, 10, { jitter: 0.0003, missed: 0.02 });
+      const ours = range(half(run(shown, turning)).map(onScreen));
       const game = range(half(run(shown, turning, { game: true })).map(onScreen));
-      expect(range(ours), `${String(hz)}/${String(cap)}`).toBeLessThanOrEqual(game + 0.01);
-      expect(Math.abs(mean(ours)), `${String(hz)}/${String(cap)}`).toBeCloseTo(lag, 1);
-    }
-    // (a cap that doesn't divide the refresh, vsyncs missed: the refresh's steps, no more swing than the game's)
-    const shown = touch(90, 60, 10, { jitter: 0.0003, missed: 0.02 });
-    expect(range(half(run(shown, turning)).map(onScreen))).toBeLessThanOrEqual(range(half(run(shown, turning, { game: true })).map(onScreen)) + 0.01);
-  });
-
-  it("a phone not holding its cap (a slow browser: a tenth to two fifths of its frames late): the screen's refresh's steps, steady, the car with its camera and the scene", () => {
-    const cases: [string, { busy: number; slow: number }][] = [
-      ["a frame late by a refresh", { busy: 5, slow: 20 }],
-      ["late by a refresh or two", { busy: 5, slow: 28 }],
-      // (the page busy past a refresh every frame: never an animation frame a refresh after the last, the screen's
-      // refresh read from frames two and three of them apart)
-      ["the page busy 12 ms every frame", { busy: 12, slow: 20 }],
-    ];
-    for (const [name, busy] of cases) {
-      for (const late of [0.1, 0.2, 0.4]) {
-        for (const seed of [977, 1954, 2931]) {
-          const label = `${name}, ${String(late * 100)} % late, seed ${String(seed)}`;
-          const shown = busyPhone(120, 60, 12, { ...busy, late, seed });
-          const turn = half(run(shown, turning));
-          expect(turn.filter((f) => f.steps === 0).length, `${label}: frames without a step`).toBe(0);
-          expect(range(turn.map(onScreen)), label).toBeLessThan(0.03);
-          // (the game's lag at the screen's 120 Hz, not the cap's)
-          expect(Math.abs(mean(turn.map(onScreen))), label).toBeCloseTo(3.68, 1);
-          const along = half(run(shown, straight));
-          expect(range(along.map(fromCamera)), `${label}: the car from its camera`).toBeLessThan(0.5);
-          expect(Math.max(...along.map(fromScene)), `${label}: the car from the scene`).toBeLessThan(5);
-        }
-      }
-    }
-    // (the same frames with a 60 Hz screen's animation frames: a frame doubled)
-    for (const late of [0.2, 0.4]) {
-      const along = half(run(busyPhone(60, 60, 12, { busy: 5, slow: 20, late }), straight));
-      expect(along.filter((f) => f.steps === 0).length).toBe(0);
-      expect(Math.max(...along.map(fromScene))).toBeLessThan(5);
-    }
-  });
-
-  it("the cap's steps again once the phone holds it: ten seconds with no frame late", () => {
-    // (late frames for 6 s, then none)
-    const frames = run(busyPhone(120, 60, 30, { busy: 5, slow: 20, late: 0.2, from: 1, to: 7 }), turning);
-    const at = (from: number, to: number): number[] => frames.slice(Math.round(from * 55), Math.round(to * 55)).map(onScreen);
-    expect(Math.abs(mean(at(4, 6)))).toBeCloseTo(3.68, 1);
-    const end = frames.slice(frames.length - 300).map(onScreen);
-    expect(Math.abs(mean(end))).toBeCloseTo(3.23, 2);
-    expect(range(end)).toBeLessThan(0.01);
-  });
-
-  it("a desktop's page busy past a refresh (a slow browser at 144 Hz: frames two refreshes apart, some three): the screen's refresh found, steady", () => {
-    for (const late of [0.1, 0.3]) {
-      const shown = busyDesktop(144, 12, { busy: 9, slow: 16, late });
-      const turn = half(run(shown, turning));
-      expect(turn.filter((f) => f.steps === 0).length, `${String(late)}: frames without a step`).toBe(0);
-      expect(range(turn.map(onScreen)), String(late)).toBeLessThan(0.02);
-      expect(Math.abs(mean(turn.map(onScreen))), String(late)).toBeCloseTo(3.76, 1);
-      expect(Math.max(...half(run(shown, straight)).map(fromScene)), String(late)).toBeLessThan(3);
+      expect(ours, `${String(hz)}/${String(cap)}`).toBeLessThanOrEqual(game + 0.01);
     }
   });
 

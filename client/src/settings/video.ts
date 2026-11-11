@@ -153,26 +153,10 @@ export function resolveVideo(s: VideoState, weakGpu: boolean): VideoState {
  *  display's or the browser's cap (a 30 Hz display), not the GPU's load (RV-519: a GPU-bound page held at two or three
  *  refreshes a frame steps). Before any refresh is measured, intervals sitting on one value (their 90th percentile within
  *  `capSpread` of their 10th) read as a cap. A frame `hitch` s or longer, or one in a hidden tab, isn't counted */
-export const AUTO_GUARD = {
-  warmUp: 3,
-  measure: 4,
-  slowFrame: 1 / 45,
-  trim: 0.05,
-  capMargin: 1.1,
-  capSpread: 1.08,
-  hitch: 0.25,
-  /** Against a page's own frame cap (a touch device's Frame Rate): a frame this much longer than the cap's interval is
-   *  late, and this share of them late is the cap not held (50 to 55 a second at a cap of 60 misses a tenth to a
-   *  quarter: the user's phone in a slow browser, 2026-11-10; the fixed 45 a second never saw it) */
-  lateFrame: 1.25,
-  lateShare: 0.08,
-  /** A cap not held steps only when two windows in a row say so (sustained, not a moment's load) */
-  capWindows: 2,
-} as const;
+export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45, trim: 0.05, capMargin: 1.1, capSpread: 1.08, hitch: 0.25 } as const;
 
 /** The step's decision from the measured intervals (s), the display's refresh (Hz; null: not measured) and the page's own
- *  frame cap (Hz: a touch device's Frame Rate; null: none): frames at the cap aren't slow; the cap not held is (a share
- *  of its frames late), whatever the mean */
+ *  frame cap (Hz: a touch device's Frame Rate; null: none): frames at the cap aren't slow, only ones slower than it */
 export function guardDecision(
   frames: readonly number[],
   refreshHz: number | null = null,
@@ -184,13 +168,6 @@ export function guardDecision(
   const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? 0;
   const capped = refreshHz !== null ? at(0.5) <= AUTO_GUARD.capMargin / refreshHz : at(0.9) <= at(0.1) * AUTO_GUARD.capSpread;
   const slow = mean > Math.max(AUTO_GUARD.slowFrame, capHz ? AUTO_GUARD.capMargin / capHz : 0);
-  if (capHz) {
-    // (the cap's frames, or the display's where it's the slower: a 30 Hz display under a cap of 60 misses nothing)
-    const target = Math.min(capHz, refreshHz ?? capHz);
-    const late = frames.filter((f) => f > AUTO_GUARD.lateFrame / target).length / Math.max(1, frames.length);
-    const missing = late > AUTO_GUARD.lateShare;
-    return { slow: slow || missing, capped, step: missing || (slow && !capped) };
-  }
   return { slow, capped, step: slow && !capped };
 }
 
@@ -213,7 +190,6 @@ export class AutoVideoGuard {
   #time = 0;
   #frames: number[] = [];
   #done = false;
-  #slowWindows = 0;
   readonly #rolling: boolean;
 
   constructor({ rolling = false }: { readonly rolling?: boolean } = {}) {
@@ -228,10 +204,7 @@ export class AutoVideoGuard {
     if (this.#time <= AUTO_GUARD.warmUp) return false;
     this.#frames.push(seconds);
     if (this.#time < AUTO_GUARD.warmUp + AUTO_GUARD.measure) return false;
-    const slow = guardDecision(this.#frames, refreshHz, capHz).step;
-    this.#slowWindows = slow ? this.#slowWindows + 1 : 0;
-    // (under a cap, two windows in a row: sustained)
-    const step = slow && (capHz === null || !this.#rolling || this.#slowWindows >= AUTO_GUARD.capWindows);
+    const step = guardDecision(this.#frames, refreshHz, capHz).step;
     if (step || !this.#rolling) this.#done = true;
     else [this.#time, this.#frames] = [AUTO_GUARD.warmUp, []];
     return step;

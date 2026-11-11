@@ -38,35 +38,3 @@ export class RefreshMeter {
     return this.#latched;
   }
 }
-
-/** A screen's refresh (ms) from animation frames' intervals (ms): each over the whole refreshes it spans (a dropped frame
- *  two), averaged (a timer's jitter cancels). Seeded from their median (a timer's jitter doesn't move it), or from the
- *  median of the short ones when they're a sixth or more of them (most frames doubled, the median a doubled one:
- *  RV-1268). A page too busy to get every refresh's frame never shows the refresh itself: frames two refreshes apart
- *  and now and then three (a 120 Hz phone or a 144 Hz desktop in a slow browser: the user's Firefox, 2026-11-10) are no
- *  whole numbers of the seed, so a half or a third of it is taken, the first that every interval is a whole number of
- *  (all but 2 %, each within 0.12 of it). Two screens' frames mixed (a window on its way from one to the other) fit
- *  none but by chance, and whatever fits has every frame on its grid. Shared by the camera's steps on a desktop
- *  (camera/pacedCamera.ts) and a touch device's frame pacer (input/touchSettings.ts) */
-export function refreshOf(intervals: readonly number[]): number {
-  const median = (v: readonly number[]): number => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)] ?? 1000 / 60;
-  let refresh = median(intervals);
-  const short = intervals.filter((v) => v <= 0.6 * refresh);
-  if (short.length >= 0.15 * intervals.length) refresh = median(short);
-  const seen = intervals.filter((v) => v <= 4.5 * refresh);
-  const fits = (part: number, within: number): boolean =>
-    seen.filter((v) => Math.round(v / part) < 1 || Math.abs(v / part - Math.round(v / part)) > within).length <= 0.02 * seen.length;
-  if (!fits(refresh, 0.2)) {
-    // (the seed's own length: the mean of the frames about it, the median an edge of them when half are longer; no part
-    // under 4 ms: a jitter's two lengths are no 360 Hz screen's two and three refreshes. None fitting, the seed as it was)
-    const about = intervals.filter((v) => Math.abs(v / refresh - 1) < 0.1);
-    const centre = about.reduce((a, b) => a + b, 0) / Math.max(1, about.length);
-    const k = [1, 2, 3].find((n) => (n === 1 || centre / n >= 4) && fits(centre / n, n === 1 ? 0.2 : 0.12));
-    if (k !== undefined) refresh = centre / k;
-  }
-  for (let pass = 0; pass < 2; pass++) {
-    const shares = intervals.filter((v) => v <= 4.5 * refresh).map((v) => v / Math.max(1, Math.round(v / refresh)));
-    if (shares.length > 0) refresh = shares.reduce((a, b) => a + b, 0) / shares.length;
-  }
-  return refresh;
-}

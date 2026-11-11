@@ -43,11 +43,7 @@ everyone else): the user's request of 2026-11-10. Landscape only. This note is t
   so the next keeps the interval, 3 then 2 refreshes at 120/60, not 3 then 1: RV-1254); physics keeps its 120 ticks a
   second, and the camera steps at the frames' rate (notes/camera.md). The automatic default's frame-rate guard
   takes frames at the cap as not slow, and on a touch device watches all session long (each window that wasn't slow
-  followed by another), so a phone that slows as it heats steps down then, once. Under a cap it judges the cap not
-  held, not a fixed 45 a second: more than 8 % of a window's frames late (a quarter longer than the cap's interval; the
-  display's where that's the slower), two 4 s windows in a row (the user's phone in Firefox, 50 to 55 a second at a cap
-  of 60, never stepped before: 2026-11-10). No graphics cut for phones in general from that report: Chrome on the same
-  phone held its cap. Settings → Interface → Stat Graphs
+  followed by another), so a phone that slows as it heats steps down then, once. Settings → Interface → Stat Graphs
   shows the frame rate and times in touch play (on the left under the top row, clear of the boost ring and the buttons;
   touches pass through).
 - **The end screen and the questions** (Exit's Yes, the pause menu's, the players menu's actions): 44 px on the screen
@@ -160,8 +156,6 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
 8. RX85's findings: the refresh with most frames doubled, a window's move, a phone's 30 cap, a faster screen at once
    (2026-11-10).
 9. RX86's RV-1278: a stall's burst never measured (2026-11-10).
-10. The user's phone in Firefox (50 to 55 a second, jittery): the camera's refresh on a busy page, the fallback to the
-    screen's refresh while the cap isn't held, the guard against the cap (2026-11-10).
 
 ## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
 
