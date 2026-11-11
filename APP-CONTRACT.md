@@ -171,7 +171,8 @@ services instead (the browser tests' stacks, `client/e2e/services`).
   /api/quitters`, their queue ban; a lost connection after 5 s, its seat told left to the matchmaker then, after the report, so it can't search and be matched before the ban: RV-964); a rejoin that fills the lobby again undoes it (`POST
   /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
   their connection within 5 s of each other (the server's own outage; "most" is of the seats there to lose theirs, not
-  of those a player had left by choice before: RV-1308). **An outage voids the match** (the user's
+  of those a player had left by choice before, RV-1308, and among them one of another team than the leaver's: a side
+  that outnumbers the other can't make an outage by dropping together, RV-1324). **An outage voids the match** (the user's
   decision of 2026-11-11, the audit's MATCH-02): when a team is emptied by a lost connection and so forfeits, that
   forfeit's result waits 5 s (or until the match is let go); if more than half the match's seats lost their
   connection within 5 s of that leave, the match ends with no result and no rating change (the matchmaker told its

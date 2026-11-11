@@ -45,8 +45,9 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     of the match's seats lose their connection within 5 s of it (the server's network: every session times out together).
     **An outage voids the match** (2026-11-11, the user's decision on the audit's MATCH-02): each session times out in
     its turn, so the first team to be emptied forfeited and took a rated loss. A forfeit by a team a lost connection
-    emptied now holds its result 5 s (or until the match is let go); most seats lost within 5 s of that leave: no
-    result, no rating change, the match's end told the matchmaker. A chosen leave never counts as lost.
+    emptied now holds its result 5 s (or until the match is let go); most seats lost within 5 s of that leave (of the
+    seats there, a seat of the other team among them: RV-1308, RV-1324): no result, no rating change, the match's end
+    told the matchmaker. A chosen leave never counts as lost.
   - **Issued at the leave** (the game's `RPC_AddQuitter`), not at the match's end; **cleared by a rejoin that fills the
     lobby again** (`RPC_RemoveQuitter`, the latch re-armed); if someone else is still missing, or the match ends first,
     it stands. So the game server reports a quitter to the API when they leave, and the removal when the lobby refills

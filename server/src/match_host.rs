@@ -257,16 +257,22 @@ impl Hosted {
         self.game.as_ref().is_some_and(|g| g.winner().is_some() || g.is_over())
     }
 
-    /// Whether the connections lost about `since` (within `OUTAGE_WINDOW` of it either side) are the server's network
-    /// outage, not the players': more than half of the seats that were there to lose theirs, those not gone before
-    /// `since` and those lost then. A seat left by choice before isn't one: counted, two players left in a 2v2 timing
-    /// out together were two of four, no outage, and the first to time out took a rated loss (RV-1308). With it, how
-    /// many were lost and how many were there
-    fn outage_about(&self, since: f64) -> (bool, usize, usize) {
+    /// Whether the connections lost about `since` (within `OUTAGE_WINDOW` of it either side), a seat of `team`'s the one
+    /// lost then, are the server's network outage, not the players'. Two things together:
+    /// - more than half of the seats that were there to lose theirs, those not gone before `since` and those lost
+    ///   then. A seat left by choice before isn't one: counted, two players left in a 2v2 timing out together were two
+    ///   of four, no outage, and the first to time out took a rated loss (RV-1308);
+    /// - and a seat of another team's among the lost. A real outage takes every session; without this, a team that
+    ///   outnumbered its opponents after one of them left by choice was the majority by itself, and voided a match it
+    ///   was losing by dropping together (RV-1324).
+    ///
+    /// With it, how many were lost and how many were there
+    fn outage_about(&self, since: f64, team: u8) -> (bool, usize, usize) {
         let lost_then = |r: &&Reservation| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW);
         let lost = self.reservations.iter().filter(lost_then).count();
         let there = self.reservations.iter().filter(|r| r.gone_at.is_none_or(|at| at >= since) || lost_then(r)).count();
-        (2 * lost > there, lost, there)
+        let others = self.reservations.iter().filter(lost_then).any(|r| r.team != team);
+        (2 * lost > there && others, lost, there)
     }
 
     /// Its id as the accounts service has it
@@ -557,11 +563,11 @@ impl MatchHost {
     fn decide_pending_quit(&mut self, match_id: MatchId, now_or_never: bool) {
         let now = self.now;
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
-        let Some((_, since)) = hosted.pending_quit else { return };
+        let Some((seat, since)) = hosted.pending_quit else { return };
         if !now_or_never && (now - since < OUTAGE_WINDOW || hosted.forfeit_hold.is_some()) {
             return;
         }
-        let (outage, lost, there) = hosted.outage_about(since);
+        let (outage, lost, there) = hosted.outage_about(since, hosted.reservations[seat].team);
         if outage {
             tracing::info!("{}: {lost} of {there} connections lost at once: an outage, no ban", hosted.label(match_id));
         }
@@ -711,7 +717,7 @@ impl MatchHost {
             return false;
         }
         hosted.forfeit_hold = None;
-        let (outage, lost, there) = hosted.outage_about(since);
+        let (outage, lost, there) = hosted.outage_about(since, team);
         if outage {
             hosted.voided = true;
             tracing::info!(
@@ -1412,6 +1418,77 @@ mod tests {
         let reports = host.take_reports();
         assert_eq!(ends(&reports), [None], "{reports:?}");
         assert_eq!(host.match_count(), 0);
+    }
+
+    /// RV-1324: an outage takes the other side's connections too. A team that outnumbers its opponents after one of
+    /// them left by choice is the majority of the seats there by itself: dropping together, it voided the match it was
+    /// in. Its forfeit's result stands, told after the window (2v2: two of three there; 3v3: three of five)
+    #[test]
+    fn a_side_that_outnumbers_the_other_cant_void_the_match_by_dropping_together() {
+        // (2v2)
+        let (mut host, [first, second]) = twos_playing();
+        host.leave(second[0], false);
+        let quit = host.take_reports();
+        assert!(quit.iter().any(|r| matches!(r, Report::Quitter { .. })), "the chosen leave's ban: {quit:?}");
+        run_to(&mut host, 5.0, 8.0);
+        host.take_reports();
+        host.observe(8.0);
+        host.leave(first[0], true);
+        run_to(&mut host, 8.0, 8.05);
+        host.observe(8.05);
+        host.leave(first[1], true);
+        run_to(&mut host, 8.05, 8.05 + OUTAGE_WINDOW - 0.5);
+        assert!(ends(&host.take_reports()).is_empty(), "held for the window");
+        run_to(&mut host, 8.05 + OUTAGE_WINDOW - 0.5, 8.05 + OUTAGE_WINDOW + 0.5);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [Some(1)], "the droppers' forfeit: a result, no void: {reports:?}");
+        // (3v3: one opponent gone by choice, the three dropping)
+        let threes = Playlist { team_size: 3, ..TWOS };
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(threes, &[1, 2, 3, 4, 5, 6], 0.0).tokens;
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            assert!(host.claim(token, i as PlayerId + 1, seat(i as u8 + 1), tx.clone()));
+        }
+        // (the six players' one queue read as it fills: unread, it's full in seconds and they're all dropped)
+        let mut run = |host: &mut MatchHost, from: f64, until: f64| {
+            let mut t = from;
+            while t < until {
+                run_to(host, t, (t + 0.25).min(until));
+                t += 0.25;
+                while rx.try_recv().is_ok() {}
+            }
+        };
+        run(&mut host, 0.0, 5.0);
+        let team = |host: &MatchHost, t: u8| -> Vec<PlayerId> {
+            let hosted = host.matches.values().next().unwrap();
+            hosted.reservations.iter().filter(|r| r.team == t).filter_map(|r| r.claimed).collect()
+        };
+        let (droppers, others) = (team(&host, 0), team(&host, 1));
+        host.observe(5.0);
+        host.leave(others[0], false);
+        run(&mut host, 5.0, 8.0);
+        host.take_reports();
+        host.observe(8.0);
+        for &id in &droppers {
+            host.leave(id, true);
+        }
+        run(&mut host, 8.0, 8.0 + OUTAGE_WINDOW + 0.5);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [Some(1)], "3v3: {reports:?}");
+        // (and with one of the other side lost with them: the server's outage, void)
+        let (mut host, [first, second]) = twos_playing();
+        host.leave(second[0], false);
+        run_to(&mut host, 5.0, 8.0);
+        host.take_reports();
+        host.observe(8.0);
+        host.leave(first[0], true);
+        host.leave(first[1], true);
+        run_to(&mut host, 8.0, 8.05);
+        host.observe(8.05);
+        host.leave(second[1], true);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [None], "every connection there lost: {reports:?}");
     }
 
     /// RV-1309: one ruling for the ban and the void. A1's connection lost at 5 s, A2's at 9 s (their team empty: its
