@@ -1167,7 +1167,7 @@ async function main(): Promise<void> {
         play: playPack,
         save: async (code) => {
           try {
-            const { pack, file } = await accountsApi.pack(code);
+            const { pack, file } = await accountsApi.pack(code, true);
             const shared = sharedPackOf(file, pack.creator);
             if (typeof shared === "string") return SHARE_TEXT.notPlayable;
             const copy = savedCopy(shared, new Set(storedPacks().map((p) => p.id)));

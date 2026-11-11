@@ -47,6 +47,7 @@ fn a_proxy_named_in_the_environment_is_never_used() {
             server: "game.example".into(),
             first_wait: Duration::from_millis(20),
             max_wait: Duration::from_millis(80),
+            stuck_for: carball_server::outbox::STUCK_FOR,
             https_only: false,
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();

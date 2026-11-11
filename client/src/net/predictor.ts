@@ -269,6 +269,13 @@ export class Predictor {
       this.stats.ignoredOld++;
       return false;
     }
+    // (and the two the other way round, reordered on the way: the newer tick's state staged already, at this frame or
+    // an earlier one; this older one, labelled a later frame by the counted-on acknowledgement, isn't staged over it,
+    // RV-1326)
+    if (tick > 0 && this.#newerStagedBy(frame, tick)) {
+      this.stats.ignoredOld++;
+      return false;
+    }
     const first = this.#dirty === null;
     if (first) {
       this.#predicted = this.#localState(); // (the world at the present still)
@@ -305,6 +312,14 @@ export class Predictor {
       if (kept.length > 0) recorded.server = kept;
       else delete recorded.server;
     }
+  }
+
+  /** Whether a state of a later server tick than `tick` is staged at `frame` or an earlier one */
+  #newerStagedBy(frame: number, tick: number): boolean {
+    for (let f = Math.max(this.#oldest, this.#frame - HISTORY_FRAMES + 1); f <= frame; f++) {
+      if (this.#recorded(f)?.server?.some((s) => s.tick > tick)) return true;
+    }
+    return false;
   }
 
   /** The states at the present (no rewind, no replay): the shown world takes the server's as it is, smoothed (G5, G7).

@@ -114,6 +114,11 @@ describe("the network session's wiring", () => {
     s.now = 6050;
     s.session.applyUpdates();
     expect(s.session.ping).toBe(47);
+    // (and no more arrival times kept than updates, while no frame runs: RV-1333)
+    for (let tick = 200; tick < 700; tick++) s.session.receive(update(s, tick, 12));
+    expect(s.session.arrivalsKept).toBe(120);
+    s.session.applyUpdates();
+    expect(s.session.arrivalsKept).toBe(0);
     dispose(s);
   });
 

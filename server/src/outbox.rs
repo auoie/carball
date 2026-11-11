@@ -39,6 +39,9 @@ pub struct OutboxConfig {
     /// The first retry's wait; it doubles up to `max_wait`
     pub first_wait: Duration,
     pub max_wait: Duration,
+    /// How long one call may keep getting a 4xx that isn't the service's own (an edge's 400 or 413 for that call's
+    /// body) before it's dropped, loudly, for the calls waiting behind it (`STUCK_FOR` in the server)
+    pub stuck_for: Duration,
     /// https alone (the service's; false: the tests' stand-in over plain http)
     pub https_only: bool,
 }
@@ -245,10 +248,17 @@ pub enum Sent {
     Done,
     /// Refused for good (the service's own 4xx, but its 401, 404, 405 and 429): dropped
     Refused(u16),
-    /// Not now (no answer, 5xx, 429; a redirect, 401, 403, 404, 405, any 2xx or 4xx that isn't the service's own
-    /// answer): tried again later
+    /// Not now (no answer, 5xx, 429; a redirect, 401, 403, 404, 405, a 2xx that isn't the service's own answer): tried
+    /// again later
     Later,
+    /// Another 4xx that isn't the service's own (an edge's, on the way): tried again later, for `stuck_for` at most.
+    /// It's this call's own (its body's size, its shape), where the others are the route's: kept for the whole day,
+    /// one such call held every result and ban made after it (RV-1328)
+    Stuck(u16),
 }
+
+/// How long a call an edge keeps refusing by itself is tried before it's dropped (`OutboxConfig::stuck_for`)
+pub const STUCK_FOR: Duration = Duration::from_secs(3600);
 
 /// The header the accounts service marks its own answers with (its `AnswerHeader`)
 const ANSWER_HEADER: &str = "x-carball-api";
@@ -277,10 +287,11 @@ async fn body_text(mut response: reqwest::Response) -> Option<String> {
 fn sent(status: u16, own: bool, api_error: Option<&str>) -> Sent {
     match (status, api_error) {
         (200..=299, _) if own => Sent::Done,
-        (403, Some("ticket")) => Sent::Refused(status),
+        (403, Some("ticket")) if own => Sent::Refused(status),
         (200..=399 | 401 | 403 | 404 | 405 | 429 | 500..=599, _) => Sent::Later,
-        (_, Some(_)) => Sent::Refused(status),
-        _ => Sent::Later,
+        // (the service's own refusal: its mark and its JSON both. An edge's JSON with an `error` key isn't one, RV-1329)
+        (_, Some(_)) if own => Sent::Refused(status),
+        _ => Sent::Stuck(status),
     }
 }
 
@@ -454,7 +465,7 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
                     }
                 ),
                 (429 | 500..=599, _) => tracing::warn!("outbox: {} {}: {status}, later", call.method, call.path),
-                (_, Sent::Later) => tracing::warn!(
+                (_, Sent::Later | Sent::Stuck(_)) => tracing::warn!(
                     "outbox: {} {}: {status}, not the accounts service's answer (a redirect, Access or a challenge, a wrong \
                      route or token): kept and tried again; check API_URL, GAME_SERVER_TOKEN_FILE and the Access token",
                     call.method,
@@ -489,6 +500,7 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
     };
     let mut wait = config.first_wait;
     let mut retry_at: Option<tokio::time::Instant> = None;
+    let mut stuck_since: Option<tokio::time::Instant> = None;
     let mut open = true;
     loop {
         // (new reports first; the front call sent when it's due)
@@ -538,6 +550,7 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
                 },
             }
         };
+        let stuck = matches!(sent, Sent::Stuck(_));
         match sent {
             Sent::Done => {
                 queue.pop();
@@ -551,13 +564,28 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
                 wait = config.first_wait;
                 retry_at = None;
             }
-            Sent::Later => {
+            Sent::Stuck(status) if stuck_since.is_some_and(|since| since.elapsed() >= config.stuck_for) => {
+                tracing::error!(
+                    "outbox: {} {}: {status} for {} s, never the accounts service's own answer: this call dropped \
+                     for the ones waiting behind it (an edge refusing it by itself: its size or its shape)",
+                    call.method,
+                    call.path,
+                    config.stuck_for.as_secs()
+                );
+                queue.pop();
+                wait = config.first_wait;
+                retry_at = None;
+            }
+            Sent::Later | Sent::Stuck(_) => {
                 // (±20%: game servers after the same outage don't all come back at once)
                 let jitter = 0.8 + 0.4 * (crate::game::random_u64() % 1000) as f64 / 1000.0;
                 retry_at = Some(tokio::time::Instant::now() + wait.mul_f64(jitter));
                 wait = (wait * 2).min(config.max_wait);
             }
         }
+        // (since when the front call has been stuck: from its first such answer, forgotten with any other outcome)
+        stuck_since =
+            if stuck && retry_at.is_some() { stuck_since.or(Some(tokio::time::Instant::now())) } else { None };
     }
 }
 
@@ -680,8 +708,11 @@ mod tests {
         // (another 4xx: for good as the service's own refusal, tried again as an edge's on the way, MATCH-05)
         for status in [400, 408, 409, 410, 413, 421, 422] {
             assert_eq!(sent(status, true, Some("bad-request")), Sent::Refused(status), "{status}");
-            assert_eq!(sent(status, false, None), Sent::Later, "{status} with no word of the service's");
+            assert_eq!(sent(status, false, None), Sent::Stuck(status), "{status} with no word of the service's");
+            // (an edge's JSON with an `error` key, no mark of the service's: not its refusal, RV-1329)
+            assert_eq!(sent(status, false, Some("bad-request")), Sent::Stuck(status), "{status} unmarked");
         }
+        assert_eq!(sent(403, false, Some("ticket")), Sent::Later, "a ticket refusal that isn't marked the service's");
         // (the service's own refusal of a ticket: for good; its 401 for the token, an edge's 403: tried again, AP4)
         assert_eq!(sent(403, true, Some("ticket")), Sent::Refused(403));
         assert_eq!(sent(401, true, Some("unauthorized")), Sent::Later);
@@ -805,6 +836,7 @@ mod tests {
             server: "game.example".into(),
             first_wait: Duration::from_millis(20),
             max_wait: Duration::from_millis(80),
+            stuck_for: Duration::from_millis(400),
             https_only: false,
         }
     }
@@ -890,6 +922,43 @@ mod tests {
         drop(tx);
         ended(task).await;
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// RV-1328: a call an edge keeps answering with a bare 4xx is tried for `stuck_for`, then dropped for the calls
+    /// behind it, which are sent: one such call doesn't hold a day of results and bans
+    #[tokio::test]
+    async fn a_call_an_edge_keeps_refusing_is_dropped_after_a_while_for_the_ones_behind_it() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::body_string_contains("m-stuck"))
+            .respond_with(wiremock::ResponseTemplate::new(400).set_body_string("<html>Bad Request</html>"))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::body_string_contains("m-next"))
+            .respond_with(wiremock::ResponseTemplate::new(204).insert_header(ANSWER_HEADER, "1"))
+            .mount(&server)
+            .await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(config(Some(server.uri()), None), rx));
+        let started = std::time::Instant::now();
+        tx.send(Report::Quitter { match_id: "m-stuck".into(), ticket: "t1".into() }).unwrap();
+        tx.send(Report::Quitter { match_id: "m-next".into(), ticket: "t2".into() }).unwrap();
+        let bodies = || async {
+            let requests = server.received_requests().await.unwrap_or_default();
+            requests.iter().map(|r| String::from_utf8_lossy(&r.body).contains("m-next")).collect::<Vec<_>>()
+        };
+        loop {
+            let seen = bodies().await;
+            if seen.last() == Some(&true) {
+                assert!(seen.len() > 3, "the stuck call tried again before it was dropped: {seen:?}");
+                assert!(seen[..seen.len() - 1].iter().all(|next| !next), "in order: {seen:?}");
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10), "the call behind never sent: {seen:?}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(started.elapsed() >= Duration::from_millis(400), "dropped before its time: {:?}", started.elapsed());
+        drop(tx);
+        ended(task).await;
     }
 
     /// A body is read as far as its cap and no further

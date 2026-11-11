@@ -674,3 +674,30 @@ func TestRejoinQuestionsAndEachServerOnTheirOwnBudgets(t *testing.T) {
 		t.Errorf("another server's call after the first's ran out: %d", code)
 	}
 }
+
+// RV-1327: every answer to a game server's call is marked this service's own (AnswerHeader), a success, a refusal and
+// an unknown route alike: a game server's outbox takes a call as delivered, or as refused for good, only with it, so an
+// answer that lost it would stall every server's results and bans with no test here failing
+func TestGameServersAnswersAreMarked(t *testing.T) {
+	e := setup(t, nil)
+	marked := func(what string, resp reply) {
+		t.Helper()
+		if resp.Header.Get(server.AnswerHeader) != "1" {
+			t.Errorf("%s (%d): no %s", what, resp.StatusCode, server.AnswerHeader)
+		}
+	}
+	ok := e.gameCall(http.MethodPost, "/api/fleet/events", gameToken, map[string]any{"event": "restarted", "server": euServer, "at": e.s.Now().Unix()})
+	if ok.StatusCode != http.StatusNoContent {
+		t.Fatalf("a restart's event: %d %s", ok.StatusCode, ok.Body)
+	}
+	marked("a call taken", ok)
+	for _, path := range []string{"/api/results", "/api/quitters", "/api/refills", "/api/fleet/events"} {
+		marked(path+" with no token", e.gameCall(http.MethodPost, path, "", map[string]any{}))
+		refused := e.gameCall(http.MethodPost, path, gameToken, map[string]any{"nothing": "of its own"})
+		if refused.StatusCode < 400 || refused.StatusCode >= 500 {
+			t.Errorf("%s with a body that isn't its own: %d", path, refused.StatusCode)
+		}
+		marked(path+" refused", refused)
+	}
+	marked("an unknown route", e.gameCall(http.MethodPost, "/api/no-such-route", gameToken, map[string]any{}))
+}

@@ -738,11 +738,9 @@ impl MatchHost {
         if self.matches.get(&match_id).is_none_or(|m| m.result_told) || !self.result_ready(match_id, last) {
             return;
         }
-        // (the match let go with a lost leave still in its window: decided now, its report before the result, which
-        // frees its account to search: the ban first, the audit's MATCH-04)
-        if last {
-            self.decide_pending_quit(match_id, true);
-        }
+        // (a lost leave still in its window as the result is told, the match let go or won meanwhile: decided now, its
+        // report before the result, which frees its account to search: the ban first, the audit's MATCH-04, RV-1330)
+        self.decide_pending_quit(match_id, true);
         let reported = self.result(match_id);
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
         hosted.result_told = true;
@@ -1521,6 +1519,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// RV-1330: and a match won by score inside a lost leave's window. A 2v2, one connection lost (its team not
+    /// empty: no forfeit), the golden goal a moment later with every replay skipped: the ban before the result
+    #[test]
+    fn a_lost_leavers_ban_is_told_before_a_result_by_score_inside_its_window() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let skipping = JoinRequest { auto_skip_replay: true, ..seat(i as u8 + 1) };
+            assert!(host.claim(token, i as PlayerId + 1, skipping, tx.clone()));
+        }
+        run_to(&mut host, 0.0, 8.0);
+        host.take_reports();
+        host.observe(8.0);
+        host.leave(1, true);
+        host.game_of(2).unwrap().golden_goal_next_tick = true;
+        let mut t = 8.0;
+        let mut reports = Vec::new();
+        while !reports.iter().any(|r| matches!(r, Report::Result(_))) {
+            t += 1.0 / 120.0;
+            host.tick(t);
+            while rx.try_recv().is_ok() {}
+            reports.append(&mut host.take_reports());
+            assert!(t < 8.0 + OUTAGE_WINDOW - 0.5, "no result inside the leave's window");
+        }
+        let quitter = reports.iter().position(|r| matches!(r, Report::Quitter { .. }));
+        let result = reports.iter().position(|r| matches!(r, Report::Result(_)));
+        assert!(quitter.is_some() && quitter < result, "{reports:?}");
     }
 
     /// The audit's MATCH-04: a match let go with a lost leave still in its window tells the ban before the result

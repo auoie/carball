@@ -79,6 +79,11 @@ export class NetSession {
   /** The round trip, smoothed (ms) */
   ping: number | null = null;
   bufferText = "";
+
+  /** The updates whose arrival time is kept (the tests') */
+  get arrivalsKept(): number {
+    return this.#arrived.size;
+  }
   /** The updates not applied for being stale (`freshUpdates`) */
   staleDropped = 0;
   /** The connection closed: nothing more is sent */
@@ -118,6 +123,11 @@ export class NetSession {
   receive(update: Update): void {
     // (when its update first arrived: the round trip is to then, not to the frame that applies it, NET-09)
     if (!this.#arrived.has(update.serverTick)) this.#arrived.set(update.serverTick, this.#link.nowMs());
+    // (kept as far as the updates beside them: a hidden tab draws no frame to clear them, RV-1333)
+    for (const tick of this.#arrived.keys()) {
+      if (this.#arrived.size <= MAX_QUEUED_UPDATES) break;
+      this.#arrived.delete(tick);
+    }
     this.#received.push(update);
     if (this.#received.length > MAX_QUEUED_UPDATES) this.#received.splice(0, this.#received.length - MAX_QUEUED_UPDATES);
   }

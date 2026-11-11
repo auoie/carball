@@ -234,6 +234,11 @@ describe("the shared packs' calls", () => {
     const mine = await a.myPacks();
     expect([mine.most, mine.packs[0]?.hidden, mine.packs[0]?.hiddenReason]).toEqual([100, true, "made up"]);
     await expect(a.pack("0000-0000-0000-0000")).rejects.toBeInstanceOf(AccountError);
+    // (a look-up by code carries no header of the page's, so counts no download; Save a copy's read does, RV-1325)
+    expect(call.mock.calls[0]?.[1]?.headers).toEqual({});
+    const taking = api(reply(200, { ...PACK, pack: { format: 1 } }));
+    await taking.api.pack(PACK.code, true);
+    expect(taking.call.mock.calls[0]?.[1]?.headers).toEqual({ "X-Carball": "1" });
   });
 
   it("deletes and reports a pack (writes)", async () => {

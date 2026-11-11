@@ -494,6 +494,7 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
         server: args.server_name(),
         first_wait: Duration::from_secs(5),
         max_wait: Duration::from_secs(300),
+        stuck_for: carball_server::outbox::STUCK_FOR,
         https_only: args.api.as_ref().is_none_or(|api| api.url.starts_with("https://")),
     })
 }

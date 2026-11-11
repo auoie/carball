@@ -430,7 +430,7 @@ describe("Predictor", () => {
       client.loadState(start);
       const predictor = new Predictor(client, local, 0);
       for (let f = 1; f <= 30; f++) predictor.advance(NO_INPUT);
-      for (const [frame, state, tick] of staged) expect(predictor.stage(frame, [state], tick)).toBe(true);
+      for (const [frame, state, tick] of staged) predictor.stage(frame, [state], tick);
       predictor.resimulate();
       const world = client.saveState();
       client.dispose();
@@ -441,6 +441,13 @@ describe("Predictor", () => {
       replay([
         [25, older, 10],
         [12, newer, 20],
+      ]),
+    ).toEqual(newerAlone);
+    // (and the two arriving the other way round, reordered on the way: the older isn't staged over the newer, RV-1326)
+    expect(
+      replay([
+        [12, newer, 20],
+        [25, older, 10],
       ]),
     ).toEqual(newerAlone);
     // (told no ticks, as before: the older, at its later frame, goes back over the newer)

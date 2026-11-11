@@ -233,9 +233,11 @@ export class AccountsApi {
     return body.code;
   }
 
-  /** A shared pack by its code (no sign-in): its listing and its file (as given: the page checks it) */
-  async pack(code: string): Promise<{ readonly pack: SharedPack; readonly file: unknown }> {
-    const body = (await this.#ok(await this.#send("GET", `/api/packs/${encodeURIComponent(code)}`))) as { pack?: unknown } | null;
+  /** A shared pack by its code (no sign-in): its listing and its file (as given: the page checks it). `taken`: the
+   *  read is the player taking the pack (Save a copy): the page's header with it, which the API counts a download
+   *  for (a look-up by code counts none; SEC-API-04, RV-1325) */
+  async pack(code: string, taken = false): Promise<{ readonly pack: SharedPack; readonly file: unknown }> {
+    const body = (await this.#ok(await this.#send("GET", `/api/packs/${encodeURIComponent(code)}`, undefined, taken))) as { pack?: unknown } | null;
     const pack = sharedPack(body);
     if (!pack || body?.pack === undefined) throw new AccountError("server");
     return { pack, file: body.pack };
@@ -265,9 +267,9 @@ export class AccountsApi {
     await this.#ok(await this.#send("POST", `/api/packs/${encodeURIComponent(code)}/report`));
   }
 
-  async #send(method: string, path: string, body?: unknown): Promise<Response> {
+  async #send(method: string, path: string, body?: unknown, marked = false): Promise<Response> {
     const write = method !== "GET";
-    const headers: Record<string, string> = write ? { [WRITE_HEADER]: "1" } : {};
+    const headers: Record<string, string> = write || marked ? { [WRITE_HEADER]: "1" } : {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     try {
       return await this.call(path, {

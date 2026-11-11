@@ -30,6 +30,7 @@ fn asking(url: String) -> NetLimits {
         server: String::new(),
         first_wait: Duration::from_secs(1),
         max_wait: Duration::from_secs(1),
+        stuck_for: carball_server::outbox::STUCK_FOR,
         https_only: false,
     };
     NetLimits { api: carball_server::outbox::Api::new(&config).unwrap().map(Arc::new), ..open_limits() }
