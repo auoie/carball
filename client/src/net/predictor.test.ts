@@ -409,6 +409,80 @@ describe("Predictor", () => {
     server.dispose();
   });
 
+  it("a state staged under a counted-on acknowledgement doesn't go back over a newer one staged at an earlier frame (NET-06)", () => {
+    // The server ran dry of this client's frames: its acknowledgement counted on, so its state of tick 10 came labelled
+    // frame 25; then it consumed a frame again and its state of tick 20 came labelled frame 12. The newer state stands:
+    // the world as if the older had never been staged
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const start = server.saveState();
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 20; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: 1, steer: f < 8 ? 1 : -1 });
+      server.step();
+      if (f === 10 || f === 20) states.set(f, server.writeNetState({ ball: true, carIds: [local, other], pads: true }));
+    }
+    const [older, newer] = [states.get(10) ?? new Uint8Array(), states.get(20) ?? new Uint8Array()];
+    const replay = (staged: readonly (readonly [number, Uint8Array, number])[]): Uint8Array => {
+      const client = World.create(engine);
+      client.loadState(start);
+      const predictor = new Predictor(client, local, 0);
+      for (let f = 1; f <= 30; f++) predictor.advance(NO_INPUT);
+      for (const [frame, state, tick] of staged) expect(predictor.stage(frame, [state], tick)).toBe(true);
+      predictor.resimulate();
+      const world = client.saveState();
+      client.dispose();
+      return world;
+    };
+    const newerAlone = replay([[12, newer, 20]]);
+    expect(
+      replay([
+        [25, older, 10],
+        [12, newer, 20],
+      ]),
+    ).toEqual(newerAlone);
+    // (told no ticks, as before: the older, at its later frame, goes back over the newer)
+    expect(
+      replay([
+        [25, older, 0],
+        [12, newer, 0],
+      ]),
+    ).not.toEqual(newerAlone);
+    // (and a later frame's state from a later tick stays: the usual order)
+    expect(
+      replay([
+        [25, newer, 20],
+        [12, older, 10],
+      ]),
+    ).not.toEqual(replay([[12, older, 10]]));
+    server.dispose();
+  });
+
+  it("an update's part naming a car the client doesn't have yet is skipped, its other parts taken (NET-08)", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    server.resetKickoff(4);
+    const start = server.saveState();
+    const joined = server.addCar(1);
+    for (let f = 1; f <= 10; f++) server.step();
+    const [ballPart, newCarPart] = [
+      server.writeNetState({ ball: true, carIds: [local], pads: true }),
+      server.writeNetState({ ball: false, carIds: [joined], pads: false }),
+    ];
+    const client = World.create(engine);
+    client.loadState(start);
+    const predictor = new Predictor(client, local, 0);
+    for (let f = 1; f <= 20; f++) predictor.advance(NO_INPUT);
+    expect(predictor.correct(10, [ballPart, newCarPart])).toBe(10);
+    expect([predictor.stats.corrections, predictor.stats.skippedParts]).toEqual([1, 1]);
+    // (every part unknown: nothing to take, as before)
+    expect(predictor.correct(10, [newCarPart])).toBe(0);
+    client.dispose();
+    server.dispose();
+  });
+
   it("a burst of updates in one frame replays once, from the oldest, into the world they make one by one (G3)", () => {
     const server = World.create(engine);
     const local = server.addCar(0);

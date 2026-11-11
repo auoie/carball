@@ -339,7 +339,11 @@ void Arena::_ResetVehicleOrder() {
 }
 
 Car* Arena::GetCar(uint32_t id) {
-	return _carIDMap[id];
+	// RL PATCH: a lookup, not operator[]: asking for a car the arena doesn't have inserted {id, null}, and a car later
+	// added under that id was then refused by _AddCarFromPtr, left in the physics world but in no list (the 2026-11-11
+	// audit's BLD-05)
+	auto found = _carIDMap.find(id);
+	return found == _carIDMap.end() ? nullptr : found->second;
 }
 
 void Arena::SetGoalScoreCallback(GoalScoreEventFn callbackFunc, void* userInfo) {

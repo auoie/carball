@@ -210,8 +210,9 @@ player by the account (RX29C).
 - **Leavers, as the game rates them** (LV1; notes/matchmaking.md "Leavers, rejoining and ratings"): a result comes only
   with a winner. Every player whose last team won is a winner, the rest losers, a leaver (an idle kick counts) flagged a
   quitter but rated by their team's result, with no dampening (ours). Forfeiters are ordinary losers. A match that
-  ends with no winner (everyone left, cancelled before the start, ended by the server) is a no contest: no result, no
-  rating changes.
+  ends with no winner (everyone left before it was decided, cancelled before the start, ended by the server) is a no
+  contest: no result, no rating changes. Everyone leaving a match already decided (a forfeit pending in a goal's
+  replay, the golden goal scored, the clock out with the scores apart) leaves its result (the audit's MATCH-01).
 - **The leavers' queue ban** (LV1): the game server reports a quitter to the API **when they leave**, if the penalty
   was armed (the lobby full of humans, no winner yet; the first leaver only; none in a server outage), with that
   player's ticket (spent on that match): `POST /api/quitters`. A leave by a lost connection waits 5 s first: if most of

@@ -119,7 +119,8 @@ func (s *Store) CreatePack(ctx context.Context, owner string, p NewPack, now tim
 }
 
 // PackByCode is a visible pack (its listing, and its file with its creator filled in), its downloads counted for
-// `viewer` (an account's id, or an address's keyed hash) once on now's UTC day; ok false for none
+// `viewer` (an account's id, or an address's keyed hash) once on now's UTC day, not counted for none (nil); ok false
+// for none
 func (s *Store) PackByCode(ctx context.Context, code string, viewer []byte, now time.Time) (SharedPack, []byte, bool, error) {
 	var p SharedPack
 	var file []byte
@@ -135,6 +136,9 @@ func (s *Store) PackByCode(ctx context.Context, code string, viewer []byte, now 
 			return err
 		}
 		found = true
+		if viewer == nil {
+			return nil
+		}
 		tag, err := tx.Exec(ctx, `INSERT INTO pack_downloads (code, viewer, day) VALUES ($1, $2, ($3::timestamptz AT TIME ZONE 'UTC')::date)
 			ON CONFLICT DO NOTHING`, code, viewer, now)
 		if err != nil {

@@ -157,12 +157,16 @@ export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45, trim: 0.05
 
 /** The guard's probe (the 2026-11-11 audit's REN-05). A page whose GPU needs two refreshes for every frame from its
  *  first runs at a steady half refresh: the refresh measured from its frames reads half too, and its slow frames pass
- *  for a display's cap. So a window that's slow and capped at `maxHz` or less (a 60 Hz display's half; never one at a
- *  real 60) is probed once: the view drawn at `scale` of its resolution each way for `settle` + `measure` s (the
+ *  for a display's cap. So a window that's slow and capped (a 60 Hz display's half or less; never one at a real 60:
+ *  that isn't slow) is probed once a session: the view drawn at `scale` of its resolution each way for `settle` + `measure` s (the
  *  first `settle` s not counted), then restored. Frames then faster than `gain` of the window's median (two refreshes
  *  down to one is 0.5, three to two 0.67; a display's cap gives 1): the GPU's load, the step taken. Else a real cap
  *  (a 30 Hz display, a browser's power saving): no step, and no second probe */
-export const GUARD_PROBE = { maxHz: 50, scale: 0.5, settle: 0.3, measure: 1, gain: 0.75 } as const;
+export const GUARD_PROBE = { scale: 0.5, settle: 0.3, measure: 1, gain: 0.75 } as const;
+
+/** The slow windows in a row a step takes. One was enough, and the step is for good: a first visit with the machine
+ *  busy with something else in seconds 3 to 7 of the page left every later visit blurrier (the audit's REN-06) */
+export const SLOW_WINDOWS = 2;
 
 const median = (values: readonly number[]): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
 
@@ -204,10 +208,21 @@ export class AutoVideoGuard {
   readonly #rolling: boolean;
   /** The probe under way: the slow window's median frame (s), its own time and frames; and whether one was made */
   #probe: { readonly before: number; time: number; frames: number[] } | null = null;
-  #probed = false;
+  #probed: boolean;
+  /** The slow windows in a row so far */
+  #slow = 0;
 
-  constructor({ rolling = false }: { readonly rolling?: boolean } = {}) {
+  /** `probed`: a probe was made earlier in this browser session and found a real cap (the page's note of it: a guard
+   *  is new each page load, and a display truly capped low was probed, 1.3 s at half resolution, after every load,
+   *  RV-1314) */
+  constructor({ rolling = false, probed = false }: { readonly rolling?: boolean; readonly probed?: boolean } = {}) {
     this.#rolling = rolling;
+    this.#probed = probed;
+  }
+
+  /** Whether a probe was made (this session: kept by the page for its next guard) */
+  get probed(): boolean {
+    return this.#probed;
   }
 
   /** Whether this frame decided a step down (once at most); `refreshHz` the display's as measured (null: not yet),
@@ -229,9 +244,15 @@ export class AutoVideoGuard {
     if (this.#time < AUTO_GUARD.warmUp + AUTO_GUARD.measure) return false;
     const { slow, capped, step } = guardDecision(this.#frames, refreshHz, capHz);
     // (slow at what reads as a cap, a low one: the GPU's two refreshes a frame, or a display's? Probed, once)
-    if (slow && capped && !this.#probed && (refreshHz ?? 0) <= GUARD_PROBE.maxHz) {
+    if (slow && capped && !this.#probed) {
       this.#probed = true;
       this.#probe = { before: median(this.#frames), time: 0, frames: [] };
+      return false;
+    }
+    // (a step takes `SLOW_WINDOWS` slow windows in a row: after the first, another is measured)
+    this.#slow = step ? this.#slow + 1 : 0;
+    if (step && this.#slow < SLOW_WINDOWS) {
+      [this.#time, this.#frames] = [AUTO_GUARD.warmUp, []];
       return false;
     }
     return this.#decided(step);

@@ -138,7 +138,7 @@ impl Api {
         let answer = async {
             let response = request.send().await?;
             let status = response.status().as_u16();
-            Ok::<_, reqwest::Error>((status, response.text().await?))
+            Ok::<_, reqwest::Error>((status, body_text(response).await.unwrap_or_default()))
         };
         let late = || RejoinAnswer::Unconfirmed(format!("no answer in {} s", REJOIN_ASK_WAIT.as_secs()));
         match tokio::time::timeout(REJOIN_ASK_WAIT, answer).await {
@@ -241,23 +241,46 @@ fn event(body: Value, created: i64) -> Call {
 /// What became of a call
 #[derive(Debug, PartialEq, Eq)]
 pub enum Sent {
-    /// Taken (2xx)
+    /// Taken (a 2xx of the service's own)
     Done,
-    /// Refused for good (a 4xx but 429): dropped
+    /// Refused for good (the service's own 4xx, but its 401, 404, 405 and 429): dropped
     Refused(u16),
-    /// Not now (no answer, 5xx, 429; a redirect, 401, 403, 404, 405: not the service's own answer): tried again later
+    /// Not now (no answer, 5xx, 429; a redirect, 401, 403, 404, 405, any 2xx or 4xx that isn't the service's own
+    /// answer): tried again later
     Later,
 }
 
-/// What an answer makes of a call: its status, and the accounts service's own refusal when the body is one (its JSON
-/// `{"error": …}`). Its 403 "ticket" (a ticket out of its window, used on another match, not ours) is for good: dropped,
-/// not tried for 24 h ahead of every call after it (AP4); any other 403, an edge's (Access, a challenge), tried again
-fn sent(status: u16, api_error: Option<&str>) -> Sent {
+/// The header the accounts service marks its own answers with (its `AnswerHeader`)
+const ANSWER_HEADER: &str = "x-carball-api";
+
+/// An answer's body is read this far (bytes), no further: the service's own are a few dozen
+const BODY_CAP: usize = 4096;
+
+/// An answer's body as text, its first `BODY_CAP` bytes (the whole was read, whatever its size, within the call's
+/// timeout: the audit's SEC-SRV-06)
+async fn body_text(mut response: reqwest::Response) -> Option<String> {
+    let mut bytes: Vec<u8> = Vec::new();
+    while bytes.len() < BODY_CAP {
+        let Some(chunk) = response.chunk().await.ok()? else { break };
+        bytes.extend_from_slice(&chunk[..chunk.len().min(BODY_CAP - bytes.len())]);
+    }
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// What an answer makes of a call: its status, whether it's marked the accounts service's own (`ANSWER_HEADER`), and
+/// the service's own refusal when the body is one (its JSON `{"error": …}`). Its 403 "ticket" (a ticket out of its
+/// window, used on another match, not ours) is for good: dropped, not tried for 24 h ahead of every call after it
+/// (AP4); any other 403, an edge's (Access, a challenge), tried again. A 2xx is the call taken only when it's the
+/// service's: one from whatever else `API_URL` came to reach (a catch-all page, a cached answer) dropped results and
+/// bans as delivered (the audit's SEC-SRV-06). Another 4xx is for good only as the service's own refusal: an edge's
+/// 400, 408, 413 or 421 on the way dropped the call too (MATCH-05)
+fn sent(status: u16, own: bool, api_error: Option<&str>) -> Sent {
     match (status, api_error) {
-        (200..=299, _) => Sent::Done,
+        (200..=299, _) if own => Sent::Done,
         (403, Some("ticket")) => Sent::Refused(status),
-        (300..=399 | 401 | 403 | 404 | 405 | 429 | 500..=599, _) => Sent::Later,
-        _ => Sent::Refused(status),
+        (200..=399 | 401 | 403 | 404 | 405 | 429 | 500..=599, _) => Sent::Later,
+        (_, Some(_)) => Sent::Refused(status),
+        _ => Sent::Later,
     }
 }
 
@@ -321,10 +344,11 @@ impl Queue {
             let path = dir.join(&name);
             let tmp = dir.join(format!("{name}.tmp"));
             let text = serialize(&call);
-            match write_synced(&tmp, text.as_bytes())
-                .and_then(|()| std::fs::rename(&tmp, &path))
-                .and_then(|()| sync_dir(dir))
-            {
+            match off_the_worker(|| {
+                write_synced(&tmp, text.as_bytes())
+                    .and_then(|()| std::fs::rename(&tmp, &path))
+                    .and_then(|()| sync_dir(dir))
+            }) {
                 Ok(()) => Some(path),
                 Err(e) => {
                     tracing::warn!("outbox: writing {}: {e}; kept in memory", path.display());
@@ -338,8 +362,18 @@ impl Queue {
     /// The front call gone (sent or dropped): its file too
     fn pop(&mut self) {
         if let Some((_, Some(path))) = self.calls.pop_front() {
-            remove(&path);
+            off_the_worker(|| remove(&path));
         }
+    }
+}
+
+/// A call's file work (written and synced twice, or removed) off the network's worker thread: on a 1- or 2-CPU host
+/// that thread is the only one, and for a slow disk's sync no session's packet was read or sent (the audit's
+/// SEC-SRV-05). On a runtime of one thread (the tests'), as it was
+fn off_the_worker<T>(work: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current().map(|h| h.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
+        _ => work(),
     }
 }
 
@@ -398,9 +432,14 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
     match request.send().await {
         Ok(response) => {
             let status = response.status().as_u16();
-            // (a 403's body read: the service's own refusal, or an edge's page)
-            let error = if status == 403 { response.text().await.ok().and_then(|body| api_error(&body)) } else { None };
-            let result = sent(status, error.as_deref());
+            let own = response.headers().contains_key(ANSWER_HEADER);
+            // (a 4xx's body read: the service's own refusal, or an edge's page)
+            let error = if (400..500).contains(&status) {
+                body_text(response).await.and_then(|body| api_error(&body))
+            } else {
+                None
+            };
+            let result = sent(status, own, error.as_deref());
             match (status, &result) {
                 (_, Sent::Refused(_)) if error.is_some() => tracing::warn!(
                     "outbox: {} {}: {status} {:?} from the accounts service: refused for good, dropped{}",
@@ -415,7 +454,7 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
                     }
                 ),
                 (429 | 500..=599, _) => tracing::warn!("outbox: {} {}: {status}, later", call.method, call.path),
-                (300..=399 | 401 | 403 | 404 | 405, _) => tracing::warn!(
+                (_, Sent::Later) => tracing::warn!(
                     "outbox: {} {}: {status}, not the accounts service's answer (a redirect, Access or a challenge, a wrong \
                      route or token): kept and tried again; check API_URL, GAME_SERVER_TOKEN_FILE and the Access token",
                     call.method,
@@ -629,21 +668,30 @@ mod tests {
     #[test]
     fn each_status_is_taken_retried_or_dropped() {
         for status in [200, 201, 204] {
-            assert_eq!(sent(status, None), Sent::Done, "{status}");
+            assert_eq!(sent(status, true, None), Sent::Done, "{status}");
+            // (a 2xx not marked the service's own, a catch-all page's or a cache's: kept, SEC-SRV-06)
+            assert_eq!(sent(status, false, None), Sent::Later, "{status} from something else");
         }
         for status in [301, 302, 303, 307, 308, 401, 403, 404, 405, 429, 500, 502, 503, 504] {
-            assert_eq!(sent(status, None), Sent::Later, "{status}");
+            for own in [true, false] {
+                assert_eq!(sent(status, own, None), Sent::Later, "{status}");
+            }
         }
-        for status in [400, 409, 410, 413, 422] {
-            assert_eq!(sent(status, None), Sent::Refused(status), "{status}");
+        // (another 4xx: for good as the service's own refusal, tried again as an edge's on the way, MATCH-05)
+        for status in [400, 408, 409, 410, 413, 421, 422] {
+            assert_eq!(sent(status, true, Some("bad-request")), Sent::Refused(status), "{status}");
+            assert_eq!(sent(status, false, None), Sent::Later, "{status} with no word of the service's");
         }
         // (the service's own refusal of a ticket: for good; its 401 for the token, an edge's 403: tried again, AP4)
-        assert_eq!(sent(403, Some("ticket")), Sent::Refused(403));
-        assert_eq!(sent(401, Some("unauthorized")), Sent::Later);
-        assert_eq!(sent(403, Some("forbidden")), Sent::Later);
+        assert_eq!(sent(403, true, Some("ticket")), Sent::Refused(403));
+        assert_eq!(sent(401, true, Some("unauthorized")), Sent::Later);
+        assert_eq!(sent(403, true, Some("forbidden")), Sent::Later);
         assert_eq!(api_error(r#"{"error":"ticket"}"#).as_deref(), Some("ticket"));
         assert_eq!(api_error("<html>Access denied</html>"), None);
     }
+
+    /// An answer's body from something that isn't the accounts service (the stand-in leaves its mark off it)
+    const NOT_THE_SERVICE: &str = "<html>a page of something else</html>";
 
     /// A stand-in accounts service's answers (wiremock): each request answered with the next status and body (the last
     /// again after), a `Location` on each if given, after `delay`; each request kept as its text (its method and path,
@@ -664,7 +712,11 @@ mod tests {
             self.seen.lock().unwrap().push(format!("{} {}\r\n{headers}\r\n{body}", request.method, request.url.path()));
             let i = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let (status, body) = self.answers[i.min(self.answers.len() - 1)];
+            // (marked the service's own, as its every answer is; a body that says it's another's isn't)
             let mut reply = wiremock::ResponseTemplate::new(status).set_delay(self.delay);
+            if body != NOT_THE_SERVICE {
+                reply = reply.insert_header(ANSWER_HEADER, "1");
+            }
             if !body.is_empty() {
                 reply = reply.set_body_raw(body, "application/json");
             }
@@ -781,7 +833,8 @@ mod tests {
 
     #[tokio::test]
     async fn calls_go_out_in_order_with_the_credentials_retried_through_failures() {
-        let (url, seen, _service) = service(vec![503, 503, 204, 409, 204]).await;
+        let (url, seen, _service) =
+            service_bodies(vec![(503, ""), (503, ""), (204, ""), (409, r#"{"error":"conflict"}"#), (204, "")]).await;
         let dir = scratch_dir();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
@@ -816,6 +869,39 @@ mod tests {
         drop(tx);
         ended(task).await;
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// The audit's SEC-SRV-06 and MATCH-05: a 200 that isn't the service's own (whatever `API_URL` came to reach: a
+    /// catch-all page, a cache) is no delivery, and a 4xx with no word of the service's (an edge's 400 or 413 on the
+    /// way) no refusal: the call kept and tried again until the service takes it
+    #[tokio::test]
+    async fn an_answer_that_isnt_the_services_own_keeps_the_call() {
+        let (url, seen, _service) =
+            service_bodies(vec![(200, NOT_THE_SERVICE), (400, "<html>Bad Request</html>"), (413, ""), (204, "")]).await;
+        let dir = scratch_dir();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
+        tx.send(Report::Quitter { match_id: "m1".into(), ticket: "t1".into() }).unwrap();
+        until(|| seen.lock().unwrap().len() >= 2).await;
+        assert_eq!(std::fs::read_dir(&dir).map_or(0, |d| d.count()), 1, "kept on disk after the 200 of something else");
+        until(|| seen.lock().unwrap().len() == 4).await;
+        until(|| std::fs::read_dir(&dir).map_or(0, |d| d.count()) == 0).await;
+        assert!(seen.lock().unwrap().iter().all(|r| r.starts_with("POST /api/quitters")));
+        drop(tx);
+        ended(task).await;
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// A body is read as far as its cap and no further
+    #[tokio::test]
+    async fn an_answers_body_is_read_to_its_cap() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::any())
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("x".repeat(3 * BODY_CAP)))
+            .mount(&server)
+            .await;
+        let response = reqwest::get(server.uri()).await.unwrap();
+        assert_eq!(body_text(response).await.map(|b| b.len()), Some(BODY_CAP));
     }
 
     /// A redirect (Access's login, another host) isn't followed: the credentials go nowhere else, and the call is tried

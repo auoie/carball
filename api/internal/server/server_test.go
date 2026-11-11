@@ -595,6 +595,37 @@ func TestStartIsAPagesOwnNavigation(t *testing.T) {
 	}
 }
 
+// SEC-API-03: a request its address's own limit refuses takes nothing of its network's. One address's burst past its
+// limit left its whole /24 refused as busy, every refused request of it counted against the block
+func TestARefusedRequestSparesItsNetwork(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.SignIns.Burst = 2
+	limits.SignInsWide.Burst = 4
+	e := setup(t, &limits)
+	start := func(ip string) bool {
+		resp := e.get(e.browser(), "/api/auth/steam/start", "CF-Connecting-IP", ip)
+		return resp.StatusCode == http.StatusSeeOther && !strings.Contains(resp.Header.Get("Location"), "busy")
+	}
+	passed := 0
+	for range 20 {
+		if start("203.0.113.5") {
+			passed++
+		}
+	}
+	if passed != 2 {
+		t.Fatalf("%d of one address's starts passed, want its 2", passed)
+	}
+	// (its neighbour in the /24: the network's other two, then the network's own limit)
+	for range 2 {
+		if !start("203.0.113.6") {
+			t.Fatal("a neighbour refused: the first address's refused requests spent the network's allowance")
+		}
+	}
+	if start("203.0.113.7") {
+		t.Error("a fifth start from the /24 past the network's 4")
+	}
+}
+
 func TestRateLimits(t *testing.T) {
 	limits := server.DefaultLimits()
 	limits.SignIns.Burst = 2
@@ -1012,17 +1043,31 @@ func TestCallbackSignupLimitsAndCeilings(t *testing.T) {
 	if got := e.page(e.get(b, "/api/auth/steam/callback?flow=x", ip...)); got.Get("signin") != "busy" {
 		t.Errorf("a callback past the limit: %v", got)
 	}
-	// (the sign-up: one, then refused from the address)
-	call := func() int {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, e.srv.URL+"/api/signup", strings.NewReader(`{"name":"N","turnstile":"good"}`))
+	// (the sign-up: one from the address, then refused. Charged for an attempt that has a sign-up waiting and a name
+	// that passes, no other: none waiting, or a name refused, as often as asked and nothing spent, SEC-API-03)
+	call := func(who *http.Client, name string) int {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, e.srv.URL+"/api/signup", strings.NewReader(`{"name":"`+name+`","turnstile":"good"}`))
 		req.Header.Set("Origin", e.srv.URL)
 		req.Header.Set("X-Carball", "1")
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("CF-Connecting-IP", "198.51.100.41")
-		return e.do(b, req).StatusCode
+		return e.do(who, req).StatusCode
 	}
-	call()
-	if got := call(); got != http.StatusTooManyRequests {
+	other := e.browser()
+	otherStart := e.get(other, "/api/auth/google/start", "CF-Connecting-IP", "198.51.100.42")
+	e.get(other, "/api/auth/google/callback?"+e.google.Authorize(t, otherStart.Header.Get("Location"), "sub-m").Encode(), "CF-Connecting-IP", "198.51.100.42")
+	for range 3 {
+		if got := call(e.browser(), "Limit_One"); got != http.StatusNotFound {
+			t.Fatalf("a sign-up with none waiting: %d", got)
+		}
+		if got := call(b, "N"); got != http.StatusBadRequest {
+			t.Fatalf("a sign-up with a name too short: %d", got)
+		}
+	}
+	if got := call(b, "Limit_One"); got != http.StatusOK && got != http.StatusCreated {
+		t.Fatalf("the address's one sign-up: %d", got)
+	}
+	if got := call(other, "Limit_Two"); got != http.StatusTooManyRequests {
 		t.Errorf("a second sign-up from the address: %d", got)
 	}
 	// (everyone's open flows at most 3: from fresh addresses, the 4th start refused)

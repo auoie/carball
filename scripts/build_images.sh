@@ -35,7 +35,9 @@ if [ $WORKTREE = 1 ]; then
 		exit 1
 	fi
 fi
-TAG=${1:-$("$R/scripts/image_tag.sh")}
+# (the tag of the commit read above, not of HEAD read again: a commit made between the two reads put one commit's
+# files under another's tag, BLD-06)
+TAG=${1:-$("$R/scripts/image_tag.sh" "$COMMIT")}
 PATHS=(Dockerfile rustfmt.toml client engine server protocol api scripts/build_host.sh out/arena/collision_meshes)
 # (the context made once, every build below from the same files; group and others never given write: what the images
 # copy keeps its mode, RV-926)

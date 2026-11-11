@@ -190,7 +190,9 @@ type Matchmaker struct {
 	servers map[string]bool
 	// the unlisted game servers warned of (each once: RV-1162), at most unlistedNamed of them, then one line for the rest
 	// (a leaked game-server token's restarts can't grow it without end: RV-1168)
-	unlisted     map[string]bool
+	unlisted map[string]bool
+	// each listed game server's own spelling of its name, from its calls (by the name lower-cased)
+	spelling     map[string]string
 	unlistedMore bool
 }
 
@@ -210,7 +212,7 @@ func New(issue Issuer, now func() time.Time, log *slog.Logger) *Matchmaker {
 	return &Matchmaker{
 		issue: issue, now: now, log: log, searches: map[string]*search{}, open: map[string]*search{}, matches: map[uint64]*match{},
 		active: map[string]uint64{}, latest: map[string]uint64{}, cooldowns: map[string]time.Time{}, waits: map[string]kept{},
-		rejoining: map[string]hold{},
+		rejoining: map[string]hold{}, spelling: map[string]string{},
 	}
 }
 
@@ -234,7 +236,13 @@ func (m *Matchmaker) listed(req Request) Request {
 	if m.servers == nil {
 		return req
 	}
-	known := func(s string) bool { return m.servers[strings.ToLower(s)] }
+	// (a listed server by the spelling it gave of itself, once it has: another case of its name is a server of its own
+	// to everything keyed by the name (the match's ticket, which the real server refuses; the stats), SEC-API-05)
+	known := func(s string) bool {
+		key := strings.ToLower(s)
+		own, heard := m.spelling[key]
+		return m.servers[key] && (!heard || own == s)
+	}
 	pings := make(map[string]int, len(req.Pings))
 	for s, ms := range req.Pings {
 		if known(s) {
@@ -568,7 +576,15 @@ func (m *Matchmaker) assign(members []*search, seats []int, server string, playl
 
 // event finds a match an event names, if this matchmaker assigned it to that server (an event about another, or one
 // from before a restart, is ignored: MX1R-2, MX1R-12)
+// heard notes a game server's own spelling of its name (any call of its own: `listed`)
+func (m *Matchmaker) heard(server string) {
+	if key := strings.ToLower(server); m.servers[key] {
+		m.spelling[key] = server
+	}
+}
+
 func (m *Matchmaker) event(server string, id uint64) *match {
+	m.heard(server)
 	if mt := m.matches[id]; mt != nil && mt.server == server {
 		return mt
 	}
@@ -672,10 +688,19 @@ func (m *Matchmaker) Cancelled(server string, id uint64, noShows []int, now time
 	m.free(id)
 }
 
-// Restarted frees the matches a server had before its restart (assigned before `at`, its clock: gone with it)
+// RestartSkew: how far a game server's clock may be behind this one's and its restart still free its matches (the
+// tickets' own allowance). `at` is the server's clock, `assigned` ours: behind by more than the seconds between a
+// match's assignment and the restart, the match stayed, its players refused every search as in a match until MatchLife
+// (the 2026-11-11 audit's MATCH-03). A match assigned to the new process inside the allowance, freed while it plays,
+// is the harmless side: its players could search again
+const RestartSkew = 30 * time.Second
+
+// Restarted frees the matches a server had before its restart (assigned before `at`, its clock, or within RestartSkew
+// after: gone with it)
 func (m *Matchmaker) Restarted(server string, at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.heard(server)
 	// (a game server whose own name (PUBLIC_HOST:port, its pongs') isn't on GAME_SERVERS' list (its URL's host:port):
 	// never matched at, every search naming it dropped; said once, at its start, RV-1162)
 	if key := strings.ToLower(server); m.servers != nil && !m.servers[key] && !m.unlisted[key] {
@@ -692,7 +717,7 @@ func (m *Matchmaker) Restarted(server string, at time.Time) {
 		}
 	}
 	for id, mt := range m.matches {
-		if mt.server == server && !mt.assigned.After(at) {
+		if mt.server == server && !mt.assigned.After(at.Add(RestartSkew)) {
 			m.free(id)
 		}
 	}
@@ -733,6 +758,7 @@ func (m *Matchmaker) RejoinAllowed(account string, id uint64) bool {
 func (m *Matchmaker) RejoinCheck(account string, id uint64, server string, nonce [16]byte) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.heard(server)
 	mt := m.matches[id]
 	if mt != nil && mt.server != server {
 		return false
@@ -763,6 +789,12 @@ func (m *Matchmaker) RejoinRefused(server, account string, id uint64, nonce [16]
 
 // rejoinable: RejoinAllowed's rule, under the lock
 func (m *Matchmaker) rejoinable(account string, id uint64) bool {
+	// (a match this matchmaker knows: its own players alone. An account it has no record of, every account after a
+	// restart, was let through for any match: the game server's own seat check refused a stranger, but the answer
+	// should be what its name says, SEC-API-06)
+	if mt := m.matches[id]; mt != nil && !slices.Contains(mt.accounts, account) {
+		return false
+	}
 	latest, ok := m.latest[account]
 	return m.open[account] == nil && (!ok || (latest != 0 && latest == id))
 }

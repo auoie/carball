@@ -175,8 +175,11 @@ pub fn server_config(identity: Identity, port: u16) -> anyhow::Result<ServerConf
     transport
         .max_concurrent_bidi_streams(4u32.into())
         .max_concurrent_uni_streams(4u32.into())
-        .stream_receive_window(256_000u32.into())
-        .receive_window(1_000_000u32.into())
+        // (what a client's streams carry, its request's headers and a few control messages a second, is a few KB: the
+        // windows 16 KB a stream and 64 KB a connection. At 256 KB and 1 MB a client could park a megabyte unread in
+        // streams the session never accepts, half a gigabyte across the slots: the audit's SEC-SRV-04)
+        .stream_receive_window(16_000u32.into())
+        .receive_window(64_000u32.into())
         .datagram_receive_buffer_size(Some(64 * 1024))
         // (a session's updates waiting to be sent: three datagrams' room, the oldest dropped for a newer. quinn's own
         // megabyte kept a stalled connection's whole backlog, sent oldest first once it was back: a second and more of
@@ -487,13 +490,21 @@ pub struct Unsettled {
 /// without a ticket, the players' claims refused and their matches cancelled as no-shows (the audit's SEC-SRV-01, and
 /// SEC-SRV-02's neighbour behind a shared address); one that has said its hello never gives way
 #[derive(Debug)]
-struct Waiter {
+struct Waiter<I> {
     id: u64,
     address: IpAddr,
     network: IpAddr,
+    /// When it was admitted: it gives way once it's `GIVE_WAY_AGE` old
+    since: I,
     permit: tokio::sync::OwnedSemaphorePermit,
     gave_way: Arc<tokio::sync::Notify>,
 }
+
+/// A waiting session gives way once it's this old: a real page's hello comes within a round trip, so one younger is
+/// most likely a player's claim on its way, and the newcomer is refused instead. Any age gave way, so at a cap full of
+/// players a region's ping could close the claim that had just taken a freed slot: a no-show, its match cancelled
+/// (RV-1294). A silent session still holds its slot no longer than this against a newcomer
+const GIVE_WAY_AGE: Duration = Duration::from_secs(1);
 
 /// What a session's hello asks for, as an address's allowances count it
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -521,7 +532,7 @@ pub struct Admission<C: governor::clock::Clock + Clone = governor::clock::Defaul
     active: HashMap<IpAddr, usize>,
     networks: HashMap<IpAddr, usize>,
     /// The sessions still to say their hello, the oldest first
-    waiting: VecDeque<Waiter>,
+    waiting: VecDeque<Waiter<C::Instant>>,
     next_waiter: u64,
     starts: Bucket<C>,
     network_starts: Bucket<C>,
@@ -575,13 +586,22 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
     ) -> Result<Unsettled, &'static str> {
         self.sweep_due();
         let network = network_key(address);
+        // (the oldest waiting, if it's old enough to give way)
+        let now = self.clock.now();
+        let old = |w: &Waiter<C::Instant>| {
+            Duration::from(governor::clock::Reference::duration_since(&now, w.since)) >= GIVE_WAY_AGE
+        };
+        let oldest = |of: &dyn Fn(&Waiter<C::Instant>) -> bool| {
+            self.waiting.iter().position(of).filter(|&at| self.waiting.get(at).is_some_and(old))
+        };
         let own = if self.active.get(&address).copied().unwrap_or(0) >= limits.per_address {
-            Some((self.waiting.iter().position(|w| w.address == address), "its address's sessions at once"))
+            Some((oldest(&|w| w.address == address), "its address's sessions at once"))
         } else if self.networks.get(&network).copied().unwrap_or(0) >= limits.network_sessions() {
-            Some((self.waiting.iter().position(|w| w.network == network), "its network's sessions at once"))
+            Some((oldest(&|w| w.network == network), "its network's sessions at once"))
         } else {
             None
         };
+        let anyone = oldest(&|_| true);
         if let Some((None, why)) = own {
             return Err(why);
         }
@@ -599,14 +619,21 @@ impl<C: governor::clock::Clock + Clone> Admission<C> {
             Some(permit) => permit,
             None => match sessions.clone().try_acquire_owned() {
                 Ok(permit) => permit,
-                Err(_) => self.give_way(0).ok_or("the server's most sessions")?,
+                Err(_) => anyone.and_then(|at| self.give_way(at)).ok_or("the server's most sessions")?,
             },
         };
         *self.active.entry(address).or_default() += 1;
         *self.networks.entry(network).or_default() += 1;
         self.next_waiter += 1;
         let waiting = Unsettled { id: self.next_waiter, gave_way: Arc::new(tokio::sync::Notify::new()) };
-        self.waiting.push_back(Waiter { id: waiting.id, address, network, permit, gave_way: waiting.gave_way.clone() });
+        self.waiting.push_back(Waiter {
+            id: waiting.id,
+            address,
+            network,
+            since: now,
+            permit,
+            gave_way: waiting.gave_way.clone(),
+        });
         Ok(waiting)
     }
 
@@ -700,11 +727,18 @@ pub struct Admitted {
     admission: Arc<Mutex<Admission>>,
     address: IpAddr,
     waiting: Unsettled,
-    /// Its slot, from its hello on (`settle`) until it's refused (`free`) or ends
+    /// Its slot, from when it's a player's (`settle`) until it's refused (`free`) or ends
     slot: Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
+    /// It became a player's (`settle`); its address's and network's counts given back (`free`, or its end)
+    player: std::sync::atomic::AtomicBool,
+    released: std::sync::atomic::AtomicBool,
 }
 
 impl Admitted {
+    fn new(admission: Arc<Mutex<Admission>>, address: IpAddr, waiting: Unsettled) -> Self {
+        Self { admission, address, waiting, slot: Mutex::new(None), player: false.into(), released: false.into() }
+    }
+
     fn charge(&self, kind: Kind) -> bool {
         self.admission.lock().unwrap().charge(self.address, kind)
     }
@@ -719,21 +753,42 @@ impl Admitted {
         let permit = self.admission.lock().unwrap().settle(self.waiting.id);
         let settled = permit.is_some();
         *self.slot.lock().unwrap() = permit;
+        self.player.store(settled, std::sync::atomic::Ordering::Relaxed);
         settled
     }
 
-    /// Its slot let go before its session's end, settled or waiting still (a refusal's or a Pong's write and its wait
-    /// for the client's close hold none: SEC-SRV-01, RV-1291)
+    /// Whether it became a player's session (its ticket checked, or a development server's join)
+    fn is_player(&self) -> bool {
+        self.player.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A line about this session that isn't a player's is due: its address's first for `why` in a minute (with how
+    /// many went unlogged since the last); None, not logged (a flood's lines one a minute, counted: SEC-SRV-07)
+    fn note(&self, why: &'static str) -> Option<u64> {
+        self.admission.lock().unwrap().log_refusal(self.address, why)
+    }
+
+    /// Its address's and its network's counts given back, once
+    fn release(&self) {
+        if !self.released.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let mut admission = self.admission.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            admission.release(self.address, self.waiting.id);
+        }
+    }
+
+    /// Its slot and its counts let go before its session's end, settled or waiting still: a refusal's or a Pong's
+    /// write and its wait for the client's close hold nothing of its address's or its network's (SEC-SRV-01, RV-1291;
+    /// the counts were held through both waits, four seconds a refused session, RV-1313)
     fn free(&self) {
         self.slot.lock().unwrap().take();
         drop(self.admission.lock().unwrap().settle(self.waiting.id));
+        self.release();
     }
 }
 
 impl Drop for Admitted {
     fn drop(&mut self) {
-        let mut admission = self.admission.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        admission.release(self.address, self.waiting.id);
+        self.release();
     }
 }
 
@@ -766,9 +821,7 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
                 incoming.refuse();
                 continue;
             }
-            Admit::Admit(waiting) => {
-                Admitted { admission: admission.clone(), address, waiting, slot: Mutex::new(None) }
-            }
+            Admit::Admit(waiting) => Admitted::new(admission.clone(), address, waiting),
         };
         let id = next_id;
         next_id += 1;
@@ -778,7 +831,19 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
             let lost = match session(incoming, peer, id, &to_game, &limits, &admitted).await {
                 Ok(lost) => lost,
                 Err(e) => {
-                    tracing::info!("{}", session_end_line(id, peer, &e));
+                    // (a player's session's end is always said; one that never was a player's, a line a minute for
+                    // its address, the rest counted: a connect loop wrote a line a session, thousands a second from
+                    // a block of addresses, and the joins and leaves kept for abuse handling rolled out of the log,
+                    // SEC-SRV-07)
+                    if admitted.is_player() {
+                        tracing::info!("{}", session_end_line(id, peer, &e));
+                    } else if let Some(unlogged) = admitted.note("a session ended before it was a player's") {
+                        tracing::info!(
+                            "{} (its address's next such ends this minute unlogged{})",
+                            session_end_line(id, peer, &e),
+                            if unlogged > 0 { format!(", {unlogged} more since the last line") } else { String::new() }
+                        );
+                    }
                     matches!(
                         e.downcast_ref::<wtransport::error::ConnectionError>(),
                         Some(wtransport::error::ConnectionError::TimedOut)
@@ -816,14 +881,15 @@ async fn refuse(
     reason: u8,
     admitted: &Admitted,
 ) {
+    last_answer(admitted, last_message(send, Control::Refused { reason }), connection.closed(), Duration::from_secs(2))
+        .await;
+}
+
+/// A session's last answer (a refusal, a Pong): its slot and counts let go first, then the `write` within `LAST_WRITE`
+/// and the client's close `wait` at most. In that order: neither wait holds anything, whatever the client does
+async fn last_answer(admitted: &Admitted, write: impl Future<Output = ()>, closed: impl Future, wait: Duration) {
     admitted.free();
-    last_words(
-        last_message(send, Control::Refused { reason }),
-        connection.closed(),
-        LAST_WRITE,
-        Duration::from_secs(2),
-    )
-    .await;
+    last_words(write, closed, LAST_WRITE, wait).await;
 }
 
 /// A session's last message written and its stream finished
@@ -850,12 +916,16 @@ fn check_ticket(
     token: u64,
     ticket: &str,
     peer: std::net::SocketAddr,
+    admitted: &Admitted,
 ) -> Result<crate::ticket::Ticket, crate::ticket::Refusal> {
     let checked = tickets.verify(ticket, crate::ticket::unix_now())?;
     let fits = match &checked.purpose {
         crate::ticket::Purpose::Seat(s) => {
-            if let Some(own) = server_name.filter(|own| *own != s.server) {
-                // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863)
+            if let Some(own) = server_name.filter(|own| *own != s.server)
+                && admitted.note("a match ticket for another server").is_some()
+            {
+                // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863; a
+                // line a minute for its address, its replays' not each, RV-1312)
                 tracing::warn!(
                     "session from {peer}: a match ticket for server {:?}, this server is {own:?}: refused",
                     s.server
@@ -886,17 +956,30 @@ async fn read_control(recv: &mut wtransport::RecvStream) -> anyhow::Result<Contr
 }
 
 async fn read_body(recv: &mut wtransport::RecvStream) -> anyhow::Result<Vec<u8>> {
+    read_body_within(recv, usize::from(u16::MAX)).await
+}
+
+/// A control message's body, refused past `most` bytes before any of it is read
+async fn read_body_within(recv: &mut wtransport::RecvStream, most: usize) -> anyhow::Result<Vec<u8>> {
     let mut len = [0u8; 2];
     recv.read_exact(&mut len).await?;
-    let mut body = vec![0u8; usize::from(u16::from_le_bytes(len))];
+    let len = usize::from(u16::from_le_bytes(len));
+    if len > most {
+        bail!("a control message of {len} bytes, {most} at most here");
+    }
+    let mut body = vec![0u8; len];
     recv.read_exact(&mut body).await?;
     Ok(body)
 }
 
+/// A hello's most bytes: its fixed fields, a name and a ticket (about 1.1 KB at the most), with room (SEC-SRV-04: 64 KB
+/// were read before the frame was known to be a hello)
+const MAX_HELLO: usize = 2048;
+
 /// The client's hello, its version checked before the rest is read (another version's fields don't decode: RV-243);
 /// `Err(version)`: another version's
 async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Result<Control, u16>> {
-    let body = read_body(recv).await?;
+    let body = read_body_within(recv, MAX_HELLO).await?;
     match protocol::hello_version(&body) {
         Some(version) if version != protocol::VERSION => Ok(Err(version)),
         _ => Ok(Ok(Control::decode(&body)?)),
@@ -908,6 +991,7 @@ async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Result<
 async fn handshake(
     incoming: IncomingSession,
     limits: &NetLimits,
+    admitted: &Admitted,
 ) -> anyhow::Result<
     Option<(wtransport::Connection, wtransport::SendStream, wtransport::RecvStream, Result<Control, u16>)>,
 > {
@@ -923,7 +1007,13 @@ async fn handshake(
         // (an IPv4 client as a.b.c.d, RV-967, RV-1010)
         let from = request.remote_address();
         let from = std::net::SocketAddr::new(from.ip().to_canonical(), from.port());
-        tracing::warn!("session from {from} refused: its page's origin {:?}", request.origin());
+        if let Some(unlogged) = admitted.note("its page's origin") {
+            tracing::warn!(
+                "session from {from} refused: its page's origin {:?} (its address's next this minute unlogged{})",
+                request.origin(),
+                if unlogged > 0 { format!(", {unlogged} more since the last line") } else { String::new() }
+            );
+        }
         request.forbidden().await;
         return Ok(None);
     }
@@ -953,7 +1043,7 @@ async fn session(
     let handshaken = tokio::select! {
         biased;
         () = admitted.waiting.gave_way.notified() => bail!("gave way to a newer session before its hello"),
-        done = tokio::time::timeout(limits.handshake, handshake(incoming, limits)) => done.context("no hello in time")??,
+        done = tokio::time::timeout(limits.handshake, handshake(incoming, limits, admitted)) => done.context("no hello in time")??,
     };
     let Some((connection, mut send, mut recv, hello)) = handshaken else {
         return Ok(false);
@@ -977,7 +1067,7 @@ async fn session(
     let ping = matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING);
     let checked = match (&limits.tickets, &hello) {
         (Some(tickets), Control::Hello { ticket, intent, token, .. }) if !ping => {
-            Some(check_ticket(tickets, limits.server_name.as_deref(), *intent, *token, ticket, peer))
+            Some(check_ticket(tickets, limits.server_name.as_deref(), *intent, *token, ticket, peer, admitted))
         }
         _ => None,
     };
@@ -999,9 +1089,7 @@ async fn session(
             return Ok(false);
         }
         let server = limits.server_name.clone().unwrap_or_default();
-        admitted.free();
-        last_words(last_message(&mut send, Control::Pong { server }), connection.closed(), LAST_WRITE, PING_FLUSH)
-            .await;
+        last_answer(admitted, last_message(&mut send, Control::Pong { server }), connection.closed(), PING_FLUSH).await;
         return Ok(false);
     }
     let ticket = if let Control::Hello { ticket, .. } = &hello { ticket.clone() } else { String::new() };
@@ -1639,12 +1727,16 @@ mod tests {
     #[test]
     fn sessions_still_to_say_their_hello_give_way_the_oldest_first() {
         let limits = NetLimits { max_sessions: 3, per_address: 2, per_network: Some(3), ..NetLimits::default() };
-        let (mut admission, _clock) = admission_at(&limits);
+        let (mut admission, clock) = admission_at(&limits);
         let sessions = Arc::new(tokio::sync::Semaphore::new(limits.max_sessions));
         let at = |n: u8| -> IpAddr { [10, n, 0, 1].into() };
-        // (the server's: three silent sessions hold every slot; a fourth takes the oldest's)
+        // (the server's: three silent sessions hold every slot; a fourth takes the oldest's, once that one is a second
+        // old: younger, it's most likely a player's claim on its way, and the newcomer is refused, RV-1294)
         let silent: Vec<Unsettled> = (1..=3).map(|n| admission.admit(at(n), &limits, &sessions).unwrap()).collect();
         assert_eq!(sessions.available_permits(), 0);
+        clock.advance(GIVE_WAY_AGE - Duration::from_millis(50));
+        assert_eq!(admission.admit(at(4), &limits, &sessions).err(), Some("the server's most sessions"));
+        clock.advance(Duration::from_millis(50));
         let newcomer = admission.admit(at(4), &limits, &sessions).expect("the oldest silent session gives way");
         let gave_way = |u: &Unsettled| {
             // (told at once: a stored wake-up, taken without waiting)
@@ -1669,6 +1761,8 @@ mod tests {
         let other = admission.admit([10, 8, 0, 1].into(), &limits, &sessions).unwrap();
         let (first, second) =
             (admission.admit(a, &limits, &sessions).unwrap(), admission.admit(a, &limits, &sessions).unwrap());
+        assert_eq!(admission.admit(a, &limits, &sessions).err(), Some("its address's sessions at once"), "too young");
+        clock.advance(GIVE_WAY_AGE);
         let third = admission.admit(a, &limits, &sessions).expect("its address's oldest gives way");
         assert!(gave_way(&first) && !gave_way(&second) && !gave_way(&other) && !gave_way(&third));
         // (its settled ones don't: at its most with both settled, refused)
@@ -1699,6 +1793,17 @@ mod tests {
         );
         assert!(settled(&mut admission, address_key("2001:db8:2::1".parse().unwrap()), &limits, &sessions).is_ok());
         drop(held);
+        // (and its own to give way: a network at its most with silent sessions lets its oldest go for its newcomer,
+        // never another network's)
+        let (mut admission, clock) = admission_at(&limits);
+        let elsewhere = admission.admit(address_key("2001:db8:2::1".parse().unwrap()), &limits, &sessions).unwrap();
+        let silent: Vec<Unsettled> = (1..=4).map(|n| admission.admit(key(n), &limits, &sessions).unwrap()).collect();
+        clock.advance(GIVE_WAY_AGE);
+        let newcomer = admission.admit(key(5), &limits, &sessions).expect("its network's oldest gives way");
+        assert!(admission.settle(silent[0].id).is_none(), "the network's oldest gave way");
+        for kept in [&elsewhere, &silent[1], &silent[2], &silent[3], &newcomer] {
+            assert!(admission.settle(kept.id).is_some(), "the others keep theirs");
+        }
         // (its starts: twice an address's burst, four times its rate)
         let limits = NetLimits {
             per_address: 100,
@@ -1807,7 +1912,7 @@ mod tests {
         let address: IpAddr = [10, 0, 0, 1].into();
         let admit = || {
             let waiting = admission.lock().unwrap().admit(address, &limits, &sessions).unwrap();
-            Admitted { admission: admission.clone(), address, waiting, slot: Mutex::new(None) }
+            Admitted::new(admission.clone(), address, waiting)
         };
         // (one refused before it settled: a ping, a claim with no ticket; one after: a rejoin the matchmaker refuses)
         let (waiting, player) = (admit(), admit());
@@ -1816,10 +1921,21 @@ mod tests {
         waiting.free();
         assert_eq!((sessions.available_permits(), admission.lock().unwrap().waiting.len()), (1, 0));
         assert!(!waiting.settle(), "freed: no slot to make its own");
+        // (and its counts, its address's and its network's, given back with it: not held through the waits, RV-1313)
+        assert_eq!(admission.lock().unwrap().active.get(&address), Some(&1));
         player.free();
         assert_eq!(sessions.available_permits(), 2);
-        // (its counts stay its address's until its session ends)
-        assert_eq!(admission.lock().unwrap().active.get(&address), Some(&2));
+        assert_eq!(admission.lock().unwrap().active.get(&address), None);
+        assert!(admission.lock().unwrap().networks.is_empty());
+        // (a last answer the client never takes: everything let go before the write, not after it, RV-1310)
+        let refused = admit();
+        assert!(refused.settle());
+        assert_eq!(sessions.available_permits(), 1);
+        let answer =
+            last_answer(&refused, std::future::pending(), std::future::pending::<()>(), Duration::from_secs(2));
+        assert!(tokio::time::timeout(Duration::from_millis(50), answer).await.is_err(), "its write still waiting");
+        assert_eq!((sessions.available_permits(), admission.lock().unwrap().active.get(&address).copied()), (2, None));
+        drop(refused);
         // (a client that never takes the message, never closes: the write and the wait each end at their deadline)
         let started = Instant::now();
         let (deadline, wait) = (Duration::from_millis(60), Duration::from_millis(40));

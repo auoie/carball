@@ -214,7 +214,11 @@ impl InputBuffer {
             self.newest_timestamp = Some(timestamp);
             self.last_packet_time = now;
             self.jitter.received_packet(now);
-            if self.filling && self.frames.len() >= self.jitter.buffer_size as usize {
+            // (or the queue at its most: bunched delivery for a few seconds puts the target past the 60 frames kept,
+            // and the refill, its queue trimmed to 60, then never ended: every second frame dropped unseen, the rest
+            // applied a second late, until the estimate decayed. The 2026-11-11 audit's NET-07; ours, the game's
+            // numbers as they are)
+            if self.filling && self.frames.len() >= (self.jitter.buffer_size as usize).min(MAX_BUFFERED_FRAMES) {
                 self.filling = false;
             }
         }
@@ -640,6 +644,36 @@ mod tests {
         let throttles: Vec<f32> = (0..4).map(|i| b.tick(0.02, i % 2 == 1).throttle).collect();
         assert_eq!(throttles, [1.0 / 127.0, 2.0 / 127.0, 3.0 / 127.0, 4.0 / 127.0]);
         assert_eq!(b.ack_frame(), 13);
+    }
+
+    /// NET-07: thirty packets a quarter second apart put the target past the 60 frames kept; a refill then ends with the
+    /// queue at its most, where it couldn't end at all
+    #[test]
+    fn a_refill_ends_at_the_queues_most_when_the_target_is_past_it() {
+        let mut b = InputBuffer::default();
+        let mut now = 0.0;
+        let mut next = 1u32;
+        for packet in 0..30u32 {
+            b.receive(packet + 1, next, &[frame(1)], now);
+            next += 1;
+            now += 0.25;
+        }
+        assert!(b.jitter.buffer_size as usize > MAX_BUFFERED_FRAMES, "the target: {}", b.jitter.buffer_size);
+        // (run dry: refilling)
+        while !b.is_empty() || !b.filling() {
+            b.tick(now, false);
+            now += 1.0 / 120.0;
+        }
+        // (good delivery again: the queue fills to its 60, and the next packet ends the refill)
+        let mut timestamp = 1000;
+        for _ in 0..70 {
+            b.receive(timestamp, next, &[frame(2)], now);
+            timestamp += 1;
+            next += 1;
+            now += 1.0 / 120.0;
+        }
+        assert_eq!(b.len(), MAX_BUFFERED_FRAMES);
+        assert!(!b.filling(), "the refill ended with the queue at its most");
     }
 
     #[test]

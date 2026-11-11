@@ -255,6 +255,38 @@ describe("World", () => {
     expect(world.ball().pos.x).toBeGreaterThan(before.x + 100);
   });
 
+  it("unlimited boost as this world was told outlasts a loaded state's own; never told, the state's stands (NET-05)", () => {
+    const drained = (world: World, id: number): number => {
+      world.setControls(id, { ...NO_CONTROLS, throttle: 1, boost: true });
+      for (let i = 0; i < 120; i++) world.step();
+      return world.car(id).boost;
+    };
+    const source = World.create(engine);
+    const id = source.addCar(0, CarBody.Standard);
+    source.resetKickoff(3);
+    source.setKickoffCountdown(0);
+    const limited = source.saveState();
+    source.setUnlimitedBoost(true);
+    const unlimited = source.saveState();
+    // (told on, the podium's: a correction's older state, taken with it off, doesn't turn it off)
+    const client = World.create(engine);
+    client.loadState(limited);
+    client.setUnlimitedBoost(true);
+    client.loadState(limited);
+    const full = client.car(id).boost;
+    expect(drained(client, id)).toBe(full);
+    // (told off, the next match's: a World's state with the server's on doesn't turn it on)
+    client.setUnlimitedBoost(false);
+    client.loadState(unlimited);
+    expect(drained(client, id)).toBeLessThan(client.car(id).boost + 1);
+    expect(client.car(id).boost).toBeLessThan(full);
+    // (never told: the loaded state's own)
+    const untold = World.create(engine);
+    untold.loadState(unlimited);
+    const before = untold.car(id).boost;
+    expect(drained(untold, id)).toBe(before);
+  });
+
   it("takeImpacts after a loadState: the ticks simulated again come once (RV-163)", () => {
     const world = World.create(engine);
     const id = world.addCar(0);

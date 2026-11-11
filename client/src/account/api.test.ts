@@ -21,6 +21,16 @@ const ACCOUNT = {
 };
 
 describe("the accounts service's calls", () => {
+  it("a call that finds the sign-in gone tells the page's one handler, then fails with it (CLI-12)", async () => {
+    const { api: a } = api(reply(401, { error: "signed-out" }), reply(403, { error: "banned" }));
+    let signedOut = 0;
+    a.onSignedOut = () => signedOut++;
+    await expect(a.reportPack("ABCD-EFGH-JKLM-NPQR")).rejects.toMatchObject({ code: "signed-out" });
+    expect(signedOut).toBe(1);
+    await expect(a.reportPack("ABCD-EFGH-JKLM-NPQR")).rejects.toBeInstanceOf(Error);
+    expect(signedOut).toBe(1);
+  });
+
   it("reads the signed-in account, null signed out; writes carry the API's header, JSON with a body", async () => {
     const { call, api: a } = api(reply(200, ACCOUNT), reply(401, { error: "signed-out" }), reply(200, ACCOUNT), reply(204));
     const before = Date.now();

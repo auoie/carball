@@ -80,8 +80,18 @@ export async function playerNameOnceKnown(ready: Promise<unknown>, account: () =
 
 const isPick = (v: unknown): v is BotPick => typeof v === "object" && v !== null && "bot" in v && typeof v.bot === "string";
 
+/** The browser's storage, or none: reading it throws where site data is blocked, and as a parameter's default that was
+ *  outside the readers' own `try`: Play vs Bots, its page failing to build, was left hidden (the audit's CLI-08) */
+const local = (): Store | null => {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+};
+
 /** The kept choices (their slots' picks checked; fitChoices fits them to the bots there are), or null */
-export function storedChoices(storage: Store | null = typeof localStorage === "undefined" ? null : localStorage): BotChoices | null {
+export function storedChoices(storage: Store | null = local()): BotChoices | null {
   try {
     const v = JSON.parse(storage?.getItem(CHOICES_KEY) ?? "null") as { teamSize?: unknown; teammates?: unknown; opponents?: unknown } | null;
     if (!v || (v.teamSize !== 1 && v.teamSize !== 2 && v.teamSize !== 3) || !Array.isArray(v.teammates) || !Array.isArray(v.opponents)) return null;
@@ -92,7 +102,7 @@ export function storedChoices(storage: Store | null = typeof localStorage === "u
   }
 }
 
-export function storeChoices(choices: BotChoices, storage: Store | null = typeof localStorage === "undefined" ? null : localStorage): void {
+export function storeChoices(choices: BotChoices, storage: Store | null = local()): void {
   try {
     storage?.setItem(CHOICES_KEY, JSON.stringify(choices));
   } catch {

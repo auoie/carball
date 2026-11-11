@@ -82,7 +82,17 @@ func TestPackShareAndDownload(t *testing.T) {
 		t.Fatalf("code %q", code)
 	}
 	anon := e.browser()
-	got := e.get(anon, "/api/packs/"+code, "CF-Connecting-IP", "2001:db8:1::1")
+	// (a read without the page's header, another site's image tag: served, not counted, SEC-API-04)
+	for i := range 3 {
+		tag := e.get(anon, "/api/packs/"+code, "CF-Connecting-IP", fmt.Sprintf("2001:db8:%d::9", 50+i))
+		if tag.StatusCode != http.StatusOK || !strings.Contains(string(tag.Body), `"downloads":0`) {
+			t.Fatalf("a read without the page's header: %d %s", tag.StatusCode, tag.Body)
+		}
+	}
+	if n := e.rows(`SELECT count(*) FROM pack_downloads`); n != 0 {
+		t.Fatalf("%d downloads recorded for reads without the page's header", n)
+	}
+	got := e.get(anon, "/api/packs/"+code, "CF-Connecting-IP", "2001:db8:1::1", "X-Carball", "1")
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("download: %d %s", got.StatusCode, got.Body)
 	}
@@ -101,7 +111,7 @@ func TestPackShareAndDownload(t *testing.T) {
 	}
 	downloads := func(b *http.Client, ip string) int {
 		var v struct{ Downloads int }
-		_ = json.Unmarshal(e.get(b, "/api/packs/"+code, "CF-Connecting-IP", ip).Body, &v)
+		_ = json.Unmarshal(e.get(b, "/api/packs/"+code, "CF-Connecting-IP", ip, "X-Carball", "1").Body, &v)
 		return v.Downloads
 	}
 	// (the same address again: not counted; another: counted; the owner signed in, from any address: once)
@@ -276,9 +286,9 @@ func TestPackBrowse(t *testing.T) {
 	}
 	// (the most downloaded first: two of them read)
 	for _, ip := range []string{"2001:db8:a::1", "2001:db8:b::1"} {
-		e.get(e.browser(), "/api/packs/"+all[3], "CF-Connecting-IP", ip)
+		e.get(e.browser(), "/api/packs/"+all[3], "CF-Connecting-IP", ip, "X-Carball", "1")
 	}
-	e.get(e.browser(), "/api/packs/"+all[7], "CF-Connecting-IP", "2001:db8:a::1")
+	e.get(e.browser(), "/api/packs/"+all[7], "CF-Connecting-IP", "2001:db8:a::1", "X-Carball", "1")
 	top := read("?sort=downloads")
 	if top.Packs[0].Name != "Drill 03" || top.Packs[1].Name != "Drill 07" || top.Packs[2].Name != "Drill 34" {
 		t.Errorf("by downloads: %v %v %v", top.Packs[0].Name, top.Packs[1].Name, top.Packs[2].Name)
@@ -376,7 +386,7 @@ func TestPackReportsAndDeletes(t *testing.T) {
 	// (the account deleted: its packs with it, and the downloads it was counted for, RV-1203)
 	e.share(owner, "Goes With Me")
 	theirs := e.share(reporter, "Stays Here")
-	if e.get(owner, "/api/packs/"+theirs).StatusCode != http.StatusOK {
+	if e.get(owner, "/api/packs/"+theirs, "X-Carball", "1").StatusCode != http.StatusOK {
 		t.Fatal("a download")
 	}
 	if n := e.rows(`SELECT count(*) FROM pack_downloads WHERE viewer = uuid_send($1::uuid)`, ownerID); n != 1 {

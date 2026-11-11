@@ -110,6 +110,13 @@ func TestStartOnlyListedServers(t *testing.T) {
 	if _, listed := got.Servers["EU:4433"]; !listed || len(got.Servers) != 1 {
 		t.Fatalf("the stats' servers: %v", got.Servers)
 	}
+	// (once the server has given its own spelling, in any call of its: that one alone. Another case of it would be a
+	// server of its own to the tickets and the stats, SEC-API-05)
+	h.m.Restarted("eu:4433", h.now.Add(-time.Hour))
+	if _, _, err := h.m.Start(player("v", 1500), req([]byte{1}, map[string]int{"EU:4433": 40}), h.now); !errors.Is(err, ErrNoServer) {
+		t.Fatalf("another spelling of a server that has given its own: %v", err)
+	}
+	h.search(t, player("w", 1500), []byte{1}, map[string]int{"eu:4433": 40})
 	// (no list: every server, as in development)
 	h.m.AllowServers(nil)
 	if _, _, err := h.m.Start(player("z", 1500), req([]byte{1}, made), h.now); err != nil {

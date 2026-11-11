@@ -364,10 +364,6 @@ func (s *Server) signupInfo(w http.ResponseWriter, r *http.Request) {
 // signup makes the account: the name checked, Turnstile passed (AC-16), then the store's checks again in one transaction
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	ctx, now := r.Context(), s.Now()
-	if !s.allowAddress(r, now, s.signups, s.signupsWide) {
-		writeError(w, http.StatusTooManyRequests, "busy")
-		return
-	}
 	p, ok, err := s.pending(r)
 	if err != nil {
 		s.log(r).Error("reading a sign-up", "err", err)
@@ -389,6 +385,13 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	name, err := names.Clean(body.Name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, nameError(err))
+		return
+	}
+	// (charged here: an attempt with a sign-up waiting and a name that passes, about to cost a Turnstile call and an
+	// account. Charged at the top, a request with no sign-up at all spent its network's allowance, and a player whose
+	// first names the word filter refused was told busy: SEC-API-03)
+	if !s.allowAddress(r, now, s.signups, s.signupsWide) {
+		writeError(w, http.StatusTooManyRequests, "busy")
 		return
 	}
 	if s.Turnstile != nil {

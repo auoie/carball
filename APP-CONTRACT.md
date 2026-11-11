@@ -58,7 +58,7 @@ then `--target web`, `game` and `api` as `carball-web:TAG`, `carball-game:TAG` a
 cached by its inputs, so a release that doesn't touch the engine builds no C++; cargo's registry and target, npm's and
 Go's caches are BuildKit cache mounts (the server's own crate always built again). The first build downloads the
 toolchain images and the crates, npm packages and Go modules (`--locked`, `npm ci`, the Go checksum database), CMake for
-the server's engine from a dated snapshot of Debian's archive (snapshot.debian.org, its version pinned) and Rust's wasm32-unknown-emscripten target from static.rust-lang.org
+the server's engine and libclang for the bindings check from a dated snapshot of Debian's archive (snapshot.debian.org, their versions pinned, amd64's; a fetch that fails is tried five times, and a build with no cache needs that host and static.rust-lang.org reachable: RV-1311), rustfmt and Rust's wasm32-unknown-emscripten target from static.rust-lang.org
 (the toolchain's own, checked against its manifest: RV-916); later builds only what changed. Every base is pinned by digest (update a tag and its digest together). Then:
 ```sh
 docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz       # on the host: docker load < carball-web-TAG.tar.gz
@@ -140,7 +140,7 @@ server can't read stops it, the error naming the setting.
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
 | `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order or a key id twice; the key ids are logged at start); a claim without a match ticket (a JWT, EdDSA: notes/accounts.md §3) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
-| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a rejoin let through then refused here (with the rejoin's ticket: RV-1076), a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8 and its ticket spent, that answer being final; no answer, `Refused` 9, never let in unconfirmed, its ticket left good for a retry; one question at a time for a ticket; RV-1008, RV-1020). Every call names this server (`X-Carball-Server`: the API's budget for the game servers' calls is each server's). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without) |
+| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a rejoin let through then refused here (with the rejoin's ticket: RV-1076), a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker), and before a rejoin is let in it's asked whether the account's latest match is still that one (`POST /api/fleet/rejoin`, 2 s: told no, the rejoin is refused `Refused` 8 and its ticket spent, that answer being final; no answer, `Refused` 9, never let in unconfirmed, its ticket left good for a retry; one question at a time for a ticket; RV-1008, RV-1020). Every call names this server (`X-Carball-Server`: the API's budget for the game servers' calls is each server's). A call counts as taken only on a 2xx marked the accounts service's own (`X-Carball-Api: 1`, on its every answer), and as refused for good only on the service's own JSON refusal; any other answer (a 200 from whatever else the URL reaches, an edge's 4xx) keeps the call for a retry, so **deploy the API before the game server** (an older API's unmarked answers leave the calls waiting, up to 24 h, never lost: SEC-SRV-06, MATCH-05). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters`, `/api/refills` and `/api/fleet/*` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
 | `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server: without it, or with a blank one, the server won't start (RX31) |
@@ -164,16 +164,20 @@ services instead (the browser tests' stacks, `client/e2e/services`).
   `carball-server/VERSION` (allow it through any bot rule on `/api/`).
 - **The ranked rules** (notes/accounts.md §3, notes/matchmaking.md LV1): every queue match is rated: its result (the
   winning team; each seat's first ticket, team, quitter flag and time played) goes to `POST /api/results` when it ends
-  with a winner; a match with none (everyone left, cancelled before the start) is a no contest and sends nothing. The
+  with a winner; a match with none (everyone left before it was decided, cancelled before the start) is a no contest and sends
+  nothing; everyone leaving a match already decided (a team's forfeit pending in a goal's replay, the golden goal
+  scored, the clock out with the scores apart) leaves its result (the audit's MATCH-01). The
   first player to leave while the lobby is full and there's no winner yet is reported at the leave (`POST
   /api/quitters`, their queue ban; a lost connection after 5 s, its seat told left to the matchmaker then, after the report, so it can't search and be matched before the ban: RV-964); a rejoin that fills the lobby again undoes it (`POST
   /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
-  their connection within 5 s of each other (the server's own outage). **An outage voids the match** (the user's
+  their connection within 5 s of each other (the server's own outage; "most" is of the seats there to lose theirs, not
+  of those a player had left by choice before: RV-1308). **An outage voids the match** (the user's
   decision of 2026-11-11, the audit's MATCH-02): when a team is emptied by a lost connection and so forfeits, that
   forfeit's result waits 5 s (or until the match is let go); if more than half the match's seats lost their
   connection within 5 s of that leave, the match ends with no result and no rating change (the matchmaker told its
   end); else the result goes out then. A leave the player chose never counts as lost, and its forfeit's result is told
-  at once. A ranked 2v2 or 3v3 seat left by accident is
+  at once. One ruling for both: a match is never banned for and void (RV-1309), and a ban is told before the result
+  that frees its account to search (MATCH-04). A ranked 2v2 or 3v3 seat left by accident is
   held for a rejoin until the match ends (a rejoin's ticket, for that match; a rejoin before the old session timed out
   takes the seat over). The matches are the accounts service's matchmaker's (notes/matchmaking.md, the central
   matchmaker): it pairs by rating (ours: ±100, wider by 50 every 10 s the oldest searcher has waited, uncapped; teams by
@@ -240,11 +244,14 @@ IPv4 address or an IPv6 /64 (a LAN party's players behind one address count toge
 2026-10-23); its wider network an IPv4 /24 or an IPv6 /48, as the accounts service's; a bucket is a burst at once, then
 a steady rate (governor's GCRA). A session that hasn't said its hello holds its slot only until it's needed: at the
 server's, its address's or its network's most sessions, the oldest such (anyone's, its address's, its network's) is
-closed for the newcomer (the audit's SEC-SRV-01). A hello alone makes no session a player's: one whose ticket
+closed for the newcomer once it's a second old (the audit's SEC-SRV-01; younger, it's most likely a player's claim on
+its way, and the newcomer is refused: RV-1294). A hello alone makes no session a player's: one whose ticket
 verified for its claim or rejoin never gives way; a region's ping, a claim with no good ticket and any refused
 session stay ones to give way, let their slot go before their answer is written, and that answer (its write and its
 stream's end) has 2 s, whatever the client does (RV-1291). A good ticket that isn't for this (another server's seat,
-the other intent's) is charged to its address's claims like one that doesn't verify (RV-1295).
+the other intent's) is charged to its address's claims like one that doesn't verify (RV-1295). A refused session's
+address and network counts are given back with its slot, before its answer (RV-1313). `--max-sessions`,
+`--max-per-address` and `--max-per-network` of 0 are refused at start (RV-1296).
 
 | Limit | Counted per | Value | Set by |
 |---|---|---|---|
@@ -262,12 +269,14 @@ the other intent's) is charged to its address's claims like one that doesn't ver
 | A hello's ticket | message | 1024 bytes | protocol |
 | Messages to the game thread | the server | 65,536 waiting, 2048 read a pass; a session's inputs one place (its newest: RV-991) | fixed |
 | Messages to a player | session | 2048 waiting; full, the player is dropped (a lost connection) | fixed |
-| QUIC streams | session | 4 each way; windows 256 KB a stream, 1 MB the connection | fixed |
+| QUIC streams | session | 4 each way; windows 16 KB a stream, 64 KB the connection (what a client can park unread: SEC-SRV-04) | fixed |
+| A hello | message | 2048 bytes | fixed |
+| Updates waiting to be sent | session | three datagrams' room (3,684 bytes: about a dozen updates of the usual size), the oldest dropped for a newer (NET-03) | fixed |
 | QUIC idle and keep-alive | session | closed after 10 s with no packet; a keep-alive every 2 s | fixed |
 | Datagrams waiting to be read | session | 64 KiB | fixed |
 | A rejoin's confirmation | rejoin | the accounts service's answer within 2 s, else refused (`Refused` 9; one question at a time for a ticket, let go before the refusal's close wait: RV-1028). Deploy the API before the game servers: a new server asking an older API gets 404 and refuses every rejoin with 9 | fixed |
 | Ticket life | ticket | a seat's 30 s, a rejoin's 2 min (the API's), 30 s of clock difference; each used once | fixed |
-| Refusal lines | address and reason | one a minute, the rest counted | fixed |
+| Refusal lines, and the end of a session that never was a player's | address and reason | one a minute, the rest counted (SEC-SRV-07) | fixed |
 | Log lines waiting | the server | 128k; past it dropped | fixed |
 | Health endpoint | the server | 16 connections, 2 s and 16 KiB a request | fixed |
 | A match's wait for its players | match | 10 s from its first claim (the no-shows' cooldown: the API's) | fixed |
@@ -402,7 +411,8 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   `pack-name-not-allowed`, `pack-description`, `pack-description-not-allowed`; 413 `too-large`; 429 `pack-uploads`
   (with `seconds`: the account's 10 a day) or `busy` (the address's); 409 `pack-limit` (100 an account). `GET
   /api/packs/{code}` (public): its listing and its file, its creator the owner's display name now, its downloads counted
-  once a day per account or address; 404 `not-found` for an unknown, hidden or banned owner's pack. `GET
+  once a day per account or address, for the page's own read alone (`X-Carball: 1`: another site's request for it
+  counts nothing, SEC-API-04); 404 `not-found` for an unknown, hidden or banned owner's pack. `GET
   /api/packs?search=&sort=new|downloads&cursor=` (public): 30 a page, keyset-paged (the cursor opaque), the search a
   part of the name (any case; plain ILIKE), hidden packs and banned owners' left out; the first page of each order
   without a search kept 5 s: dropped at once by a share, a delete or an account's deletion (a read under way then not
@@ -458,8 +468,8 @@ window.
 
 | Limit | Counted per | Value |
 |---|---|---|
-| Sign-ins (the start and each provider's callback, so two a sign-in) | address / wider network | 30 / 150 in 10 minutes |
-| Sign-ups | address / wider network | 5 / 25 an hour |
+| Sign-ins (the start and each provider's callback, so two a sign-in) | address / wider network | 30 / 150 in 10 minutes; a request the address's own limit refuses takes nothing of its network's (SEC-API-03) |
+| Sign-ups (an attempt with a sign-up waiting and a name that passes: charged before its Turnstile check) | address / wider network | 5 / 25 an hour |
 | Sign-ins in progress, sign-ups waiting (one an identity: migration 00008) | everyone | 20,000, 5,000 |
 | Renames | account | 5 a day |
 | Rejoin tickets | account | 60 in 10 minutes |

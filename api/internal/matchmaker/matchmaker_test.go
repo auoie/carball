@@ -312,11 +312,12 @@ func TestMatchesFreed(t *testing.T) {
 	}
 	restart = pair("r1", "r2")
 	h.m.Started("eu:4433", restart, h.now)
-	h.m.Restarted("eu:4433", h.now.Add(-time.Second))
+	h.m.Restarted("eu:4433", h.now.Add(-RestartSkew-time.Second))
 	if !busy("r1") {
-		t.Fatal("a restart before the match freed it")
+		t.Fatal("a restart well before the match freed it")
 	}
-	h.m.Restarted("eu:4433", h.now.Add(time.Second))
+	// (the server's clock a few seconds behind ours: its restart after the match's assignment all the same, MATCH-03)
+	h.m.Restarted("eu:4433", h.now.Add(-6*time.Second))
 	if busy("r1") || busy("r2") {
 		t.Fatal("the server's restart didn't free its match")
 	}
@@ -905,6 +906,14 @@ func TestRejoinCheckAtTheRejoin(t *testing.T) {
 	h.m.Started("eu:4433", first.ID, h.now)
 	seat := slices.IndexFunc(h.m.matches[first.ID].accounts, func(a string) bool { return a == "j" })
 	h.m.Left("eu:4433", first.ID, seat)
+	// (the match's own players alone: an account the matchmaker has no record of isn't let into a match it knows,
+	// SEC-API-06)
+	if h.m.RejoinAllowed("stranger", first.ID) || h.m.RejoinCheck("stranger", first.ID, "eu:4433", nonce1) {
+		t.Error("an account that isn't the match's let through for its rejoin")
+	}
+	if !h.m.RejoinAllowed("stranger", first.ID+1) {
+		t.Error("a match the matchmaker doesn't know: the ban's rule alone, as after a restart")
+	}
 	if !h.m.RejoinCheck("j", first.ID, "eu:4433", nonce1) {
 		t.Fatal("an ordinary rejoin refused")
 	}

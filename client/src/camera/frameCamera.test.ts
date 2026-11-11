@@ -542,6 +542,26 @@ describe("the camera across a frame", () => {
     }
   });
 
+  it("a car put 500 uu aside in the air (a correction too big to smooth) is no travel to look ahead along: no further from an even camera than the game's own (RV-1319)", () => {
+    // (the air circle, the car's place jumped sideways at 8 s: no new spawn, no camera reset)
+    const jumped: Path = (tick) => {
+      const on = airCircle(tick);
+      if (tick < 960) return on;
+      return { ...on, car: { ...on.car, pos: vec3(on.car.pos.x + 500 * on.car.rot.right.x, on.car.pos.y + 500 * on.car.rot.right.y, on.car.pos.z) } };
+    };
+    const evenRuns = Array.from({ length: 24 }, (_, n) => run([...(n > 0 ? [n / 24 / 60] : []), ...even(60, 11)], jumped, { feel: 60 }));
+    for (const [name, make] of [
+      ["a 90 Hz phone at 60", (seed: number) => phone(90, 60, 10.5, { busy: 5, slow: 5, late: 0, seed })],
+      ["a 120 Hz phone at 60, the page busy, 40 % late", (seed: number) => phone(120, 60, 10.5, { busy: 12, slow: 20, late: 0.4, seed })],
+    ] as const) {
+      const worst = (game: boolean): number =>
+        Math.max(...[1, 2, 3, 5, 8].map((seed) => fromEven(run(make(seed), jumped, { feel: 60, game }), evenRuns, 7.9, 8.6).view));
+      const [ours, game] = [worst(false), worst(true)];
+      expect(ours, `${name}: ${ours.toFixed(2)} for the game's own ${game.toFixed(2)}`).toBeLessThan(game + 0.25);
+      expect(ours, name).toBeLessThan(1);
+    }
+  });
+
   it("the air view's pitch, flattened while the car flies back toward the camera, the game's at any share of a frame an update", () => {
     // (forwards for 3 s, then back the way it came and diving: its velocity against the view's direction, so the game
     // scales the pitch down each frame while the view comes round)

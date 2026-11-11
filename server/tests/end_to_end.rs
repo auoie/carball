@@ -888,6 +888,9 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     }
     let first = connect(Some("https://carball.zolt.top")).await.expect("the page's origin");
     let second = connect(Some("https://Carball.Zolt.Top")).await.expect("a second session from the address");
+    // (a session just come isn't closed for the next: it may be a player's claim on its way, RV-1294; a second old, yes)
+    assert!(connect(Some("https://carball.zolt.top")).await.is_err(), "a third at once: refused, the others too young");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
     // (SEC-SRV-01: neither has said its hello, so a third at once takes the older's slot: the first is closed, at once
     // (well inside the 3 s its hello has: by the give-way's word, not that deadline, RV-1297))
     let third = connect(Some("https://carball.zolt.top")).await.expect("a third: the oldest silent one gives way");
@@ -912,12 +915,48 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     let connect_capped =
         || async { Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await };
     let silent = connect_capped().await.expect("the one session");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
     // (SEC-SRV-01: it says nothing, so the next takes its slot)
     let only = connect_capped().await.expect("the silent session gives way");
     assert!(tokio::time::timeout(Duration::from_secs(1), silent.closed()).await.is_ok(), "the silent one closed");
     joined(&only).await;
     assert!(connect_capped().await.is_err(), "past the most sessions, the one there a player's");
     drop(only);
+}
+
+/// RV-1310: a player's session (its ticket good for its claim) is never one to give way: on a server of one slot, a
+/// second old, the next connect is refused. And the hello has its own deadline after the session's request, well inside
+/// the handshake's (SEC-SRV-01: a session that says nothing holds its slot no longer)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ticketed_players_session_never_gives_way_and_a_silent_one_ends_at_the_hellos_deadline() {
+    let limits = NetLimits { max_sessions: 1, hello: Duration::from_millis(1500), ..open_limits() };
+    let (port, cert_hash, key) = ticketed_server_limited(false, limits).await;
+    let connect = || async move {
+        let config = ClientConfig::builder()
+            .with_bind_default()
+            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+            .build();
+        Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await
+    };
+    // (a silent session: closed at the hello's 1.5 s, not the handshake's 7 s)
+    let silent = connect().await.expect("the one slot");
+    let start = Instant::now();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(4), silent.closed()).await.is_ok(),
+        "open past the hello's deadline"
+    );
+    assert!(start.elapsed() > Duration::from_millis(1200), "closed after {:?}", start.elapsed());
+    // (a claim with its match ticket: a player's)
+    let ticket = seat_ticket(&key, 1, "Ada", 0xc1, 0, 2, &format!("localhost:{port}"));
+    let (claim, _player, _recv) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket)).await;
+    assert!(matches!(claim, Control::Welcome { match_id: 0xc1, .. }), "{claim:?}");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(connect().await.is_err(), "a newcomer at the cap: refused, the player's session kept");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), _player.closed()).await.is_err(),
+        "the player's session closed"
+    );
 }
 
 /// A session that never opens its control stream is closed at the handshake's deadline (SEC-2); one that floods control

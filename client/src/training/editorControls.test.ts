@@ -241,5 +241,13 @@ describe("a goal's inside, and an import's limits (RX25)", () => {
     expect(taken.shots[0]?.timeLimit).toBe(1);
     expect(taken.shots[0]?.ball.location.z).toBe(100);
     expect(taken.shots[0]?.car.location).toEqual(vec3(CLAMPS.car.x, 0, 17));
+    // (the fields no screen shows, within what sharing takes: CLI-07)
+    const hidden = editorPack({
+      ...pack,
+      description: `  ${"d".repeat(150)}\u00e9\u4e16\n${"e".repeat(150)}  `,
+      shots: [40000, -40000, 32767, -32768, 100].map((roll) => ({ ...shot, car: { ...shot.car, rotation: { ...shot.car.rotation, roll } } })),
+    });
+    expect(hidden.description).toBe(`${"d".repeat(150)}${"e".repeat(50)}`);
+    expect(hidden.shots.map((s) => s.car.rotation.roll)).toEqual([40000 - 65536, 65536 - 40000, 32767, -32768, 100]);
   });
 });

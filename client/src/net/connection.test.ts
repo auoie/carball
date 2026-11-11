@@ -3,7 +3,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import { type FakeTransportRecord, fakeTransport } from "../testing/fakeTransport";
-import { Connection, ControlQueue, RefusedError, checkDatagrams, refusalText, serverHost, storeKey, storedKey, webTransportOptions } from "./connection";
+import {
+  Connection,
+  ControlQueue,
+  RefusedError,
+  checkDatagrams,
+  readControlMessages,
+  refusalText,
+  serverHost,
+  storeKey,
+  storedKey,
+  webTransportOptions,
+} from "./connection";
 import { joinPreferences } from "./joinPreferences";
 import {
   PROTOCOL_VERSION,
@@ -16,6 +27,7 @@ import {
   REFUSED_UNCONFIRMED,
   decodeControl,
   decodeDatagram,
+  encodeControl,
 } from "./protocol";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
@@ -218,7 +230,8 @@ describe("the input datagrams' count (protocol 24)", () => {
       snapshot: new Uint8Array(),
     } as const;
     const record: FakeTransportRecord = { sessions: [] };
-    vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
+    // (the control stream kept open: its end is the session's, NET-04)
+    vi.stubGlobal("WebTransport", fakeTransport([welcome], record, false, []));
     vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
     const { connection } = await Connection.open({ url: "https://game.example:4433/play", certHash: null }, joinPreferences(DEFAULT_SETTINGS), {
       intent: "claim",
@@ -274,6 +287,55 @@ describe("a session closed before the game listens", () => {
     const reasons: string[] = [];
     connection.onClose = (reason) => reasons.push(reason);
     expect(reasons).toEqual(["closed by the server"]);
+  });
+});
+
+describe("the control stream's end and what it can't read (NET-04)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const welcome = {
+    type: "welcome",
+    version: PROTOCOL_VERSION,
+    carId: 1,
+    tickRate: 120,
+    frame: 0,
+    matchType: "casual",
+    teamSize: 1,
+    map: 0,
+    key: 5n,
+    matchId: 0n,
+    snapshot: new Uint8Array(),
+  } as const;
+  const address = { url: "https://game.example:4433/play", certHash: null };
+
+  it("ended before any message, the open fails (it hung for good); ended after the welcome, the connection is closed", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
+    vi.stubGlobal("WebTransport", fakeTransport([]));
+    await expect(Connection.open(address, joinPreferences(DEFAULT_SETTINGS))).rejects.toThrow("the session ended before its welcome");
+    vi.stubGlobal("WebTransport", fakeTransport([welcome]));
+    const { connection } = await Connection.open(address, joinPreferences(DEFAULT_SETTINGS));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const reasons: string[] = [];
+    connection.onClose = (reason) => reasons.push(reason);
+    expect([connection.closed, reasons]).toEqual([true, ["closed by the server"]]);
+  });
+
+  it("a message this page doesn't know is skipped, the ones after it read", async () => {
+    const frames = (parts: readonly Uint8Array[]): ReadableStream<Uint8Array> =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const part of parts) controller.enqueue(part);
+          controller.close();
+        },
+      });
+    // (a type no version has, framed as the server frames its messages; then a known one)
+    const unknown = new Uint8Array([3, 0, 0xee, 1, 2]);
+    const read: string[] = [];
+    await readControlMessages(frames([encodeControl(welcome), unknown, encodeControl({ type: "refused", reason: REFUSED_TOKEN })]), (m) => read.push(m.type));
+    expect(read).toEqual(["welcome", "refused"]);
+    // (the first message must be read: no session on a welcome this page can't decode)
+    await expect(readControlMessages(frames([unknown]), () => undefined)).rejects.toThrow("unknown control message");
   });
 });
 

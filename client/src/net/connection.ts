@@ -192,8 +192,18 @@ export async function readControlMessages(readable: ReadableStream<Uint8Array>, 
       const body = buffer.subarray(2, 2 + length);
       const version = first ? welcomeVersion(body) : null;
       if (version !== null && version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(version)}, client ${String(PROTOCOL_VERSION)}`);
+      // (a message this page doesn't know, one the protocol gained inside its version since the page loaded: skipped,
+      // its frame's length known. Thrown, it ended the reader: no goal, clock, roster or World handled again in a
+      // match that looked alive, NET-04. The first message is the welcome or a refusal: that one must decode)
+      let message: ControlMessage | null = null;
+      try {
+        message = decodeControl(body);
+      } catch (e) {
+        if (first || !(e instanceof DecodeError)) throw e;
+        console.debug(`a control message skipped: ${e.message}`);
+      }
       first = false;
-      handle(decodeControl(body));
+      if (message) handle(message);
       buffer = buffer.slice(2 + length);
     }
   }
@@ -256,18 +266,32 @@ export class Connection {
     await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key, intent: match.intent, playlist: 0, token, ticket }));
     connection.#control = writer;
 
+    let welcomed = false;
     const welcome = await new Promise<Welcome>((resolve, reject) => {
       let first = true;
       readControlMessages(stream.readable as ReadableStream<Uint8Array>, (m) => {
         if (first) {
           first = false;
-          if (m.type === "welcome") resolve(m);
-          else if (m.type === "refused") reject(new RefusedError(m.reason));
+          if (m.type === "welcome") {
+            welcomed = true;
+            resolve(m);
+          } else if (m.type === "refused") reject(new RefusedError(m.reason));
           else reject(new Error(`expected welcome, got ${m.type}`));
           return;
         }
         connection.#incoming.push(m);
-      }).catch(reject);
+      }).then(
+        // (the stream's end is the session's: before the welcome the open fails, where it hung for good (the local
+        // host's worker failing just then); after it the connection is closed, as when the server closes it, NET-04)
+        () => {
+          if (welcomed) connection.#close("closed by the server");
+          else reject(new Error("the session ended before its welcome"));
+        },
+        (e: unknown) => {
+          if (welcomed) connection.#close(e instanceof Error ? e.message : String(e));
+          else reject(e instanceof Error ? e : new Error(String(e)));
+        },
+      );
     });
     if (welcome.version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(welcome.version)}`);
     storeKey(welcome.key);

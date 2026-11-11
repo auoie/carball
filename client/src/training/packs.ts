@@ -80,6 +80,8 @@ export async function loadPack(listing: PackListing, fetcher: typeof fetch = fet
     const code = listing.url.slice(SHARED.length);
     try {
       const r = await fetcher(`/api/packs/${encodeURIComponent(code)}`, {
+        // (the page's own read: the API counts a download for it alone, not for another site's request, SEC-API-04)
+        headers: { "X-Carball": "1" },
         credentials: "same-origin",
         cache: "no-store",
         signal: AbortSignal.timeout(SHARED_TIMEOUT_MS),

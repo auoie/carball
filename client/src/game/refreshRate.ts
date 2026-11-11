@@ -32,11 +32,10 @@ const AFTER_STALL = 30;
 const CLUSTER = 1.5;
 const CLUSTER_ROUNDS = 4;
 
-/** The feel's rate holds while this share of the recent frames are still as fast as it (within `HOLD_MARGIN` of its
- *  interval), where it takes `PERCENTILE` of them to raise it. One threshold for both flipped the feel between the
- *  screen's rate and half of it when about nine frames in ten were doubled (RV-1303) */
+/** The feel's rate holds while this share of the recent frames still read as it (or faster), where it takes
+ *  `PERCENTILE` of them to raise it. One threshold for both flipped the feel between the screen's rate and half of it
+ *  when about nine frames in ten were doubled (RV-1303) */
 const HOLD_PERCENTILE = 0.04;
-const HOLD_MARGIN = 1.25;
 
 /** The middle of the cluster of fast intervals in `sorted` (ms) */
 function fastInterval(sorted: readonly number[]): number {
@@ -56,7 +55,6 @@ export class RefreshMeter {
   #latched: number | null = null;
   /** The feel's measures of the last `RECENT_MS`: when (the frames' time added, ms) and what */
   #measures: { readonly at: number; readonly hz: number }[] = [];
-  #last: number | null = null;
   #time = 0;
 
   /** A frame's interval (ms; a hidden tab's, 250 or more, not counted; nor a stall and the frames just after it) */
@@ -77,14 +75,18 @@ export class RefreshMeter {
     this.#added++;
     if (this.#recent.length < EVERY || this.#added % EVERY !== 0) return;
     const sorted = [...this.#recent].sort((a, b) => a - b);
+    // (the latched refresh from the fast edge, as ever: the video guard's cap and the Stat Graphs' target read it, and
+    // on a variable-refresh screen with a slow page the fast frames' middle read a lower rate, the page then taken
+    // for one at its display's cap, RV-1321)
+    const edge = sorted[Math.floor(sorted.length * PERCENTILE)] ?? sorted[0] ?? 1000 / 60;
+    this.#latched = Math.max(this.#latched ?? 0, nearestRate(1000 / edge));
+    // (the feel's from the fast frames' middle; it holds while a few frames still read as the held rate: by the
+    // rate they read as, not by a margin on its interval, which a rate within a quarter below it always met, so 75
+    // never came down to 60, nor 144 to 120, RV-1318)
     const hz = nearestRate(1000 / fastInterval(sorted));
-    this.#latched = Math.max(this.#latched ?? 0, hz);
-    // (for the feel a rate rises once two measures in a row agree on it, and holds while a few frames still run at it)
-    const agreed = Math.min(hz, this.#last ?? hz);
-    this.#last = hz;
     const held = this.recentHz;
-    const holds = held !== null && (sorted[Math.floor(sorted.length * HOLD_PERCENTILE)] ?? Infinity) <= (1000 / held) * HOLD_MARGIN;
-    const counted = holds ? Math.max(agreed, held) : agreed;
+    const holds = held !== null && nearestRate(1000 / (sorted[Math.floor(sorted.length * HOLD_PERCENTILE)] ?? Infinity)) >= held;
+    const counted = holds ? Math.max(hz, held) : hz;
     this.#measures = [...this.#measures.filter((m) => m.at > this.#time - RECENT_MS), { at: this.#time, hz: counted }];
   }
 

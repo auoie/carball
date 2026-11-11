@@ -309,9 +309,13 @@ func (s *Server) lineAllowed(key string, now time.Time) (int, bool) {
 // allowAddress takes one request of the client's address and of its wider network
 func (s *Server) allowAddress(r *http.Request, now time.Time, narrow, wide *ratelimit.Limiter) bool {
 	key := ratelimit.ClientKey(r, s.TrustedProxies)
-	// (both counted: a block's addresses can't each take a fresh key past the network's)
-	ok := narrow.Allow(key, now)
-	return wide.Allow(ratelimit.WideKey(key), now) && ok
+	// (the network's counted for a request its address's own limit let through: a block's addresses can't each take a
+	// fresh key past the network's; one the address's limit refused takes nothing of its network's, or a single address
+	// spent its whole /24's allowance with requests that were all refused: the 2026-11-11 audit's SEC-API-03)
+	if !narrow.Allow(key, now) {
+		return false
+	}
+	return wide.Allow(ratelimit.WideKey(key), now)
 }
 
 // Handler routes /api/
@@ -372,10 +376,17 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 
 // --- Middleware ---
 
-// headers: nothing cached, nothing sniffed, no Referer (a callback's URL holds its code), never framed
+// AnswerHeader marks an answer as this service's own: a game server's outbox takes a 2xx for its call delivered only
+// with it. A 200 from anything else its API_URL came to reach (a catch-all page, a cached answer, a route changed at
+// the edge) had its results, bans and events dropped as taken (the 2026-11-11 audit's SEC-SRV-06)
+const AnswerHeader = "X-Carball-Api"
+
+// headers: nothing cached, nothing sniffed, no Referer (a callback's URL holds its code), never framed; the answer
+// marked this service's own
 func headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		h.Set(AnswerHeader, "1")
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")

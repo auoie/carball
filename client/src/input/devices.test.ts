@@ -31,6 +31,34 @@ describe("the pads", () => {
   });
 });
 
+describe("two pads connected (CLI-09)", () => {
+  it("the one in use is read: the one last used, until the other is used and it isn't", () => {
+    const pad = (index: number, button: number, stick = 0) => ({
+      id: `pad ${String(index)}`,
+      index,
+      connected: true,
+      mapping: "standard",
+      axes: [stick, 0, 0, 0],
+      buttons: [{ value: button, pressed: button > 0.5 }],
+    });
+    const read = (first: ReturnType<typeof pad>, second: ReturnType<typeof pad>): readonly number[] | undefined => {
+      vi.stubGlobal("navigator", { getGamepads: () => [first, null, second] });
+      return readGamepad()?.buttons;
+    };
+    // (a pad on charge in slot 0, the one in the player's hands in slot 2: its press read, where slot 0's alone was)
+    expect(read(pad(0, 0), pad(2, 1))).toEqual([1]);
+    // (kept while neither is used, and while both are)
+    expect(read(pad(0, 0), pad(2, 0.3))).toEqual([0.3]);
+    expect(read(pad(0, 1), pad(2, 0.9))).toEqual([0.9]);
+    // (the other used, a stick's push, and this one not: the other's from here)
+    expect(read(pad(0, 0.2, -0.8), pad(2, 0))).toEqual([0.2]);
+    expect(read(pad(0, 0), pad(2, 0.4))).toEqual([0]);
+    // (the one in use unplugged: the other)
+    vi.stubGlobal("navigator", { getGamepads: () => [null, null, pad(2, 0.6)] });
+    expect(readGamepad()?.buttons).toEqual([0.6]);
+  });
+});
+
 describe("a pad the browser doesn't map (RV-1124)", () => {
   const button = (value: number) => ({ value, pressed: value > 0.5, touched: value > 0 });
 

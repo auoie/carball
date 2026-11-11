@@ -4,6 +4,7 @@ import {
   AUTO_GUARD,
   AutoVideoGuard,
   GUARD_PROBE,
+  SLOW_WINDOWS,
   DEFAULT_VIDEO_SETTINGS,
   RENDER_QUALITY_SCALE,
   guardDecision,
@@ -101,7 +102,7 @@ describe("the automatic default", () => {
     const guard = new AutoVideoGuard();
     const decisions: boolean[] = [];
     const pattern = steady ? [1] : [0.85, 1.15, 1, 0.9, 1.1];
-    for (let t = 0, i = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 2; i++) {
+    for (let t = 0, i = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure * SLOW_WINDOWS + 2; i++) {
       const frame = base * (pattern[i % pattern.length] ?? 1);
       t += frame;
       decisions.push(guard.frame(frame, visible));
@@ -115,8 +116,15 @@ describe("the automatic default", () => {
     expect(run(1 / 44).filter(Boolean)).toEqual([true]);
     const slow = run(1 / 30);
     expect(slow.filter(Boolean)).toEqual([true]);
-    // (decided at the measure's end, not in the warm-up)
-    expect(slow.indexOf(true) / 30).toBeGreaterThanOrEqual(AUTO_GUARD.warmUp + AUTO_GUARD.measure - 1 / 30);
+    // (decided at the end of its second slow window in a row, not in the warm-up, nor after the first: one busy window
+    // on a first visit isn't a slow machine, REN-06)
+    expect(slow.indexOf(true) / 30).toBeGreaterThanOrEqual(AUTO_GUARD.warmUp + AUTO_GUARD.measure * SLOW_WINDOWS - 1 / 30);
+    const once = new AutoVideoGuard();
+    let steps = 0;
+    for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 0.05; t += 1 / 30) steps += Number(once.frame(1 / 30, true, 60));
+    expect([steps, once.done]).toEqual([0, false]);
+    for (let t = 0; t < AUTO_GUARD.measure + 0.1; t += 1 / 60) steps += Number(once.frame(1 / 60, true, 60));
+    expect([steps, once.done]).toEqual([0, true]);
     // (a slow warm-up alone isn't counted)
     const guard = new AutoVideoGuard();
     let stepped = false;
@@ -147,7 +155,7 @@ describe("the automatic default", () => {
     // (and the guard passes it on)
     const guard = new AutoVideoGuard();
     let stepped = false;
-    for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 0.1; t += 1 / 30) stepped ||= guard.frame(1 / 30, true, 60);
+    for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure * SLOW_WINDOWS + 0.1; t += 1 / 30) stepped ||= guard.frame(1 / 30, true, 60);
     expect(stepped).toBe(true);
   });
 
@@ -218,6 +226,11 @@ describe("the automatic default", () => {
     expect(until(phone, 1 / 30, 30, () => phone.probing, 20).some(Boolean)).toBe(false);
     expect([phone.probing, phone.done]).toEqual([false, false]);
     expect(until(phone, 1 / 30, 60, () => phone.done).filter(Boolean)).toEqual([true]);
+    // (once a browser session: a guard told one was made, the next page load's, doesn't probe again, RV-1314)
+    expect(phone.probed).toBe(true);
+    const next = new AutoVideoGuard({ probed: true });
+    expect(until(next, 1 / 30, 30, () => next.done || next.probing).some(Boolean)).toBe(false);
+    expect([next.probing, next.done, new AutoVideoGuard().probed]).toEqual([false, true, false]);
     // (never one at a real 60 or over, nor a frame cap the player set: not slow, not probed)
     for (const [frame, hz, cap] of [
       [1 / 60, 60, null],

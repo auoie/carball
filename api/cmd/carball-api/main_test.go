@@ -2,13 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"carball/api/internal/server"
+	"carball/api/internal/store"
+	"carball/api/internal/testdb"
 )
 
 // The signer and the keys tickets are checked with: a previous key with the signer's id refused (RV-948), the list's
@@ -116,6 +122,54 @@ func TestSchemaRefusal(t *testing.T) {
 	}
 	if schemaRefusal(8, 8) != nil || schemaRefusal(9, 8) != nil {
 		t.Error("refused when it may run")
+	}
+}
+
+// serve's own check against a real database (RV-1315): its schema as migrated passes, by the service's role; a
+// migration recorded but not applied doesn't count; one missing is refused with what to run; one ahead passes, said;
+// and a role that can't read the record (an older image's migrate since) is refused the same way
+func TestSchemaCheckAgainstTheDatabase(t *testing.T) {
+	owner, app := testdb.New(t)
+	ctx := context.Background()
+	if err := store.Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(ctx, app, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	admin, err := pgx.Connect(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = admin.Close(ctx) }()
+	exec := func(q string) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var logs bytes.Buffer
+	check := func() error { return schemaCheck(ctx, db, slog.New(slog.NewTextHandler(&logs, nil))) }
+	if err := check(); err != nil || logs.Len() != 0 {
+		t.Fatalf("the schema as migrated: %v %s", err, logs.String())
+	}
+	exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (99, false)`)
+	if err := check(); err != nil || logs.Len() != 0 {
+		t.Fatalf("a migration recorded as not applied counted: %v %s", err, logs.String())
+	}
+	exec(`UPDATE goose_db_version SET is_applied = true WHERE version_id = 99`)
+	if err := check(); err != nil || !strings.Contains(logs.String(), "newer than this build's") {
+		t.Fatalf("a schema ahead: %v %q", err, logs.String())
+	}
+	exec(`DELETE FROM goose_db_version WHERE version_id = 99 OR version_id = (SELECT max(version_id) FROM goose_db_version WHERE version_id < 99)`)
+	if err := check(); err == nil || !strings.Contains(err.Error(), "run carball-api migrate before serve") {
+		t.Fatalf("a schema behind: %v", err)
+	}
+	exec(`REVOKE ALL ON goose_db_version FROM ` + testdb.AppRole)
+	if err := check(); err == nil || !strings.Contains(err.Error(), "run carball-api migrate first") {
+		t.Fatalf("the record unreadable: %v", err)
 	}
 }
 

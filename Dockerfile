@@ -62,11 +62,12 @@ RUN --mount=type=cache,id=carball-cargo-registry-host,target=/usr/local/cargo/re
 # The engine's libraries for the server, as cargo's CMake build makes them (its flags; server/build.rs). CMake from
 # Debian's archive as it was on a fixed day (snapshot.debian.org: that one install alone, the image's own sources not
 # read), its version pinned too: the same CMake and libraries every build, whatever Debian has moved on to (RV-915;
-# update the date and the version together)
+# update the date and the version together). The snapshot is the one source, fetched once a cache: a fetch that fails is tried
+# again five times (RV-1311)
 FROM rust AS server-engine
 ARG JOBS
 RUN echo "deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] https://snapshot.debian.org/archive/debian/20261023T000000Z trixie main" > /etc/apt/snapshot.list \
-    && apt="apt-get -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
+    && apt="apt-get -o Acquire::Retries=5 -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
     && $apt update --error-on=any && $apt install -y --no-install-recommends cmake=3.31.6-2 cmake-data=3.31.6-2 \
     && rm -rf /var/lib/apt/lists/* /etc/apt/snapshot.list
 WORKDIR /src
@@ -113,7 +114,7 @@ RUN --mount=type=cache,id=carball-cargo-registry,target=/usr/local/cargo/registr
 FROM rust AS bindings-check
 ARG JOBS
 RUN echo "deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] https://snapshot.debian.org/archive/debian/20261023T000000Z trixie main" > /etc/apt/snapshot.list \
-    && apt="apt-get -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
+    && apt="apt-get -o Acquire::Retries=5 -o Dir::Etc::SourceList=/etc/apt/snapshot.list -o Dir::Etc::SourceParts=-" \
     && $apt update --error-on=any && $apt install -y --no-install-recommends libclang1-19=1:19.1.7-3+b1 libclang-common-19-dev=1:19.1.7-3+b1 \
     && rm -rf /var/lib/apt/lists/* /etc/apt/snapshot.list \
     && rustup component add rustfmt

@@ -81,7 +81,7 @@ export function startingBoost(settings: TrainingSettings): number {
   return settings.startingBoost === 33 ? 33.3 : settings.startingBoost;
 }
 
-type Store = Pick<Storage, "getItem" | "setItem">;
+type Store = Pick<Storage, "getItem" | "setItem"> & Partial<Pick<Storage, "removeItem">>;
 const local = (): Store | null => {
   try {
     return typeof localStorage === "undefined" ? null : localStorage;
@@ -124,6 +124,35 @@ export function storeResetWarned(storage: Store | null = local()): void {
   } catch {
     // (not kept: asked again next time)
   }
+}
+
+/** A pack's progress let go (the pack deleted): its key, and the one from before */
+export function clearProgress(id: string, storage: Store | null = local()): void {
+  try {
+    const old = OLD_KEY(id);
+    for (const key of [KEY(id), ...(old === null ? [] : [old])]) {
+      if (storage?.removeItem) storage.removeItem(key);
+      else if (storage?.getItem(key) !== null && storage?.getItem(key) !== undefined) storage.setItem(key, "[]");
+    }
+  } catch {
+    // (kept: read again as the pack's, were its id ever used again)
+  }
+}
+
+/** A pack's progress after its shots were changed (`before` to `after`): each shot's own, by the shot, not its place.
+ *  A shot as it was keeps its status wherever it is now (one of several alike, in their order); a new or changed one
+ *  starts unattempted. Kept by place, deleting shot 1 marked the next shots completed, one of them never played (the
+ *  audit's CLI-11) */
+export function remapProgress<T>(before: readonly T[], after: readonly T[], status: readonly ShotStatus[]): ShotStatus[] {
+  const same = before.map((shot) => JSON.stringify(shot));
+  const used = new Set<number>();
+  return after.map((shot) => {
+    const text = JSON.stringify(shot);
+    const at = same.findIndex((s, i) => s === text && !used.has(i));
+    if (at < 0) return ShotStatus.NotAttempted;
+    used.add(at);
+    return status[at] ?? ShotStatus.NotAttempted;
+  });
 }
 
 export function storeProgress(id: string, status: readonly ShotStatus[], storage: Store | null = local()): void {

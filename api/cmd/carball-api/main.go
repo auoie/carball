@@ -330,21 +330,8 @@ func serve(args []string, out io.Writer) error {
 	} else if can {
 		log.Warn("development: the service's role may create in the schema")
 	}
-	// (the schema this build's own: behind it, every route that reads a newer table or column would answer 500 while
-	// the health check stayed green, a `migrate` run skipped or failed: refused. Ahead of it (an older image back on a
-	// newer schema): said. The audit's BLD-01)
-	want, err := store.LatestMigration()
-	if err != nil {
+	if err := schemaCheck(ctx, db, log); err != nil {
 		return err
-	}
-	have, err := db.SchemaVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("reading the schema's version (run carball-api migrate first: it brings the schema up to date and lets the service's role read its version): %w", err)
-	}
-	if err := schemaRefusal(have, want); err != nil {
-		return err
-	} else if have > want {
-		log.Warn("the database's schema is newer than this build's: an older image on a newer schema", "schema", have, "build", want)
 	}
 	// (whose CF-Connecting-IP is believed: the tunnel's connector; a wrong one shows as noteForward's warning)
 	proxies := make([]string, len(cfg.TrustedProxies))
@@ -432,6 +419,27 @@ func serve(args []string, out io.Writer) error {
 func roleRefusal(canCreate, dev bool) error {
 	if canCreate && !dev {
 		return errors.New("DATABASE_URL's role may create in the schema: give the service a role of its own, rows only (carball-api migrate grants it)")
+	}
+	return nil
+}
+
+// schemaCheck: the database's schema this build's own. Behind it, every route that reads a newer table or column would
+// answer 500 while the health check stayed green, a `migrate` run skipped or failed: refused. Ahead of it (an older
+// image back on a newer schema): said. The audit's BLD-01
+func schemaCheck(ctx context.Context, db *store.Store, log *slog.Logger) error {
+	want, err := store.LatestMigration()
+	if err != nil {
+		return err
+	}
+	have, err := db.SchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the schema's version (run carball-api migrate first: it brings the schema up to date and lets the service's role read its version): %w", err)
+	}
+	if err := schemaRefusal(have, want); err != nil {
+		return err
+	}
+	if have > want {
+		log.Warn("the database's schema is newer than this build's: an older image on a newer schema", "schema", have, "build", want)
 	}
 	return nil
 }

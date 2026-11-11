@@ -86,6 +86,38 @@ describe("the refresh meter", () => {
     expect([meter.recentHz, meter.hz]).toEqual([144, 144]);
   });
 
+  it("comes down to a rate a little below it too: 75 to 60, 165 to 144, 144 to 120, within 13 s (RV-1318)", () => {
+    for (const [from, to] of [
+      [75, 60],
+      [165, 144],
+      [144, 120],
+      [144, 60],
+    ] as const) {
+      const meter = new RefreshMeter();
+      feed(meter, 1000 / from, from * 3);
+      expect(meter.recentHz, `${String(from)} Hz`).toBe(from);
+      feed(meter, 1000 / to, to * 9);
+      expect(meter.recentHz, `${String(from)} to ${String(to)} Hz, 9 s on`).toBe(from);
+      feed(meter, 1000 / to, to * 4);
+      expect(meter.recentHz, `${String(from)} to ${String(to)} Hz, 13 s on`).toBe(to);
+    }
+  });
+
+  it("a hidden tab's long frame, told like any other, starts the same skip: its burst isn't counted (RV-1320)", () => {
+    const meter = new RefreshMeter();
+    feed(meter, 1000 / 60, 300);
+    for (const ms of [5000, ...Array.from({ length: 24 }, () => 3), ...Array.from({ length: 900 }, () => 1000 / 60)]) meter.add(ms);
+    expect([meter.recentHz, meter.hz]).toEqual([60, 60]);
+  });
+
+  it("the latched refresh is the fast edge's, as the video guard reads it: a slow page on a variable-refresh screen isn't a 30 Hz display (RV-1321)", () => {
+    const r = seeded(6);
+    const meter = new RefreshMeter();
+    for (let i = 0; i < 600; i++) meter.add(22 + 8 * r());
+    expect(meter.hz).toBe(50);
+    expect(meter.recentHz).toBeLessThan(50);
+  });
+
   it("about nine frames in ten doubled: the feel settles on a rate once and stays, never back and forth (RV-1303)", () => {
     for (const [hz, share] of [
       [60, 0.85],

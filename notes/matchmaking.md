@@ -27,7 +27,8 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
   - **Forfeit:** the other team wins; the forfeiters are ordinary losers, not quitters, and get no ban (a vote or a 1v1
     Forfeit removes nobody). A team left with no humans forfeits at once (0.01 s); a lone human can forfeit with one
     press once votes are allowed (ranked: after 90 s of clock).
-  - **No contest** (the match ends with no winner: everyone left, cancelled before the start, ended by the server):
+  - **No contest** (the match ends with no winner: everyone left before it was decided, cancelled before the start,
+    ended by the server; a match already decided keeps its result when everyone leaves, the audit's MATCH-01):
     nothing is submitted, nobody's rating changes. This replaces the earlier "both teams kicked, or nobody still active":
     the game has no activity condition.
   - Whether being a quitter dampens the rating change: unknown in the game. **Ours: no** (the user: "if a team wins,

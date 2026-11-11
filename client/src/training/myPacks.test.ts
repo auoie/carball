@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 import { defaultShot, deletePack, newPack, packFile, storePack, storePacks, storedPacks } from "./myPacks";
 import { parsePack } from "./pack";
 import { ShotStatus } from "./run";
-import { storeProgress, storedProgress } from "./settings";
+import { remapProgress, storeProgress, storedProgress } from "./settings";
 
-const memory = (): Pick<Storage, "getItem" | "setItem"> => {
+const memory = (): Pick<Storage, "getItem" | "setItem" | "removeItem"> & { keys: () => string[] } => {
   const map = new Map<string, string>();
-  return { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => void map.set(k, v) };
+  return { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => void map.set(k, v), removeItem: (k) => void map.delete(k), keys: () => [...map.keys()] };
 };
 
 describe("the player's packs", () => {
@@ -40,6 +40,32 @@ describe("the player's packs", () => {
     ]);
     deletePack(a.id, store);
     expect(storedPacks(store).map((p) => p.id)).toEqual([b.id]);
+  });
+
+  it("a pack's progress follows its shots through an edit, and goes with a deleted pack (CLI-11)", () => {
+    const store = memory();
+    const [first, second, third] = [defaultShot("striker"), defaultShot("goalie"), defaultShot("aerial")];
+    const pack = { ...newPack(() => 0.3), shots: [first, second, third] };
+    storePack(pack, store);
+    storeProgress(pack.id, [ShotStatus.Completed, ShotStatus.Attempted, ShotStatus.Completed], store);
+    // (a rename alone: untouched)
+    storePack({ ...pack, name: "Renamed" }, store);
+    expect(storedProgress(pack.id, store)).toEqual([ShotStatus.Completed, ShotStatus.Attempted, ShotStatus.Completed]);
+    // (the first shot deleted: the others keep their own, not the places' before them)
+    storePack({ ...pack, shots: [second, third] }, store);
+    expect(storedProgress(pack.id, store)).toEqual([ShotStatus.Attempted, ShotStatus.Completed]);
+    // (moved, one changed, one added: each its own; a changed or new one unattempted)
+    const changed = { ...second, timeLimit: second.timeLimit + 1 };
+    storePack({ ...pack, shots: [third, changed, first] }, store);
+    expect(storedProgress(pack.id, store)).toEqual([ShotStatus.Completed, ShotStatus.NotAttempted, ShotStatus.NotAttempted]);
+    expect(remapProgress(["a", "a", "b"], ["a", "b", "a", "a"], [ShotStatus.Completed, ShotStatus.Attempted, ShotStatus.Completed])).toEqual([
+      ShotStatus.Completed,
+      ShotStatus.Completed,
+      ShotStatus.Attempted,
+      ShotStatus.NotAttempted,
+    ]);
+    deletePack(pack.id, store);
+    expect(store.keys().filter((k) => k.includes(pack.id))).toEqual([]);
   });
 
   it("a pack's progress under its own prefix: a pack with the id \"mine\" can't overwrite the player's packs (RX25); 437863a's key still read", () => {

@@ -60,13 +60,29 @@ interface RecordedFrame {
   /** Each other car's controls for this frame (the "game" models) */
   remote: Map<number, CarControls>;
   /** The server's network states for after this frame, applied on top (put back when an older correction replays
-   *  through this frame, so it can't undo them: an older update or a late part still applies, NR-6) */
-  server?: readonly Uint8Array[];
+   *  through this frame, so it can't undo them: an older update or a late part still applies, NR-6), each with its
+   *  update's server tick (0: not told), in their ticks' order */
+  server?: readonly StagedState[];
+}
+
+/** A staged network state and the server tick of the update it came in */
+interface StagedState {
+  readonly tick: number;
+  readonly state: Uint8Array;
 }
 
 interface RemoteBase {
   readonly controls: CarControls; // as the server last sent them
   readonly frame: number; // the client frame they belong to
+  /** Their update's server tick (0 or absent: not told) */
+  readonly tick?: number;
+}
+
+/** Whether what's `known` is newer than an update of client frame `frame` and server tick `tick`: by the ticks when both
+ *  are told (a later frame isn't a later update while the server's acknowledgement counts on, NET-06), else the frames */
+function newer(known: RemoteBase | undefined, frame: number, tick: number): boolean {
+  if (!known) return false;
+  return tick > 0 && (known.tick ?? 0) > 0 ? (known.tick ?? 0) > tick : known.frame > frame;
 }
 
 export interface PredictorStats {
@@ -78,6 +94,8 @@ export interface PredictorStats {
   direct: number;
   /** Corrections that changed the local car's present state: the server disagreed with its prediction */
   localMispredictions: number;
+  /** An update's parts that didn't apply (a car not known yet), the update's others taken (NET-08) */
+  skippedParts: number;
 }
 
 export class Predictor {
@@ -90,7 +108,7 @@ export class Predictor {
   /** Each other car's latest replicated controls (the server's, with the frame they belong to) */
   readonly #replicated = new Map<number, RemoteBase>();
   readonly #model: RemoteModel;
-  readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, direct: 0, localMispredictions: 0 };
+  readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, direct: 0, localMispredictions: 0, skippedParts: 0 };
   /** The cars the last frame's corrections held (the network tests measure their corrections) */
   lastCars: ReadonlySet<number> = new Set();
   /** The oldest frame a staged state changed since the last replay (null: none) */
@@ -148,7 +166,7 @@ export class Predictor {
     return r?.frame === frame ? r : undefined;
   }
 
-  #record(frame: number, input: InputFrame, remote: Map<number, CarControls>, server?: readonly Uint8Array[]): void {
+  #record(frame: number, input: InputFrame, remote: Map<number, CarControls>, server?: readonly StagedState[]): void {
     const slot = this.#slot(frame);
     // (the slot's buffer again: no allocation a frame, G3)
     const snapshot = this.#world.saveStateInto(this.#history[slot]?.snapshot);
@@ -239,9 +257,9 @@ export class Predictor {
    * consumes them), with no acknowledgement yet (0), and while the local car is demolished (no pawn, no prediction: G5,
    * G7). Whether it was staged.
    */
-  stage(frame: number, states: readonly Uint8Array[]): boolean {
+  stage(frame: number, states: readonly Uint8Array[], tick = 0): boolean {
     if (frame > this.#frame || frame <= 0 || this.#pawnless) {
-      this.#applyDirect(frame, states);
+      this.#applyDirect(frame, states, tick);
       return false;
     }
     const oldestKept = Math.max(this.#oldest, this.#frame - HISTORY_FRAMES + 1);
@@ -263,18 +281,36 @@ export class Predictor {
       return false;
     }
     this.lastCars = new Set([...this.lastCars, ...updated]);
-    if (this.#model === "fade") this.#rebase(updated, frame);
-    else this.#receiveRemote(updated, frame, this.#frame);
-    this.#record(frame, at.input, at.remote, [...(at.server ?? []), ...states]);
+    if (this.#model === "fade") this.#rebase(updated, frame, tick);
+    else this.#receiveRemote(updated, frame, this.#frame, tick);
+    const staged = [...(at.server ?? []), ...states.map((state) => ({ tick, state }))];
+    this.#record(frame, at.input, at.remote, tick > 0 ? staged.sort((a, b) => a.tick - b.tick) : staged);
+    if (tick > 0) this.#dropOlderAfter(frame, tick);
     this.#dirty = Math.min(this.#dirty ?? frame, frame);
     this.stats.corrections++;
     return true;
   }
 
+  /** A state of server tick `tick` staged at `frame`: the states staged at later frames from older ticks are let go. A
+   *  later frame is a later state only while the server consumes this client's frames: run dry (an upstream stall),
+   *  its acknowledgement counts on a frame a tick, and comes back to the client's own numbering with the next frame it
+   *  consumes. The states staged under the counted-on acknowledgements then sat at later frames than the newer state,
+   *  and its replay put them back over it: the ball and the cars a hundred ms behind until the acknowledgements passed
+   *  them (the 2026-11-11 audit's NET-06) */
+  #dropOlderAfter(frame: number, tick: number): void {
+    for (let f = frame + 1; f <= this.#frame; f++) {
+      const recorded = this.#recorded(f);
+      if (!recorded?.server?.some((s) => s.tick > 0 && s.tick < tick)) continue;
+      const kept = recorded.server.filter((s) => !(s.tick > 0 && s.tick < tick));
+      if (kept.length > 0) recorded.server = kept;
+      else delete recorded.server;
+    }
+  }
+
   /** The states at the present (no rewind, no replay): the shown world takes the server's as it is, smoothed (G5, G7).
    *  The other cars' replicated inputs belong to the update's frame (to the present for a frame not reached), so a later
    *  update for an earlier frame still gives newer ones (RV-332) */
-  #applyDirect(frame: number, states: readonly Uint8Array[]): void {
+  #applyDirect(frame: number, states: readonly Uint8Array[], tick = 0): void {
     this.resimulate(); // (a frame's staged states first: the world back at the present)
     const present = this.#recorded(this.#frame);
     const updated = this.#applyStates(states);
@@ -284,10 +320,11 @@ export class Predictor {
     }
     this.lastCars = new Set(updated);
     const label = frame > this.#frame ? this.#frame : Math.max(frame, 0);
-    if (this.#model === "fade") this.#rebase(updated, label);
+    if (this.#model === "fade") this.#rebase(updated, label, tick);
     for (const car of updated) {
-      const known = this.#replicated.get(car);
-      if (car !== this.#localCar && !(known && known.frame > label)) this.#replicated.set(car, { controls: this.#replicatedControls(car), frame: label });
+      if (car !== this.#localCar && !newer(this.#replicated.get(car), label, tick)) {
+        this.#replicated.set(car, { controls: this.#replicatedControls(car), frame: label, tick });
+      }
     }
     this.#record(this.#frame, present?.input ?? NO_INPUT, present?.remote ?? this.#presentRemote());
     this.stats.direct++;
@@ -316,7 +353,7 @@ export class Predictor {
       const recorded = this.#recorded(f);
       const input = recorded?.input ?? NO_INPUT;
       const remote = this.#simulate(f, input, recorded?.remote);
-      if (recorded?.server) this.#applyStates(recorded.server); // (the newer states: they win for their bodies)
+      if (recorded?.server) this.#applyStates(recorded.server.map((s) => s.state)); // (the newer states: they win for their bodies)
       this.#record(f, input, remote, recorded?.server);
     }
     this.stats.resimulatedFrames += present - from;
@@ -325,14 +362,21 @@ export class Predictor {
     return present - from;
   }
 
-  /** Applies an update's network states; the cars they held, or null if one didn't apply. */
+  /** Applies an update's network states; the cars they held, or null if none applied. One that doesn't apply (it names
+   *  a car this client doesn't have yet: the join's World, on the reliable stream, a retransmission behind) is skipped
+   *  and counted, the others taken: the whole update was dropped, its ball, pads and other cars with it (NET-08) */
   #applyStates(states: readonly Uint8Array[]): Set<number> | null {
     const cars = new Set<number>();
+    let applied = 0;
     for (const s of states) {
-      if (!this.#world.applyNetState(s)) return null;
+      if (!this.#world.applyNetState(s)) {
+        this.stats.skippedParts++;
+        continue;
+      }
+      applied++;
       for (const id of this.#world.netStateCars()) cars.add(id);
     }
-    return cars;
+    return applied > 0 || states.length === 0 ? cars : null;
   }
 
   /**
@@ -342,13 +386,12 @@ export class Predictor {
    * by 1e-8), every recorded frame from there to the present gets it, the handbrake as it is, the axes fading out over
    * INPUT_FADE_FRAMES; the replay then drives them so.
    */
-  #receiveRemote(cars: ReadonlySet<number>, frame: number, present: number): void {
+  #receiveRemote(cars: ReadonlySet<number>, frame: number, present: number, tick = 0): void {
     for (const car of cars) {
       if (car === this.#localCar) continue;
-      const known = this.#replicated.get(car);
-      if (known && known.frame > frame) continue;
+      if (newer(this.#replicated.get(car), frame, tick)) continue;
       const server = this.#replicatedControls(car);
-      this.#replicated.set(car, { controls: server, frame });
+      this.#replicated.set(car, { controls: server, frame, tick });
       const current = { ...(this.#recorded(present)?.remote.get(car) ?? server), ...this.#replicatedPart(server) };
       const recorded = this.#recorded(frame)?.remote.get(car);
       if (recorded && sameInputs(recorded, current)) continue;
@@ -373,11 +416,10 @@ export class Predictor {
   /** The server's controls for the other cars in an update are the new basis for predicting them. Only those cars:
    *  the others in the world hold their own faded prediction, which mustn't become a new basis (their inputs would
    *  never fade out). */
-  #rebase(cars: ReadonlySet<number>, frame: number): void {
+  #rebase(cars: ReadonlySet<number>, frame: number, tick = 0): void {
     for (const car of cars) {
-      const base = this.#remote.get(car);
-      if (car === this.#localCar || (base && base.frame > frame)) continue; // (an older update: the newer basis stays)
-      this.#remote.set(car, { controls: this.#world.carControls(car), frame });
+      if (car === this.#localCar || newer(this.#remote.get(car), frame, tick)) continue; // (an older update: the newer basis stays)
+      this.#remote.set(car, { controls: this.#world.carControls(car), frame, tick });
     }
   }
 

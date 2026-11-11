@@ -10,7 +10,7 @@ use carball_server::outbox::{OutboxConfig, run};
 async fn answer(listener: std::net::TcpListener, status: u16) -> wiremock::MockServer {
     let server = wiremock::MockServer::builder().listener(listener).start().await;
     wiremock::Mock::given(wiremock::matchers::any())
-        .respond_with(wiremock::ResponseTemplate::new(status))
+        .respond_with(wiremock::ResponseTemplate::new(status).insert_header("x-carball-api", "1"))
         .mount(&server)
         .await;
     server

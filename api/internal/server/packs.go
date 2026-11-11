@@ -148,7 +148,14 @@ func (s *Server) pack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not-found")
 		return
 	}
-	p, file, found, err := s.Store.PackByCode(r.Context(), code, s.viewer(r, now), now)
+	// (a download counted for the page's own read alone: its header, which another site's page can't send without a
+	// preflight this API doesn't answer. Any GET counted, so an image tag on a busy page raised a pack's count by one
+	// for each visitor, to the top of the browse's order: SEC-API-04)
+	var viewer []byte
+	if r.Header.Get(WriteHeader) == "1" {
+		viewer = s.viewer(r, now)
+	}
+	p, file, found, err := s.Store.PackByCode(r.Context(), code, viewer, now)
 	if err != nil {
 		s.log(r).Error("reading a pack", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")

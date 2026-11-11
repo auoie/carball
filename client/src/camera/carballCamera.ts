@@ -95,6 +95,11 @@ export interface Pov {
 
 const copyPov = (p: Pov): Pov => ({ ...p });
 
+/** The focus was put somewhere, not carried there: its move a nominal frame this many times the move before (or after)
+ *  it, and more than a still car's noise (uu) */
+const JUMPED = 3;
+const JUMP_FLOOR = 1;
+
 /** An update that spans `frames` of the player's nominal frames, made the same as that many of the game's updates
  *  (ours, not the game's: notes/camera.md). The game's smoother `x += (T - x)(1 - e^(-lambda dt))` treats the whole of its
  *  target's move as made at the step's end, so its lag behind a moving target depends on the step's length: uneven
@@ -526,12 +531,16 @@ export class CarCameraState implements CameraState {
     // `frames` of them looks one nominal frame of the focus's move ahead (the camera's place carried on by the rest of
     // the focus's move this update), and turns `frames` shares of it: the game's own step taken `frames` long, with the
     // same steady lag whatever the frames' lengths (ours, RV-1301; the game's exactly at frames = 1)
-    const from = add(pov.calculatedLocation, this.#focusPastAFrame(pov.focus));
+    // (but a focus put somewhere else this update, the car's place corrected too far to smooth: the game's plain step,
+    // one share from the camera's place as it is. A jump is no travel to look a frame of ahead, and its turn times the
+    // frames was up to 10 degrees off for a frame, RV-1319)
+    const past = this.#focusPastAFrame(pov.focus);
+    const from = past ? add(pov.calculatedLocation, past) : pov.calculatedLocation;
     let newRot = vectorToRotator(sub(pov.focus, from));
     // (the game's share is of a fixed 1/60 here, not DeltaTime)
     const share = Math.min(interpRate * (1 / 60), 1);
     const toFocus = newRot;
-    newRot = rlerp(pov.rotation, newRot, Math.min(share * this.#frames, 1));
+    newRot = rlerp(pov.rotation, newRot, past ? Math.min(share * this.#frames, 1) : share);
     // ScalePitch: flatten the pitch when moving backwards relative to the view. The game's frame: the pitch turned its
     // share, then scaled by `keep`. Over `frames` of them that pair repeated, the turn a frame the same (the yaw's
     // receding target): keep^frames of the pitch, and the turns' own scaled sum (ours; the game's at frames = 1)
@@ -552,13 +561,18 @@ export class CarCameraState implements CameraState {
   /** The focus's move this update past its first nominal frame's (nothing at frames = 1; back from its place now, where
    *  the update spans less than a frame). Along its path through its last three places (this update's, the one before,
    *  the one before that), the path's bend counted: a turn's chord over more than a frame points ahead of its first
-   *  frame's, and the lag would differ by the frames' lengths. Along the line of the last two when there's no third */
-  #focusPastAFrame(focus: Vec3): Vec3 {
+   *  frame's, and the lag would differ by the frames' lengths. Along the line of the last two when there's no third,
+   *  or the move before this one was a jump (`JUMPED` times this one's a frame: no path through it). Null when this
+   *  update's own move is the jump: no travel at all */
+  #focusPastAFrame(focus: Vec3): Vec3 | null {
     const [f, before] = [this.#frames, this.#focusBefore];
     if (!before || f === 1 || !(f > 0)) return vec3(0, 0, 0);
     const moved = sub(focus, before);
     const [older, fp] = [this.#focusOlder, this.#framesBefore];
     if (!older || !(fp > 0)) return scale(moved, (f - 1) / f);
+    const [now, last] = [lengthOf(moved) / f, lengthOf(sub(before, older)) / fp];
+    if (now > JUMPED * last && now > JUMP_FLOOR) return null;
+    if (last > JUMPED * now && last > JUMP_FLOOR) return scale(moved, (f - 1) / f);
     // (Lagrange's weights one frame after the update's start, the places at f + fp, f and 0 frames back)
     const l0 = (1 - f) / (fp * (f + fp));
     const l2 = (fp + 1) / ((f + fp) * f);

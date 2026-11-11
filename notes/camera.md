@@ -98,16 +98,20 @@ shape the 2026-11-11 audit's, report 6's design observation, in place of the pac
   the focus's move over the *first* nominal frame of its span (taken along the focus's last three places, so a turn's
   bend counts: along the chord alone the lag was off by half a frame's turn for each frame past one) and turns
   min(1, s × frames) of the way. The steady lag is then the game's at any update length (19.110° in a 3000 uu air
-  circle for updates of 0.4 to 2 frames). The pitch's flattening (the pitch scaled by `keep` each frame the car flies
+  circle for updates of 0.4 to 2 frames). A focus put somewhere else in an update (the car's place corrected too far
+  to smooth) is no travel to look ahead along: that update is the game's plain step, the next looks along the last
+  two places' line (RV-1319). The pitch's flattening (the pitch scaled by `keep` each frame the car flies
   against the view) is that frame's pair repeated: keep^frames of the pitch, plus the turns' own scaled sum.
 - **The rate (the feel's) needs no precision:** it sets the lag and nothing else (a 20 % error moves a steady lag
   0.15°; no frames can make it wobble). It's the page's own frames' rate of late (`RefreshMeter.recentHz`: the nearest
   common display rate of the fast frames of the last 120, the highest such measure of the last 10 s, so it comes
   down when a window moves to a slower screen). The fast frames are the cluster about the fastest tenth, and their
-  mean is the interval: the edge alone read a jittered 75 Hz as 90 (RV-1305). A stall (100 ms) and the 30 frames after
-  it aren't counted: a catch-up burst read 360 Hz for 10 s (RV-1302). A rate rises when two measures in a row agree and
-  holds while a twenty-fifth of the frames still run at it: one threshold for both flipped the feel between a rate and
-  its half at nine frames in ten doubled (RV-1303). Or a touch device's Frame Rate when that's the lower (a phone capped at
+  mean is the interval: the edge alone read a jittered 75 Hz as 90 (RV-1305; the latched refresh the video guard and
+  the Stat Graphs read keeps the edge, RV-1321). A stall (100 ms, a hidden tab's frame too) and the 30 frames after
+  it aren't counted: a catch-up burst read 360 Hz for 10 s (RV-1302, RV-1320). A rate holds while a twenty-fifth of
+  the frames still read as it, where it takes a tenth to raise it: one threshold for both flipped the feel between
+  a rate and its half at nine frames in ten doubled (RV-1303); by the rate the frames read as, so it comes down to a
+  rate a little below too, 75 to 60 or 144 to 120 (RV-1318). Or a touch device's Frame Rate when that's the lower (a phone capped at
   60 has the game's feel at 60, whatever its screen: 90 Hz at 60 too, which the grid couldn't without the car shimmering
   against the ball); 60 before the first measure. A page can't see its screen's true refresh or its phase, only when its
   own frames ran: the paced grid before this needed both, and five review rounds found the cases where they can't be

@@ -633,6 +633,22 @@ async function main(): Promise<void> {
     const named = (listed: readonly Region[]): Region[] => listed.map((r) => ({ ...r, server: serverNames.get(r.id) ?? r.server }));
     /** The page's version against its servers' (VersionCheck: the regions that refused it left out of a search, the
      *  reload asked once and only of a page apart from its deployment, RV-1030, RV-1078) */
+    // (a chunk this page loads late (the training editor, the bots' page, the sign-up's check) gone from the server: a
+    // deploy since the page loaded, its old files not kept. The reload asked for, where the menu closed and nothing
+    // opened: the audit's CLI-05, BLD-03)
+    const askReload = (): void => {
+      modal.show(RELOAD_TEXT.title, sentence(reloadText()));
+    };
+    window.addEventListener("vite:preloadError", askReload);
+    /** A chunk loaded when it's first needed: one that can't be, the reload asked for (and the failure still thrown) */
+    const lazily = async <T>(load: () => Promise<T>): Promise<T> => {
+      try {
+        return await load();
+      } catch (e) {
+        askReload();
+        throw e;
+      }
+    };
     const versions = new VersionCheck({
       apart: () => pageOutdated(),
       reload: () => {
@@ -867,14 +883,19 @@ async function main(): Promise<void> {
     };
     // (custom training: the pack read and checked (a shared one through the API), then played here at once, free play's
     // session its stage; one that can't be, said)
+    let packLoads = 0;
     const playPack = (listing: PackListing): void => {
+      // (the newest load alone, and only while its menu is still up: a slow one, the player gone on to the editor or
+      // free play meanwhile, started its training over whatever was there, the audit's CLI-06)
+      const load = ++packLoads;
       void loadPack(listing).then((pack) => {
+        if (load !== packLoads || mainMenu?.isOpen !== true) return;
         if (typeof pack === "string") {
           console.error(`training pack ${listing.id}: ${pack}`);
           modal.show(SHARE_TEXT.notPlayableTitle, SHARE_TEXT.notPlayable);
           return;
         }
-        mainMenu?.close();
+        mainMenu.close();
         playtesting = null;
         freeplay.startTraining(pack);
       });
@@ -883,7 +904,7 @@ async function main(): Promise<void> {
     let editor: TrainingEditor | null = null;
     const openEditor = async (pack: TrainingPack, shot = 0, resume = false): Promise<void> => {
       if (!editor) {
-        const { TrainingEditor: Editor } = await import("./ui/trainingEditor");
+        const { TrainingEditor: Editor } = await lazily(async () => import("./ui/trainingEditor"));
         editor = new Editor(document.body, canvas, {
           show: (editing, asPlaced) => {
             freeplay.showEditing(editing, asPlaced);
@@ -982,6 +1003,10 @@ async function main(): Promise<void> {
       mainMenu?.setQueueBan(a?.queueBanUntil ?? null);
       mainMenu?.setSearchCooldown(a?.searchCooldownUntil ?? null);
     };
+    // (the sign-in found gone by any call: the page signed out, the call's own words said where it was made, CLI-12)
+    accountsApi.onSignedOut = () => {
+      if (account) setAccount(null);
+    };
     const showAccountPage = (note: string | null = null): void => {
       if (!accountPages || !mainMenu) return;
       if (account) accountPages.showAccount(account);
@@ -1061,7 +1086,7 @@ async function main(): Promise<void> {
         if (!__CARBALL_BOTS__) return;
         // (its player named once the account's read: a Start pressed before keeps the signed-in name, RV-1191)
         const go = (): void => {
-          void import("./local/botMatch").then(async ({ botMatchSetup, playerNameOnceKnown, storeBotMatch }) => {
+          void lazily(async () => import("./local/botMatch")).then(async ({ botMatchSetup, playerNameOnceKnown, storeBotMatch }) => {
             const playerName = await playerNameOnceKnown(accountsReady, () => account);
             storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff), playerName));
             location.assign(pageUrl("bots", location));
@@ -1348,7 +1373,19 @@ async function main(): Promise<void> {
     // (a touch device's watches all session long, a phone slowing as it heats; at its Frame Rate, not slow: the user's
     // OnePlus, 2026-11-10)
     const frameCap = (): number | null => (capped && settings.touch.frameRate > 0 ? settings.touch.frameRate : null);
-    const guard = guardWanted(settings.video, renderer.draws, videoAuto?.guard) ? new AutoVideoGuard({ rolling: touchDevice() }) : null;
+    // (its probe once a browser session: a display truly capped low isn't probed again at every page load, RV-1314)
+    const PROBED = "carball.guardProbed";
+    const kept = (use: (storage: Storage) => string | null): string | null => {
+      try {
+        return use(sessionStorage);
+      } catch {
+        return null;
+      }
+    };
+    const guard = guardWanted(settings.video, renderer.draws, videoAuto?.guard)
+      ? new AutoVideoGuard({ rolling: touchDevice(), probed: kept((s) => s.getItem(PROBED)) === "1" })
+      : null;
+    let probeNoted = guard?.probed ?? true;
     // (offline: the network and input-buffer rows read 0)
     NetGraphFeed.offline(statData);
     // (Select Shot: its binding opens it over the game, a shot chosen starts at once)
@@ -1454,6 +1491,13 @@ async function main(): Promise<void> {
         }
         // (its probe: the view at a lower resolution for a second, to tell the GPU's load from a display's cap, REN-05)
         if (guard) renderer.renderScale = RENDER_QUALITY_SCALE[settings.video.renderQuality] * (guard.probing ? GUARD_PROBE.scale : 1);
+        if (guard?.probed && !probeNoted) {
+          probeNoted = true;
+          kept((s) => {
+            s.setItem(PROBED, "1");
+            return null;
+          });
+        }
       },
     };
   } else {
@@ -1596,10 +1640,13 @@ async function main(): Promise<void> {
   /** Each frame's rows sampled (FPS from the raw frame, the game's work less the render's, the render's, the speeds),
    *  the level drawn */
   const statFrame = (t: number, dt: number, gameMs: number): void => {
+    // (every frame told to the meter, a hidden tab's long one too: it's that frame the meter leaves the next ones
+    // out after, a burst of callbacks the browser owed. Kept from it, the burst after a hidden tab read as 360 Hz,
+    // RV-1320)
+    refresh.add(dt * 1000);
     if (dt > 0 && dt < 1) {
       statData.set("FPS", 1 / dt);
       statData.set("Frame", dt * 1000);
-      refresh.add(dt * 1000);
     }
     statData.set("Render", renderer.lastRenderMs);
     statData.set("Game", Math.max(0, gameMs - renderer.lastRenderMs));

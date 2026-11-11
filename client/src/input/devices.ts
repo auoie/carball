@@ -306,16 +306,26 @@ export function gamepads(): readonly (Gamepad | null)[] {
   }
 }
 
-/** The first connected gamepad with the standard layout (its kind noted for the prompts' glyphs: setPadStyle); a pad
- *  the browser doesn't map is never read (its numbers its own: a flight stick's, a wheel's pedals, RV-1124) */
+/** The slot of the pad in use (null: none chosen yet, or it's gone) */
+let padInUse: number | null = null;
+
+/** The connected gamepad in use, of those with the standard layout (its kind noted for the prompts' glyphs:
+ *  setPadStyle): the one last used, until another's button or stick is and its own aren't; before any is used, the
+ *  first. The first slot's was the only one ever read, so with a second pad on charge or a virtual one in slot 0 the pad
+ *  in the player's hands did nothing (the audit's CLI-09). A pad the browser doesn't map is never read (its numbers its
+ *  own: a flight stick's, a wheel's pedals, RV-1124) */
 export function readGamepad(): GamepadSnapshot | null {
-  for (const pad of gamepads()) {
-    if (pad?.connected && pad.mapping === "standard") {
-      setPadStyle(padStyleOf(pad.id));
-      return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };
-    }
+  const pads = gamepads().filter((pad): pad is Gamepad => pad?.connected === true && pad.mapping === "standard");
+  const active = (pad: Gamepad): boolean => pad.buttons.some((b) => b.value > 0.5) || pad.axes.some((v) => Math.abs(v) > 0.5);
+  const current = pads.find((pad) => pad.index === padInUse);
+  const pad = (current && active(current) ? current : (pads.find(active) ?? current)) ?? pads[0];
+  if (!pad) {
+    padInUse = null;
+    return null;
   }
-  return null;
+  padInUse = pad.index;
+  setPadStyle(padStyleOf(pad.id));
+  return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };
 }
 
 /** Whether a pad the browser doesn't map is connected and no standard one is (the Controls screen says it can't be

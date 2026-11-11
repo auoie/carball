@@ -298,8 +298,14 @@ export class AccountsApi {
     } catch {
       // (not the API's JSON: a proxy's page)
     }
+    // (the sign-in gone, whichever call found it out: told once here, so the page stops showing the account. A pack's
+    // Share, Report or Delete only worded it, the menu still signed in and each failing the same way: CLI-12)
+    if (code === "signed-out") this.onSignedOut?.();
     throw new AccountError(code, seconds, detail);
   }
+
+  /** Called when a call's answer says the sign-in is gone (before that call's own error) */
+  onSignedOut: (() => void) | null = null;
 }
 
 /** A count the API sent: a whole number, 0 or more */

@@ -105,6 +105,35 @@ describe("the network session's wiring", () => {
     dispose(s);
   });
 
+  it("the ping is to an update's arrival, not to the frame that applies it: a hidden tab's queued updates aren't seconds of ping (NET-09)", () => {
+    const s = setup();
+    for (let f = 1; f <= 20; f++) s.session.predictor.advance(NO_INPUT);
+    // (sent at 1000 ms, echoed after 3 ms at the server, back at 1050: 47 ms; applied 5 s later, the tab hidden meanwhile)
+    s.now = 1050;
+    s.session.receive({ ...update(s, 100, 12), echoTimestamp: 1000, echoDelay: 3 });
+    s.now = 6050;
+    s.session.applyUpdates();
+    expect(s.session.ping).toBe(47);
+    dispose(s);
+  });
+
+  it("a frame's updates far behind the newest heard aren't staged (NET-03: the session's own use of the rule)", () => {
+    const s = setup();
+    for (let f = 1; f <= 20; f++) s.session.predictor.advance(NO_INPUT);
+    s.session.receive(update(s, 1000, 12));
+    s.session.applyUpdates();
+    const before = s.session.predictor.stats.corrections;
+    // (a held one from over a second of ticks back, alone, then with the present's)
+    s.session.receive(update(s, 1000 - 121, 10));
+    s.session.applyUpdates();
+    expect([s.session.predictor.stats.corrections - before, s.session.staleDropped]).toEqual([0, 1]);
+    s.session.receive(update(s, 1000 - 60, 11));
+    s.session.receive(update(s, 1002, 13));
+    s.session.applyUpdates();
+    expect([s.session.predictor.stats.corrections - before, s.session.staleDropped]).toEqual([2, 1]);
+    dispose(s);
+  });
+
   it("after a stall, with the server's acknowledgement past its frames, sends its newest 10 (G7)", () => {
     const s = setup();
     for (let f = 1; f <= 20; f++) s.session.predictor.advance({ ...NO_INPUT, throttle: f });

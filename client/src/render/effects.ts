@@ -439,9 +439,16 @@ export class GoalExplosion {
   dispose(): void {
     this.#sphere.removeFromParent();
     this.#sphere.geometry.dispose();
-    this.#material.dispose();
+    // (the first one's material kept: three.js deletes a shader program with the last material that uses it, so each
+    // goal's sphere compiled and linked its program again on the goal's frame, a hitch every goal. One kept, the
+    // program stays for the later ones: the 2026-11-11 audit's REN-07)
+    if (keptSphereMaterial === null) keptSphereMaterial = this.#material;
+    else if (this.#material !== keptSphereMaterial) this.#material.dispose();
   }
 }
+
+/** The first goal explosion's sphere material, never disposed (its program kept for the later ones) */
+let keptSphereMaterial: ShaderMaterial | null = null;
 
 /** The teams' primary colours (linear; the stadium's, AV-2): the goal explosion's 'Color' */
 export const TEAM_PRIMARY: readonly (readonly [number, number, number])[] = [

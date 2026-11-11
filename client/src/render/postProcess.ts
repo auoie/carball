@@ -494,12 +494,22 @@ export class PostProcess {
     gl.render(scene, camera);
     gl.autoClear = false;
     const radii = blurRadii(t.width);
-    // The half-res scene with its depth; the depth of field's layer
-    this.#pass(
-      this.#materials.downsample,
-      { tColor: t.scene.texture, tDepth: t.scene.depthTexture, texel: new Vector2(1 / t.width, 1 / t.height), cameraNear: camera.near, cameraFar: camera.far },
-      t.half,
-    );
+    // The half-res scene with its depth; the depth of field's layer. Only for those two: with both off (the automatic
+    // default for every weak GPU and phone) nothing reads it, and a full-screen pass a frame was drawn for nothing.
+    // The targets never drawn to hold no memory either: three.js makes a target's textures at its first use (REN-09)
+    if (options.depthOfField || options.bloom) {
+      this.#pass(
+        this.#materials.downsample,
+        {
+          tColor: t.scene.texture,
+          tDepth: t.scene.depthTexture,
+          texel: new Vector2(1 / t.width, 1 / t.height),
+          cameraNear: camera.near,
+          cameraFar: camera.far,
+        },
+        t.half,
+      );
+    }
     let layer: Texture = t.half.texture;
     if (options.depthOfField) {
       this.#pass(this.#materials.dofGather, { tHalf: t.half.texture, texel: new Vector2(1 / t.half.width, 1 / t.half.height) }, t.dof[0]);

@@ -295,6 +295,14 @@ impl Cli {
         if let Some(list) = &self.allowed_origin {
             limits.allowed_origins = Some(origins(list)?);
         }
+        // (a limit of 0 sessions refuses everyone: a mistake, said at the start, not found by the first player, RV-1296)
+        for (flag, sessions) in [
+            ("--max-sessions", Some(limits.max_sessions)),
+            ("--max-per-address", Some(limits.per_address)),
+            ("--max-per-network", limits.per_network),
+        ] {
+            anyhow::ensure!(sessions != Some(0), "{flag} 0 would refuse every session: 1 at least");
+        }
         // (a blank PUBLIC_PORT an error, as before clap: a port can't be left out by a blank, RV-943)
         let public_port = match self.public_port {
             Some(port) => Some(number("PUBLIC_PORT (--public-port)", &port)?),
@@ -890,6 +898,10 @@ mod tests {
         ])
         .unwrap();
         assert_eq!((args.port, args.limits.per_address, args.dev), (46521, 10, true));
+        for flag in ["--max-sessions", "--max-per-address", "--max-per-network"] {
+            let e = parse(&[flag, "0", "--dev"]).err().expect("a limit of no sessions");
+            assert!(e.to_string().contains(&format!("{flag} 0 would refuse every session")), "{e}");
+        }
         let blank = parse_with(&[], &[("MESHES_DIR", "")]).unwrap();
         assert!(blank.meshes.ends_with("collision_meshes"), "the default meshes: {}", blank.meshes.display());
         let dev = parse_with(&["--dev"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).unwrap();

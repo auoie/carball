@@ -105,6 +105,7 @@ export class Renderer {
     this.#unwatchRatio = watchPixelRatio(() => {
       this.#resize();
     });
+    canvas.addEventListener("webglcontextrestored", this.#forgetTimer);
     this.#resize();
   }
 
@@ -126,6 +127,7 @@ export class Renderer {
   dispose(): void {
     this.#observer.disconnect();
     this.#unwatchRatio();
+    this.canvas.removeEventListener("webglcontextrestored", this.#forgetTimer);
     window.removeEventListener("resize", this.#readRect);
     this.#post.dispose();
     this.#gl.dispose();
@@ -207,6 +209,13 @@ export class Renderer {
   lastGpuMs: number | null = null;
   gpuTiming = false;
   #timer: GpuTimer | null | undefined;
+
+  /** The context restored (a phone's background tab): the timer's extension and its queries were the lost context's,
+   *  and one of those never reports a result, so the Stat Graphs' GPU row stayed at its last value. Made again at its
+   *  next use (the audit's REN-11) */
+  readonly #forgetTimer = (): void => {
+    this.#timer = undefined;
+  };
 
   /** The timer query (EXT_disjoint_timer_query_webgl2), made at its first use; null without one */
   #gpuTimer(): GpuTimer | null {

@@ -94,6 +94,8 @@ export class NetSession {
   readonly #link: SessionLink;
   readonly #updates = new UpdateAssembler();
   readonly #received: Update[] = [];
+  /** When each update (by its server tick) first arrived, ms: this frame's */
+  readonly #arrived = new Map<number, number>();
   readonly #tickOffsets: { readonly serverTick: number; readonly offset: number }[] = [];
   #hitchReset: number | null = null; // seconds until the server's input buffer is reset after a hitch
   readonly #q1 = new Quaternion();
@@ -114,6 +116,8 @@ export class NetSession {
   /** An update part arrived (a hidden tab doesn't draw frames: only the newest second of them is kept, not a backlog to
    *  replay at once) */
   receive(update: Update): void {
+    // (when its update first arrived: the round trip is to then, not to the frame that applies it, NET-09)
+    if (!this.#arrived.has(update.serverTick)) this.#arrived.set(update.serverTick, this.#link.nowMs());
     this.#received.push(update);
     if (this.#received.length > MAX_QUEUED_UPDATES) this.#received.splice(0, this.#received.length - MAX_QUEUED_UPDATES);
   }
@@ -122,6 +126,8 @@ export class NetSession {
    *  of updates costs one resim, not one each) */
   applyUpdates(): void {
     const updates: CompleteUpdate[] = [];
+    const arrived = new Map(this.#arrived);
+    this.#arrived.clear();
     for (const part of this.#received.splice(0)) updates.push(...this.#updates.add(part));
     updates.push(...this.#updates.flush()); // (a part was lost: the others still apply)
     // (an update far behind the newest heard isn't applied: after a stall on the way down the held ones come first, in
@@ -131,6 +137,7 @@ export class NetSession {
     updates.length = 0;
     updates.push(...fresh);
     if (updates.length === 0) return;
+    for (const update of updates) this.#samplePing(update.update, arrived.get(update.update.serverTick));
     const pre = this.#capture();
     // (every frame replayed in this frame, a direct apply's own replay of the staged ones included: RV-336)
     const replayedBefore = this.predictor.stats.resimulatedFrames;
@@ -141,6 +148,15 @@ export class NetSession {
     this.predictor.resimulate();
     if (this.measure) this.metrics.depths.push(this.predictor.stats.resimulatedFrames - replayedBefore);
     this.#smooth(pre);
+  }
+
+  /** The round trip an update's echo tells, to when it arrived (`at`, ms: this frame if not known). Measured to the
+   *  frame that applied it, the updates queued under a hidden tab each read as its whole time away: "ping 5000 ms" on
+   *  the way back (NET-09) */
+  #samplePing(u: Update, at: number | undefined): void {
+    if (u.echoTimestamp <= 0) return;
+    const rtt = ((Math.round(at ?? this.#link.nowMs()) - u.echoTimestamp) >>> 0) - u.echoDelay;
+    if (rtt >= 0 && rtt < 10_000) this.ping = this.ping === null ? rtt : this.ping + (rtt - this.ping) * 0.1;
   }
 
   #stageUpdate(update: CompleteUpdate): void {
@@ -155,12 +171,8 @@ export class NetSession {
       this.#tickOffsets.push({ serverTick: u.serverTick, offset: u.serverTick - u.ackFrame });
       if (this.#tickOffsets.length > MAX_TICK_OFFSETS) this.#tickOffsets.splice(0, this.#tickOffsets.length - MAX_TICK_OFFSETS);
     }
-    if (u.echoTimestamp > 0) {
-      const rtt = ((Math.round(this.#link.nowMs()) - u.echoTimestamp) >>> 0) - u.echoDelay;
-      if (rtt >= 0 && rtt < 10_000) this.ping = this.ping === null ? rtt : this.ping + (rtt - this.ping) * 0.1;
-    }
     if (this.measure) this.metrics.applied.push(this.#link.nowMs());
-    this.predictor.stage(u.ackFrame, update.states);
+    this.predictor.stage(u.ackFrame, update.states, u.serverTick);
   }
 
   /** The client frame a server tick corresponds to: by the first acknowledgement's offset from that tick on (the

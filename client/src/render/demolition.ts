@@ -586,7 +586,13 @@ export class Demolition {
     for (const { object } of this.#husks) object.removeFromParent();
     if (this.#boom) {
       this.#boom.removeFromParent();
-      this.#boom.material.dispose();
+      // (the first one's material kept, its shader program with it: the later ones' sprites don't compile it again on
+      // the demolition's frame, REN-07)
+      if (keptBoomMaterial === null) keptBoomMaterial = this.#boom.material;
+      else if (this.#boom.material !== keptBoomMaterial) this.#boom.material.dispose();
     }
   }
 }
+
+/** The first demolition's "BOOM!" material, never disposed (its program kept for the later ones) */
+let keptBoomMaterial: SpriteMaterial | null = null;

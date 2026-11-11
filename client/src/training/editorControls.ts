@@ -111,17 +111,25 @@ export function clampTo(kind: keyof typeof CLAMPS, p: Vec3): Vec3 {
 }
 
 /** A pack as the editor takes it (an import: TE1 §3.2's limits, which a pack file can exceed): its name 30 characters at
- *  most, its tags 4 at most without repeats, each shot's time limit 1-59 and its ball and car within the clamps */
+ *  most, its tags 4 at most without repeats, each shot's time limit 1-59 and its ball and car within the clamps. And
+ *  the two fields no screen here shows or changes, within what sharing takes: the description 200 printable ASCII
+ *  characters, the car's roll a rotator's ±32768. Out of them, the pack could never be shared from the page, refused
+ *  for a field its player couldn't see (the audit's CLI-07) */
 export function editorPack(pack: TrainingPack): TrainingPack {
+  const roll = (units: number): number => ((((Math.trunc(units) + 32768) % 65536) + 65536) % 65536) - 32768;
   return {
     ...pack,
     name: pack.name.trim().slice(0, 30),
+    description: pack.description
+      .replace(/[^\x20-\x7e]/g, "")
+      .trim()
+      .slice(0, 200),
     tags: [...new Set(pack.tags)].slice(0, 4),
     shots: pack.shots.map((s) => ({
       ...s,
       timeLimit: clamp(Math.round(s.timeLimit), EDITOR_STEPS.timeMin, EDITOR_STEPS.timeMax),
       ball: { ...s.ball, location: clampTo("ball", s.ball.location) },
-      car: { ...s.car, location: clampTo("car", s.car.location) },
+      car: { ...s.car, location: clampTo("car", s.car.location), rotation: { ...s.car.rotation, roll: roll(s.car.rotation.roll) } },
     })),
   };
 }

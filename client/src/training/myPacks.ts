@@ -2,6 +2,7 @@
 // and exported or imported as a pack file; a new pack's first shot the game's default (notes/custom-training.md CTR-3).
 import { type Vec3, vec3 } from "../math/vec";
 import { PACK_FORMAT, type Shot, type TrainingPack, type TrainingType, parsePack } from "./pack";
+import { clearProgress, remapProgress, storeProgress, storedProgress } from "./settings";
 
 /** The default shot (SetupDefaultRound): the striker's ball 1000 uu in front of the orange goal, launched at 45° and
  *  1500 uu/s toward the field's centre, the car there facing it; the goalie's ball at the centre launched at the blue
@@ -61,7 +62,7 @@ export function packFile(pack: TrainingPack): unknown {
   };
 }
 
-type Store = Pick<Storage, "getItem" | "setItem">;
+type Store = Pick<Storage, "getItem" | "setItem"> & Partial<Pick<Storage, "removeItem">>;
 const local = (): Store | null => {
   try {
     return typeof localStorage === "undefined" ? null : localStorage;
@@ -96,14 +97,23 @@ export function storePacks(packs: readonly TrainingPack[], storage: Store | null
 export function storePack(pack: TrainingPack, storage: Store | null = local()): boolean {
   const packs = storedPacks(storage);
   const at = packs.findIndex((p) => p.id === pack.id);
+  const before = packs[at];
   if (at >= 0) packs[at] = pack;
   else packs.push(pack);
-  return storePacks(packs, storage);
+  if (!storePacks(packs, storage)) return false;
+  // (its progress follows its shots: one moved keeps its own, one removed takes its with it, CLI-11)
+  if (before && JSON.stringify(before.shots) !== JSON.stringify(pack.shots)) {
+    const status = storedProgress(pack.id, storage);
+    if (status.length > 0) storeProgress(pack.id, remapProgress(before.shots, pack.shots, status), storage);
+  }
+  return true;
 }
 
+/** A pack deleted: its progress with it (its key was left for good) */
 export function deletePack(id: string, storage: Store | null = local()): void {
   storePacks(
     storedPacks(storage).filter((p) => p.id !== id),
     storage,
   );
+  clearProgress(id, storage);
 }

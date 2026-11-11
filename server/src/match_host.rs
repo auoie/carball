@@ -170,6 +170,8 @@ struct Reservation {
     quit: bool,
     reported: bool,
     lost_at: Option<f64>,
+    /// When its player last left, by choice or not (None: here, or back since): an outage counts the seats there for it
+    gone_at: Option<f64>,
     rejoin_ticket: Option<String>,
     /// When its session (the claim's or the last rejoin's) joined: one that young is live though not heard from yet,
     /// no rejoin takes it over (RX31)
@@ -191,6 +193,7 @@ impl Reservation {
             quit: false,
             reported: false,
             lost_at: None,
+            gone_at: None,
             rejoin_ticket: None,
             session_since: 0.0,
             who: String::new(),
@@ -252,6 +255,18 @@ impl Hosted {
     /// passing states, which a goal at 0:00 can still undo (RV-987)
     fn concluded(&self) -> bool {
         self.game.as_ref().is_some_and(|g| g.winner().is_some() || g.is_over())
+    }
+
+    /// Whether the connections lost about `since` (within `OUTAGE_WINDOW` of it either side) are the server's network
+    /// outage, not the players': more than half of the seats that were there to lose theirs, those not gone before
+    /// `since` and those lost then. A seat left by choice before isn't one: counted, two players left in a 2v2 timing
+    /// out together were two of four, no outage, and the first to time out took a rated loss (RV-1308). With it, how
+    /// many were lost and how many were there
+    fn outage_about(&self, since: f64) -> (bool, usize, usize) {
+        let lost_then = |r: &&Reservation| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW);
+        let lost = self.reservations.iter().filter(lost_then).count();
+        let there = self.reservations.iter().filter(|r| r.gone_at.is_none_or(|at| at >= since) || lost_then(r)).count();
+        (2 * lost > there, lost, there)
     }
 
     /// Its id as the accounts service has it
@@ -497,6 +512,7 @@ impl MatchHost {
         let slot = &mut hosted.reservations[seat];
         slot.played = slot.seconds(now);
         slot.here_since = None;
+        slot.gone_at = Some(now);
         if lost {
             slot.lost_at = Some(now);
         }
@@ -535,39 +551,34 @@ impl MatchHost {
     }
 
     /// A match's armed leave by a lost connection decided once its window is over (or at once, `now_or_never`: the
-    /// match let go): an outage if more than half its seats lost their connection within `OUTAGE_WINDOW` of it (no
-    /// ban); else reported, unless its player is back
+    /// match let go): an outage (`Hosted::outage_about`: no ban); else reported, unless its player is back. Not while a
+    /// forfeit's result is held for the same question (`result_ready`): that ruling is this leave's too, so one match
+    /// never has both a ban and a void (RV-1309)
     fn decide_pending_quit(&mut self, match_id: MatchId, now_or_never: bool) {
         let now = self.now;
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
-        let Some((seat, since)) = hosted.pending_quit else { return };
-        if !now_or_never && now - since < OUTAGE_WINDOW {
+        let Some((_, since)) = hosted.pending_quit else { return };
+        if !now_or_never && (now - since < OUTAGE_WINDOW || hosted.forfeit_hold.is_some()) {
             return;
         }
-        hosted.pending_quit = None;
-        let lost_together = hosted
-            .reservations
-            .iter()
-            .filter(|r| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW))
-            .count();
+        let (outage, lost, there) = hosted.outage_about(since);
+        if outage {
+            tracing::info!("{}: {lost} of {there} connections lost at once: an outage, no ban", hosted.label(match_id));
+        }
+        self.settle_pending_quit(match_id, outage);
+    }
+
+    /// The pending quit's end: an outage's, no ban; else reported, unless its player is back. Its seat told left then
+    /// (unless back): after its report, so that a search of theirs meets the ban, RV-964
+    fn settle_pending_quit(&mut self, match_id: MatchId, outage: bool) {
+        let Some(hosted) = self.matches.get_mut(&match_id) else { return };
+        let Some((seat, _)) = hosted.pending_quit.take() else { return };
         let ranked_id = hosted.ranked_text();
-        // (its seat told left now, unless its player is back: after its report, so that a search of theirs meets the ban,
-        // RV-964)
         let left = Report::Left { match_id: ranked_id.clone(), seat: seat as u8 };
-        let back = hosted.reservations[seat].here_since.is_some();
-        if 2 * lost_together > hosted.reservations.len() {
-            tracing::info!(
-                "{}: {lost_together} of {} connections lost at once: an outage, no ban",
-                hosted.label(match_id),
-                hosted.reservations.len()
-            );
-            if !back {
-                self.reports.push(left);
-            }
-            return;
-        }
         let slot = &mut hosted.reservations[seat];
-        if !back
+        let back = slot.here_since.is_some();
+        if !outage
+            && !back
             && !slot.reported
             && let Some(t) = &slot.ticket
         {
@@ -648,8 +659,13 @@ impl MatchHost {
         slot.here_since = slot.here_since.or(Some(now));
         slot.session_since = now;
         slot.lost_at = None;
+        slot.gone_at = None;
         slot.rejoin_ticket = request.ticket.as_ref().map(|t| t.encoded.clone());
         let team = slot.team;
+        // (its team no longer empty: no forfeit to hold a result for, RV-1317)
+        if hosted.forfeit_hold.is_some_and(|(emptied, _)| emptied == team) {
+            hosted.forfeit_hold = None;
+        }
         let label = format!("{match_label}: player {id} ({})", slot.who);
         let game = hosted.game(self.test_goal_after);
         if let Some(old) = stale {
@@ -695,19 +711,16 @@ impl MatchHost {
             return false;
         }
         hosted.forfeit_hold = None;
-        let lost_together = hosted
-            .reservations
-            .iter()
-            .filter(|r| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW))
-            .count();
-        if 2 * lost_together > hosted.reservations.len() {
+        let (outage, lost, there) = hosted.outage_about(since);
+        if outage {
             hosted.voided = true;
             tracing::info!(
-                "{}: {lost_together} of {} connections lost at once: an outage, its forfeit void (no result)",
-                hosted.label(match_id),
-                hosted.reservations.len()
+                "{}: {lost} of {there} connections lost at once: an outage, its forfeit void (no result), no ban",
+                hosted.label(match_id)
             );
         }
+        // (and a lost leave waiting for its ban by the same ruling: void, none; a result, its report before it, RV-1309)
+        self.settle_pending_quit(match_id, outage);
         true
     }
 
@@ -718,6 +731,11 @@ impl MatchHost {
     fn report_result(&mut self, match_id: MatchId, last: bool) {
         if self.matches.get(&match_id).is_none_or(|m| m.result_told) || !self.result_ready(match_id, last) {
             return;
+        }
+        // (the match let go with a lost leave still in its window: decided now, its report before the result, which
+        // frees its account to search: the ban first, the audit's MATCH-04)
+        if last {
+            self.decide_pending_quit(match_id, true);
         }
         let reported = self.result(match_id);
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
@@ -1355,6 +1373,91 @@ mod tests {
         let reports = host.take_reports();
         assert_eq!(ends(&reports), [None], "{reports:?}");
         assert!(!reports.iter().any(|r| matches!(r, Report::Quitter { .. })), "{reports:?}");
+    }
+
+    /// A 2v2 at 5 s, every seat claimed and playing: the host, and each team's players
+    fn twos_playing() -> (MatchHost, [Vec<PlayerId>; 2]) {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            assert!(host.claim(token, i as PlayerId + 1, seat(i as u8 + 1), tx.clone()));
+        }
+        run_to(&mut host, 0.0, 5.0);
+        host.take_reports();
+        host.observe(5.0);
+        let team = |t: u8| -> Vec<PlayerId> {
+            let hosted = host.matches.values().next().unwrap();
+            hosted.reservations.iter().filter(|r| r.team == t).filter_map(|r| r.claimed).collect()
+        };
+        let teams = [team(0), team(1)];
+        (host, teams)
+    }
+
+    /// RV-1308: the outage is of the seats there to lose their connection. A 2v2 with one of each team gone by choice,
+    /// the two left timing out 50 ms apart: both of two, void (they were two of four, and the first to time out lost)
+    #[test]
+    fn an_outage_in_a_short_handed_match_is_void() {
+        let (mut host, [first, second]) = twos_playing();
+        host.leave(first[0], false);
+        host.leave(second[0], false);
+        run_to(&mut host, 5.0, 8.0);
+        host.take_reports();
+        host.observe(8.0);
+        host.leave(first[1], true);
+        run_to(&mut host, 8.0, 8.05);
+        host.observe(8.05);
+        host.leave(second[1], true);
+        let reports = host.take_reports();
+        assert_eq!(ends(&reports), [None], "{reports:?}");
+        assert_eq!(host.match_count(), 0);
+    }
+
+    /// RV-1309: one ruling for the ban and the void. A1's connection lost at 5 s, A2's at 9 s (their team empty: its
+    /// forfeit held), B1's at 13 s: an outage by the forfeit's window, void, and A1 isn't banned at 10 s by its own
+    /// (two of four then). Without B1's loss: a result, and A1's ban with it
+    #[test]
+    fn a_match_is_never_both_banned_for_and_void() {
+        for outage in [true, false] {
+            let (mut host, [first, second]) = twos_playing();
+            host.leave(first[0], true);
+            run_to(&mut host, 5.0, 9.0);
+            host.observe(9.0);
+            host.leave(first[1], true);
+            run_to(&mut host, 9.0, 13.0);
+            assert!(ranked(host.take_reports()).is_empty(), "nothing ruled while the forfeit's result is held");
+            host.observe(13.0);
+            if outage {
+                host.leave(second[0], true);
+            }
+            run_to(&mut host, 13.0, 15.0);
+            let reports = host.take_reports();
+            let banned = reports.iter().any(|r| matches!(r, Report::Quitter { .. }));
+            assert_eq!((ends(&reports), banned), (vec![if outage { None } else { Some(1) }], !outage), "{reports:?}");
+            // (the ban before the result, which frees its account to search)
+            let at = |want: fn(&Report) -> bool| reports.iter().position(want);
+            if !outage {
+                assert!(
+                    at(|r| matches!(r, Report::Quitter { .. })) < at(|r| matches!(r, Report::Result(_))),
+                    "{reports:?}"
+                );
+            }
+        }
+    }
+
+    /// The audit's MATCH-04: a match let go with a lost leave still in its window tells the ban before the result
+    #[test]
+    fn a_lost_leavers_ban_is_told_before_the_result_that_frees_them() {
+        let (mut host, _rx) = ones_playing(None);
+        host.leave(1, true);
+        run_to(&mut host, 5.0, 5.05);
+        host.observe(5.05);
+        host.leave(2, false);
+        let reports = host.take_reports();
+        let quitter = reports.iter().position(|r| matches!(r, Report::Quitter { .. }));
+        let result = reports.iter().position(|r| matches!(r, Report::Result(_)));
+        assert!(quitter.is_some() && quitter < result, "{reports:?}");
     }
 
     /// A leave the player chose never counts as lost: after a lost connection's forfeit the winner leaves by the menu,

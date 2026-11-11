@@ -44,7 +44,8 @@ that keeps flooding either kind is closed, a client now and then over its rate n
 small receive windows; the game thread reads at most 2048 messages a pass (a pass at each tick: it sleeps until the
 next is due, notes/benchmarks.md), a session's
 inputs one place in its queue (its newest datagram: no flood, nor a stalled game thread, drops another's: RV-991); a
-panic in a match's tick lets that match go (the others play on), and the process exits if the game thread ends; join and
+panic in a match's tick lets that match go (the others play on), and the process exits if the game thread ends or
+makes no pass over ten checks a second apart (stuck: its region's ping unanswered meanwhile, SEC-SRV-03); join and
 leave send the other players the world once a tick at most.
 
 ## Checks

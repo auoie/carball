@@ -316,6 +316,7 @@ export class World {
   /** Freeplay's Unlimited boost: never used up, 100 at every spawn (every car at 100 now); off: the game's rates. */
   setUnlimitedBoost(on: boolean): void {
     this.#changed();
+    this.#unlimitedBoost = on;
     this.#sim.setUnlimitedBoost(on);
   }
 
@@ -365,6 +366,8 @@ export class World {
   #demolitions = true;
   #frozen = false;
   #podium = false;
+  /** Unlimited boost as this world was told (null: never told, a loaded state's own stands) */
+  #unlimitedBoost: boolean | null = null;
 
   /** Ticks left of the kickoff countdown (cars get no input while it runs; a match server starts it). */
   kickoffCountdown(): number {
@@ -667,5 +670,9 @@ export class World {
     // pulled back at every update: the 2026-11-11 audit's NET-01)
     this.#sim.setFrozen(this.#frozen);
     this.#sim.setPodium(this.#podium);
+    // (unlimited boost is a mutator, in every saved state: once this world was told its own, that again. An online
+    // client's is its phase's (the podium's), and each correction loads a state from before it was set, or a World
+    // carries the server's into the next match: the gauge drained and jumped back all podium long, NET-05)
+    if (this.#unlimitedBoost !== null) this.#sim.setUnlimitedBoost(this.#unlimitedBoost);
   }
 }

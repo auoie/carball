@@ -308,7 +308,10 @@ export class Freeplay {
     this.#ballArrow.update(null, null); // (not in a replay: HUD-17)
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
-    const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
+    // (polled every frame, used only when the game has the input: left unread under a menu, the keys pressed there all
+    // came with the first snapshot after it closed, the replay skipped and training's commands run at once, CLI-13)
+    const polled = this.#input.snapshot();
+    const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
     const actions = readHeldActions(snapshot, this.settings().bindings, this.settings().controller.deadzone);
     const held = actions.readyUp;
     const skipped = held && !this.#skipHeld;
