@@ -29,13 +29,14 @@ export async function signIn(context: BrowserContext, label: string, subject = `
   for (let attempt = 1; ; attempt++) {
     const signed = await trySignIn(context, `${label.replaceAll(" ", "_")}_${randomBytes(3).toString("hex")}`, subject);
     if (signed.status !== 400 || attempt === 5) {
-      if (signed.status !== 200 || typeof signed.account !== "string") throw new Error(`the e2e sign-in: HTTP ${String(signed.status)}`);
+      if (signed.status !== 200 || typeof signed.account !== "string")
+        throw new Error(`the e2e sign-in: HTTP ${String(signed.status)} (${signed.error}) after ${String(attempt)} ${attempt === 1 ? "try" : "tries"}`);
       return { account: signed.account, name: signed.name };
     }
   }
 }
 
-async function trySignIn(context: BrowserContext, name: string, subject: string): Promise<{ status: number; account: unknown; name: string }> {
+async function trySignIn(context: BrowserContext, name: string, subject: string): Promise<{ status: number; account: unknown; error: string; name: string }> {
   const page = await context.newPage();
   await page.goto("/healthz");
   const answer = await page.evaluate(
@@ -46,8 +47,8 @@ async function trySignIn(context: BrowserContext, name: string, subject: string)
         body: JSON.stringify(body),
       });
       // (the status first: an error's body may not be JSON, RV-1061)
-      if (!response.ok) return { status: response.status, account: undefined };
-      return { status: response.status, account: ((await response.json()) as { account?: unknown }).account };
+      if (!response.ok) return { status: response.status, account: undefined, error: (await response.text()).slice(0, 80) };
+      return { status: response.status, account: ((await response.json()) as { account?: unknown }).account, error: "" };
     },
     { subject, name },
   );

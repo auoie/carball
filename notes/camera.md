@@ -65,24 +65,32 @@ Demolished camera: InitialFOV 120, FOVBlendTime 1.0, MaxZoomInFOV 15, MaxFOVBlen
 ## Algorithm (decompiled)
 Each frame, per rendered frame with the frame's DeltaTime (`Config.bFramerateIndependentInterp = True`).
 
-**Ours steps it on the physics ticks instead** (`client/src/camera/tickedCamera.ts`, 2026-11-10): once a tick with
-that tick's car and ball, drawn between its last two views at the frame's alpha as the car is; a cut (rear view, a new
-car) drawn at once. The formulas are the game's, run at a steady 120 Hz. Stepped once a frame, the smoothing's lag
-behind a turning car changes with each frame's length (about the turn rate times the frame), so uneven frames (a
-phone's dropped ones, Firefox's timer, a hitch) wobbled the car on screen in a steady turn: up to 0.76° at 60 Hz with 15 %
-of frames dropped, a 1.1° jump on one 66 ms hitch; on ticks, none (the user's report, phone and Firefox). The mouse's
-free look (its counts, not a rate) is a frame's counts shared over its ticks, kept only while the camera steps (none
-piled up through a goal replay: RV-1248).
+**Ours steps it at the display's rate, on a steady clock** (`client/src/camera/pacedCamera.ts`; the user's choice,
+RX82's RV-1251 (b), 2026-11-10: "i care about feeling similar to the game"). The formulas are the game's, stepped as
+the game steps them at the display's rate R, so its lag behind a turning car is the game's at that rate: in a steady
+full-lock turn (1410 uu/s, 653 uu) 2.45° at 30, 3.23° at 60, 3.76° at 144, 3.92° at 240, and the air camera settles as
+the game's at R. At even frames it is the game's camera frame for frame (tested: a turn, the air's quarter turn, a
+goal's slow motion).
 
-**120 Hz is the camera's reference rate, by choice** (RX82's RV-1251, option (a), 2026-11-10; the exact per-rate match,
-(b), only if the user asks for it later: the camera stepped at the display's measured refresh, the car's pose
-interpolated from the ticks at each step, also free of the wobble). Its lag in a full-lock turn (1410 uu/s, 653 uu) is
-the game's at 120 fps, 3.68°, whatever the display: the game's is 2.45° at 30 (ours +1.23°), 3.23° at 60 (+0.45°),
-3.76° at 144 (−0.08°), 3.92° at 240 (−0.24°). The air camera's fixed 1/60 lerp, run once a tick, settles a 90° turn in
-1650 ms (the game's 1683 at 60, 1617 at 240). Bought with it: no wobble from uneven frames (0.76° at 60 Hz with 15 % of
-frames dropped, a 1.1° jump on a 66 ms hitch, Firefox's 16/17 ms frames' 0.02° shimmer; all 0 now). Online the
-corrections' offsets (SyncError, notes/netcode-audit.md N-1) decay once a tick too and are drawn between the last two,
-so the camera and the drawn car take the same offset (RV-1247).
+- **Why a clock, not the frame's time:** stepped once a frame with that frame's length, the smoothing's lag behind a
+  turning car changes with each frame's length, so uneven frames (a phone's dropped ones, Firefox's timer, a hitch)
+  wobbled the car on screen in a steady turn: 0.76° at 60 Hz with 15 % of frames dropped, a 1.1° jump on a 66 ms hitch
+  (the user's report, phone and Firefox). Ours runs whole steps of 1/R on a grid phase-locked to the frames: a dropped
+  frame runs the steps it missed at their grid times, a timer's jitter moves only when a step is shown. Each step takes
+  the car and ball as they were at its moment, blended from the ticks (the camera keeps the last 32: their car, ball and
+  respawn; online the car with its correction's offset, SyncError, notes/netcode-audit.md N-1, which decays once a tick
+  and is drawn between the last two: RV-1247), and the car it follows is drawn as its last step saw it, so the two agree
+  whatever the frames. Measured with the real camera code: no wobble (under 0.01°) with dropped frames, Firefox's 16/17 ms
+  frames, ±1 ms of timer jitter, a hitch of two refreshes; a stall past the physics clock's 5 ticks a frame settles in a
+  quarter of a second.
+- **R:** the frames' own rate: the mean of the middle half of the last 120 intervals (a few dropped frames left out, a
+  timer's alternation averaged), taken every 30 frames and set again when it moves 2 % (a window moved to another
+  display, a phone's refresh changing, a touch device's Frame Rate: a phone capped at 60 steps at 60), followed exactly
+  between by the lock (a small phase and rate correction: a display a little off its nominal rate, a variable-refresh
+  display's own rate). 60 before its first measure (8 frames).
+- **Its inputs:** the frame's controls; the mouse's free look (its counts, not a rate) shared over the frame's steps,
+  taken only on a frame the camera runs (none piled up through a goal replay: RV-1248); the swivel's real time 1/R a
+  step; a goal's slow motion and the time the physics clock drops in a stall in each step's world time (the scene's).
 
 **Camera_X.UpdateCamera**: the active state updates a persistent orientation `POV {Focus, Rotation, Distance,
 FOV, CalculatedLocation}`. Then `FinalizeOrientation`: normalize the rotation, set

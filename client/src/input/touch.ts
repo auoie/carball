@@ -457,7 +457,7 @@ export class TouchControls {
     return this.#editing !== null;
   }
 
-  /** The editor's Done from elsewhere (Escape, a pad's Start or B: RV-1249) */
+  /** The editor's Done from elsewhere (Escape, a pad's Start: RV-1249, RV-1255) */
   finishEditing(): void {
     this.#finishEditing();
   }

@@ -110,7 +110,11 @@ export class FramePacer {
     const early = Math.min(interval / 4, 0.45 * refresh);
     const next = this.#drawn + interval;
     if (now < next - early) return false;
-    this.#drawn = now - next >= interval ? now : next + 0.1 * clamp(now - next, -early, early);
+    const late = now - next;
+    // (a whole interval late: the cadence starts again from here; most of a refresh late (a vsync missed), the cadence
+    // too, so the next frame keeps the interval (3 then 2 refreshes at 120/60, not 3 then 1: RV-1254), never on a ratio's
+    // own half-refresh lateness (90/60)); else on the cadence, pulled toward the frames)
+    this.#drawn = late >= interval || late >= 0.75 * refresh ? now : next + 0.1 * clamp(late, -early, early);
     return true;
   }
 }

@@ -49,6 +49,25 @@ describe("the touch settings", () => {
     expect(gaps(90, 60, 0.3)).toEqual(new Set([1, 2]));
   });
 
+  it("the Frame Rate after a vsync missed: the cadence from the late frame, so the next keeps the interval (RV-1254)", () => {
+    /** The gaps (refreshes) between frames drawn over a minute at `screenHz` and `cap`, `missed` of the vsyncs skipped */
+    const gaps = (screenHz: number, cap: number, missed: number): Set<number> => {
+      const pacer = new FramePacer();
+      let seed = 3;
+      const r = (): number => ((seed = (seed * 1664525 + 1013904223) % 4294967296), seed / 4294967296);
+      const drawn: number[] = [];
+      for (let i = 0; i < screenHz * 60; i++) {
+        if (i > 10 && r() < missed) continue;
+        if (pacer.due((i * 1000) / screenHz + (r() - 0.5) * 0.4, cap) && i > screenHz) drawn.push(i);
+      }
+      return new Set(drawn.slice(1).map((v, k) => v - (drawn[k] ?? v)));
+    };
+    expect([...gaps(120, 60, 0.02)].every((g) => g >= 2)).toBe(true);
+    expect([...gaps(120, 30, 0.02)].every((g) => g >= 4)).toBe(true);
+    // (a ratio's own half-refresh lateness doesn't count: 90 Hz at 60 still two frames in three)
+    expect(gaps(90, 60, 0)).toEqual(new Set([1, 2]));
+  });
+
   it("the Frame Rate: a long stall draws at once, the cadence from there", () => {
     const pacer = new FramePacer();
     expect(pacer.due(0, 60)).toBe(true);

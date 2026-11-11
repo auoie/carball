@@ -4,7 +4,7 @@ import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/carballCamera";
-import { TickedCamera } from "../camera/tickedCamera";
+import { PacedCamera } from "../camera/pacedCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type Team, type World } from "../engine/world";
 import { DEFAULT_CAR, carChoice } from "./cars";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
@@ -48,7 +48,7 @@ import { ReplayPlayback } from "./replayPlayback";
 import { ReplayRecorder, freeplayTouchTeam, recordCar } from "./replayRecorder";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
 import { FlipResetFx } from "../render/flipResetFx";
-import { fromThreeVector } from "../render/coords";
+import { fromThreeVector, toThreeQuaternion, toThreeVector } from "../render/coords";
 import { BALL_PATH, BallPathView, EDITOR_PATH } from "../render/ballPath";
 import type { CameraView } from "../camera/carballCamera";
 import { DisabledGoalView } from "../render/disabledGoal";
@@ -109,8 +109,8 @@ export class Freeplay {
   #playerId: number;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
-  /** The camera stepped on the ticks, drawn between its last two views (camera/tickedCamera.ts) */
-  readonly #view = new TickedCamera(this.#camera);
+  /** The camera at the display's rate, the scene drawn at its moment (camera/pacedCamera.ts) */
+  readonly #view = new PacedCamera(this.#camera);
   #carView: CarView;
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers();
@@ -388,11 +388,6 @@ export class Freeplay {
     const inputActive = controls.throttle !== 0 || controls.steer !== 0 || controls.jump || controls.boost;
     const wantsStart = this.#training?.state === "countdown" && inputActive;
     const ticks = this.#clock.advance(world);
-    // (the player's camera stepped each tick, unless the garage's or the editor's is the one drawn; a tick's real time
-    // the swivel's, stretched in a goal's slow motion)
-    const ownCamera = this.#garageCamera === null && !(this.#editing && this.editorCamera);
-    const realTick = world > 0 ? (TICK_SECONDS * real) / world : TICK_SECONDS;
-    if (ownCamera) this.#view.frame(ticks, this.#freeLook);
     for (let i = 0; i < ticks; i++) {
       const held = this.#world.kickoffCountdown() > 0;
       this.#world.setControls(this.#playerId, { ...controls, jump: this.#jump.tick(controls.jump) });
@@ -406,7 +401,8 @@ export class Freeplay {
       this.#pushBall();
       this.#trackFlip();
       this.#handleEvents();
-      if (ownCamera) this.#view.tick(this.#car.current, this.#ball.current.pos, this.#cameraControls(), null, realTick);
+      // (each tick's car and ball, for the camera's steps between them)
+      this.#view.tick(this.#car.current, this.#ball.current.pos, null, placed);
     }
 
     this.#draw(world, ticks * TICK_SECONDS, real);
@@ -1068,14 +1064,20 @@ export class Freeplay {
   /** `frameSeconds`: the frame's world time (slowed after a goal); `simulated`: seconds of physics run this frame;
    *  `realSeconds`: real time since the last frame. */
   #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
+    // (the player's camera's steps planned, unless the garage's or the editor's is the one drawn; the car drawn as its
+    // last step saw it, at that step's moment (the frame's to within half a step), so the two agree whatever the frames)
+    const ownCamera = this.#garageCamera === null && !(this.#editing && this.editorCamera);
     const alpha = this.#clock.alpha;
+    if (ownCamera) this.#view.plan(realSeconds, alpha);
+    const subject = ownCamera ? this.#view.subject : null;
+    const carPosition = (): Vector3 => (subject ? toThreeVector(subject.pos, this.#pos) : this.#car.position(alpha, this.#pos));
     const car = this.#car.current;
-    const carDrawn = fromThreeVector(this.#car.position(alpha, this.#pos));
+    const carDrawn = fromThreeVector(carPosition());
     // (a Blender model's wheels: the vehicle's suspension and steering)
     if (this.#carView.posesWheels) this.#carView.wheels = { ...this.#world.carWheels(this.#playerId), contact: car.wheelContact };
     this.#carView.update(
-      this.#car.position(alpha, this.#pos),
-      this.#car.rotation(alpha, this.#rot),
+      carPosition(),
+      subject ? toThreeQuaternion(subject.rot, this.#rot) : this.#car.rotation(alpha, this.#rot),
       car.boosting,
       car.demoed,
       car.supersonic,
@@ -1116,7 +1118,7 @@ export class Freeplay {
       this.#garageCamera ??
       (this.#editing && this.editorCamera
         ? this.editorCamera
-        : this.#view.view(alpha, this.#car.blended(alpha), this.#ball.blended(alpha).pos, this.#cameraControls(), null));
+        : this.#view.run(this.#cameraControls(), { car: this.#car.blended(alpha), ball: this.#ball.blended(alpha).pos, respawn: null }));
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     // The sounds before the render: started as soon as the frame knows them, not after drawing it (its sounds kept for a
     // goal replay to hear again: RA1 §1)

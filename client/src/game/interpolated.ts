@@ -27,13 +27,19 @@ export class Interpolated<T extends BodyState> {
   /** The state with interpolated position, velocity and rotation (for the camera: the pose drawn, rotation slerped as
    *  rotation(), as the game's render pose: notes/client-loop-timing.md LT-8). */
   blended(alpha: number): T {
-    return {
-      ...this.current,
-      pos: lerp(this.previous.pos, this.current.pos, alpha),
-      vel: lerp(this.previous.vel, this.current.vel, alpha),
-      rot: fromThreeQuaternion(this.rotation(alpha, blendQuat)),
-    };
+    return blendStates(this.previous, this.current, alpha);
   }
 }
 const tmpQuat = new Quaternion();
 const blendQuat = new Quaternion();
+
+/** Two ticks' states blended at `alpha` (0: `a`, 1: `b`): position, velocity and rotation (slerped), the rest `b`'s */
+export function blendStates<T extends BodyState>(a: T, b: T, alpha: number): T {
+  const from = toThreeQuaternion(a.rot, tmpQuat);
+  return {
+    ...b,
+    pos: lerp(a.pos, b.pos, alpha),
+    vel: lerp(a.vel, b.vel, alpha),
+    rot: fromThreeQuaternion(toThreeQuaternion(b.rot, blendQuat).slerp(from, 1 - alpha)),
+  };
+}
