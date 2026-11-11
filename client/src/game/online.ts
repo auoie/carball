@@ -521,7 +521,9 @@ export class Online {
     }
     // (a tick's real time: the swivel's, stretched in a goal's slow motion)
     const realTick = world > 0 ? (TICK_SECONDS * real) / world : TICK_SECONDS;
-    this.#view.frame(ticks, this.#freeLook);
+    // (the mouse's counts kept only while the camera steps: none piled up through a goal replay, RV-1248)
+    const cameraTicks = this.#cars.has(this.#localCar) && !this.#replay;
+    this.#view.frame(cameraTicks ? ticks : 0, cameraTicks ? this.#freeLook : null);
     for (let i = 0; i < ticks; i++) {
       // (after the match the server freezes every car, and in the goal replay the cars are gone: send it nothing then,
       // so the prediction agrees)
@@ -532,6 +534,9 @@ export class Online {
       this.#predictor.advance(frozen ? NO_INPUT : this.#disconnected === null ? jumped : { ...input, throttle: 0, bits: 0 });
       this.#world.takeEvents(); // goals come from the server
       this.#pushStates();
+      // (the corrections' offsets decay once a tick, drawn between the last two as the poses are: RV-1247)
+      for (const { error } of this.#cars.values()) error.tick(TICK_SECONDS);
+      this.#ballError.tick(TICK_SECONDS);
       this.#trackFlip();
       // (the player's camera stepped with this tick's car; not under a goal replay, which has its own)
       const mine = this.#cars.get(this.#localCar);
@@ -801,7 +806,7 @@ export class Online {
         if (m.event.lost) this.#lost.add(m.event.car);
         const car = this.#cars.get(m.event.car);
         if (leaverExplodes(m.event, car !== undefined, this.#replay !== null) && car) {
-          const pos = add(car.state.blended(this.#clock.alpha).pos, car.error.location);
+          const pos = add(car.state.blended(this.#clock.alpha).pos, car.error.locationAt(this.#clock.alpha));
           this.#effects.demolition(pos);
           this.#camera.shakes.play(EXPLOSION_MEDIUM, pos);
           this.#audio.demolition(pos);
@@ -967,8 +972,8 @@ export class Online {
   /** What the camera follows: the car as drawn (`car`, the prediction's: its smoothed correction's offset and turn on it)
    *  and the ball (`ball`, its correction's offset on it); demolished, the respawn cameras follow the spot picked
    *  (respawns wait after a goal: CAM-29) */
-  #cameraInput(local: CarEntry, car: CarState, ball: Vec3): { car: CarState; ball: Vec3; controls: CameraControls; respawn: RespawnState | null } {
-    const e = local.error.rotation;
+  #cameraInput(local: CarEntry, car: CarState, ball: Vec3, alpha = 1): { car: CarState; ball: Vec3; controls: CameraControls; respawn: RespawnState | null } {
+    const e = local.error.rotationAt(alpha);
     const rot = { forward: rotateRl(car.rot.forward, e), right: rotateRl(car.rot.right, e), up: rotateRl(car.rot.up, e) };
     const demoed = this.#drawnDemoed(this.#localCar, local.state.current);
     const { spawnSelection: pick, team } = local.state.current;
@@ -980,8 +985,8 @@ export class Online {
         }
       : null;
     return {
-      car: { ...car, pos: add(car.pos, local.error.location), rot, demoed },
-      ball: add(ball, this.#ballError.location),
+      car: { ...car, pos: add(car.pos, local.error.locationAt(alpha)), rot, demoed },
+      ball: add(ball, this.#ballError.locationAt(alpha)),
       controls: { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook },
       respawn,
     };
@@ -991,18 +996,17 @@ export class Online {
     const alpha = this.#clock.alpha;
     let localDrawn: Vec3 | null = null;
     for (const [id, { view, state, error }] of this.#cars) {
-      error.decay(frameSeconds);
       const { boosting, supersonic } = state.current;
       // (demolished as the server says: RV-84)
       const demoed = this.#drawnDemoed(id, state.current);
-      const pos = error.applyPosition(state.position(alpha, this.#pos));
+      const pos = error.applyPosition(state.position(alpha, this.#pos), alpha);
       if (id === this.#localCar && !demoed) localDrawn = fromThreeVector(pos);
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       // (a Blender model's wheels: the vehicle's suspension and steering, as this page's world has them)
       if (view.posesWheels) view.wheels = demoed ? null : { ...this.#world.carWheels(id), contact: state.current.wheelContact };
       view.update(
         pos,
-        error.applyRotation(state.rotation(alpha, this.#rot)),
+        error.applyRotation(state.rotation(alpha, this.#rot), alpha),
         boosting,
         demoed,
         supersonic,
@@ -1011,8 +1015,7 @@ export class Online {
         throttling,
       );
     }
-    this.#ballError.decay(frameSeconds);
-    const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos));
+    const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos), alpha);
     // (a goal explodes it, as the server says, until the reset: it dissolves; a kickoff's new ball is solid at once. Not
     // the prediction's explosion: a mispredicted goal would dissolve it for a round trip, RV-32)
     if (this.#world.ballSpawnCount() !== this.#drawnBallSpawns) {
@@ -1032,7 +1035,7 @@ export class Online {
     this.#ballArrow.update(arrow ? localDrawn : null, fromThreeVector(ball), frameSeconds, this.#serverExploded);
     this.#cars.get(this.#localCar)?.view.attach(this.#flipFx.root);
     this.#flipFx.update(frameSeconds);
-    this.#ballView.update(ball, this.#ballError.applyRotation(this.#ball.rotation(alpha, this.#rot)));
+    this.#ballView.update(ball, this.#ballError.applyRotation(this.#ball.rotation(alpha, this.#rot), alpha));
     this.#arena.update(ball, frameSeconds);
     this.#effects.update(frameSeconds);
     const pads = this.#world.boostPads();
@@ -1053,7 +1056,7 @@ export class Online {
     if (local) {
       // The camera follows the drawn (smoothed) car and ball, its rotation too: stepped on the ticks, drawn between its
       // last two views (camera/tickedCamera.ts)
-      const at = this.#cameraInput(local, local.state.blended(alpha), this.#ball.blended(alpha).pos);
+      const at = this.#cameraInput(local, local.state.blended(alpha), this.#ball.blended(alpha).pos, alpha);
       const carView = this.#view.view(alpha, at.car, at.ball, at.controls, at.respawn);
       if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
       view = this.#matchView(carView);
@@ -1118,7 +1121,7 @@ export class Online {
           ? [...this.#cars].flatMap(([id, entry]) =>
               id === this.#localCar || this.#drawnDemoed(id, entry.state.current)
                 ? []
-                : [[id, { pos: add(entry.state.blended(alpha).pos, entry.error.location), team: entry.state.current.team }] as const],
+                : [[id, { pos: add(entry.state.blended(alpha).pos, entry.error.locationAt(alpha)), team: entry.state.current.team }] as const],
             )
           : [],
       );

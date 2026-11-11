@@ -397,6 +397,11 @@ body.touch-play .stat-graphs {
 }
 
 /* Settings menu */
+/* (covered by the touch controls' layout editor: still the open menu, out of sight, RV-1249) */
+#settings.settings-covered {
+  visibility: hidden;
+}
+
 .settings {
   position: fixed;
   z-index: 6; /* (over the pause and main menus it opens from) */

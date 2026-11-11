@@ -36,8 +36,10 @@ everyone else): the user's request of 2026-11-10. Landscape only. This note is t
   elsewhere).
 - **Frame rate:** a touch device draws 60 frames a second at most by default (Settings → Touch → Frame Rate: 60, 30,
   Uncapped): a 120 Hz phone (the user's OnePlus 10 Pro, 2026-11-10: choppy, delayed, hot) drew twice that for nothing
-  but heat. The loop skips animation frames until one is due (`frameDue`: a quarter interval early counts, so a 120 Hz
-  screen's every other frame is 60); physics keeps its 120 ticks a second. The automatic default's frame-rate guard
+  but heat. The loop skips animation frames until one is due (`FramePacer`, phase-locked to the screen: a frame counts
+  as due up to a quarter of the cap's interval early, but under half the screen's measured refresh, so jitter never
+  decides it; its cadence pulled a tenth of the way to the frames it lands on, so a screen a little off its rate
+  (119.88 Hz) never drifts into an uneven frame: RV-1245); physics keeps its 120 ticks a second. The automatic default's frame-rate guard
   takes frames at the cap as not slow, and on a touch device watches all session long (each window that wasn't slow
   followed by another), so a phone that slows as it heats steps down then, once. Settings → Interface → Stat Graphs
   shows the frame rate and times in touch play (on the left under the top row, clear of the boost ring and the buttons;
@@ -84,12 +86,16 @@ button). The screen's wake lock asks once at a time, a lock that comes unwanted 
   Bigger, Fainter, Stronger, hidden or shown; the fixed stick dragged too; Reset All; Done. Kept in its own record
   (`carball.touchLayout`, `{version, buttons, stick}`): read from any version, its values checked, a later page's buttons
   kept, so an update never wipes it; a later page's fields of a button kept too, an older tab's save not stripping them
-  (RV-1236). Reset Button Layout puts every button back. The editor is its own screen (opaque; the settings hidden under
-  it and back on Done: RV-1234); a piece dragged stays whole inside the safe area (RV-1235), the fixed stick in the left
-  half, where a thumb takes it (RV-1233, on reading too).
+  (RV-1236), its other fields, its stick's and its later version too (RV-1250). Reset Button Layout puts every button
+  back. The editor is its own screen (opaque; the settings covered under it, still the open menu, and back on Done:
+  RV-1234, RV-1249; Escape or a pad's Start is Done); a piece stays whole inside the safe area at its size (RV-1235, on
+  drag and whenever laid out: a Bigger after it, another screen, RV-1253), the fixed stick in the left half, where a
+  thumb takes it, at its size now (RV-1233).
 - **Auto drive in training:** a shot starts on any throttle, so Auto drive holds back while a shot waits in its
   Countdown until the stick or a driving button (Jump, Boost, Brake) is touched; Prev, Reset and Next put it back to
-  waiting at once (their command moves the shot later in that frame, after its input is read: RV-1232).
+  waiting at once (their command moves the shot later in that frame, after its input is read: RV-1232). The wait is
+  read as the input is, so a shot that comes to its Countdown inside the game's frame (training's Skip Goal Replay)
+  waits too (RV-1246).
 - **Buttons (actions, not pad buttons):** Jump (also the replay skip, as the pad's A), Boost, Slide (powerslide and air
   roll at once, as the default keyboard's right mouse button and the Legacy pad's X do; the default pad's X is powerslide
   alone, its air roll on LT: RV-1218; it reads "Air Roll" while the car is in the air, the user's phone, 2026-11-10),
@@ -139,6 +145,8 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
 4. RX81's findings, the user's first phone feedback (full screen back after an edge swipe, the Air Roll label, the
    frame rate cap and the guard following heat, the turning jitter: the camera on the ticks, notes/camera.md), SMOKE1's
    RV-1238 (no sound scheduled on a stopped context) and RV-1239 (the end screen's targets) (2026-11-10).
+5. RX82's findings: the frame pacer phase-locked, the Skip Goal Replay wait, the online offsets per tick, the editor's
+   cover, the layout record kept whole, the clamps (2026-11-10).
 
 ## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
 

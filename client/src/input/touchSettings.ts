@@ -80,15 +80,39 @@ export function readTouch(v: unknown): TouchSettings {
   };
 }
 
-/** Whether a frame is due under the cap (`hz`; 0: every one), its time `now` (ms) and the last drawn's; and that one's
- *  time as kept: on the cap's cadence (a frame up to a quarter of the interval early counts, so a 120 Hz screen's every
- *  other frame is 60), or now once it's fallen a whole interval behind */
-export function frameDue(now: number, lastDrawn: number, hz: number): { readonly due: boolean; readonly drawn: number } {
-  if (hz <= 0) return { due: true, drawn: now };
-  const interval = 1000 / hz;
-  const next = lastDrawn + interval;
-  if (now < next - interval / 4) return { due: false, drawn: lastDrawn };
-  return { due: true, drawn: now - next >= interval ? now : next };
+/** A touch device's frame cap, phase-locked to the screen (RV-1245): told every animation frame's time, it says which to
+ *  draw at `hz` (0: every one). A frame counts as due a little early, by a quarter of the cap's interval but under half
+ *  the screen's refresh as measured (the median of the recent frames), so the browser's jitter never decides it (a 120 Hz
+ *  screen at 30: every fourth frame, not 3s and 5s); the cadence is pulled a tenth of the way to the frames it lands on,
+ *  so it never drifts against a screen a little off its nominal rate (119.88 Hz at 60: every other frame, always); a
+ *  frame a whole interval late starts the cadence again from it */
+export class FramePacer {
+  #drawn: number | null = null;
+  #last: number | null = null;
+  readonly #intervals: number[] = [];
+
+  due(now: number, hz: number): boolean {
+    if (this.#last !== null) {
+      const d = now - this.#last;
+      if (d > 0 && d < 100) {
+        this.#intervals.push(d);
+        if (this.#intervals.length > 31) this.#intervals.shift();
+      }
+    }
+    this.#last = now;
+    if (hz <= 0 || this.#drawn === null) {
+      this.#drawn = now;
+      return true;
+    }
+    const interval = 1000 / hz;
+    const sorted = [...this.#intervals].sort((a, b) => a - b);
+    const refresh = sorted[Math.floor(sorted.length / 2)] ?? interval;
+    const early = Math.min(interval / 4, 0.45 * refresh);
+    const next = this.#drawn + interval;
+    if (now < next - early) return false;
+    this.#drawn = now - next >= interval ? now : next + 0.1 * clamp(now - next, -early, early);
+    return true;
+  }
 }
 
 /** The stick's tilt shaped by its own deadzone (radial: zero inside, rescaled past it) and sensitivity (full tilt sooner
@@ -113,7 +137,11 @@ export interface ButtonPlace {
 /** The layout: each button's place by its id (ones this page doesn't know kept as they were), the fixed stick's centre */
 export interface TouchLayout {
   readonly buttons: Readonly<Record<string, ButtonPlace>>;
-  readonly stick?: { readonly x: number; readonly y: number };
+  /** The fixed stick's centre (a later page's fields of it kept) */
+  readonly stick?: { readonly x: number; readonly y: number; readonly [later: string]: unknown };
+  /** A later page's fields of the record, kept as they were, its version among them when it's later than this page's
+   *  (an older tab's or a rollback's save strips nothing: RV-1236, RV-1250) */
+  readonly others?: Readonly<Record<string, unknown>>;
 }
 
 export const DEFAULT_PLACE: ButtonPlace = { scale: 1, opacity: 1, hidden: false };
@@ -142,8 +170,8 @@ function readPlace(v: unknown): ButtonPlace {
   return { ...others, ...(x !== undefined && y !== undefined ? { x, y } : {}), scale, opacity, hidden: src["hidden"] === true };
 }
 
-/** A stored layout read (any version: its buttons by id, each value checked; a later version's buttons and their fields
- *  kept, its other fields dropped), else the empty one (every button at its default) */
+/** A stored layout read (any version: its buttons by id, each value checked; a later version's fields kept, its version
+ *  too), else the empty one (every button at its default) */
 export function readLayout(v: unknown): TouchLayout {
   if (typeof v !== "object" || v === null) return EMPTY_LAYOUT;
   const src = v as Record<string, unknown>;
@@ -152,12 +180,23 @@ export function readLayout(v: unknown): TouchLayout {
   if (typeof stored === "object" && stored !== null && !Array.isArray(stored)) {
     for (const [id, place] of Object.entries(stored as Record<string, unknown>)) if (/^[a-zA-Z]{1,32}$/.test(id)) buttons[id] = readPlace(place);
   }
-  const stick = typeof src["stick"] === "object" && src["stick"] !== null ? (src["stick"] as Record<string, unknown>) : null;
+  const stick = typeof src["stick"] === "object" && src["stick"] !== null && !Array.isArray(src["stick"]) ? (src["stick"] as Record<string, unknown>) : null;
+  const later = (from: Record<string, unknown>, own: readonly string[]): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(from).filter(([k]) => !own.includes(k)));
+  const version = src["version"];
+  const others = {
+    ...later(src, ["buttons", "stick", "version"]),
+    ...(typeof version === "number" && Number.isInteger(version) && version > LAYOUT_VERSION ? { version } : {}),
+  };
   // (the fixed stick in the left half, where a thumb takes it: RV-1233)
   const sx = fraction(stick?.["x"]);
   const sy = fraction(stick?.["y"]);
   const stickX = sx === undefined ? undefined : Math.min(STICK_X_MAX, sx);
-  return { buttons, ...(stickX !== undefined && sy !== undefined ? { stick: { x: stickX, y: sy } } : {}) };
+  return {
+    buttons,
+    ...(stickX !== undefined && sy !== undefined && stick ? { stick: { ...later(stick, ["x", "y"]), x: stickX, y: sy } } : {}),
+    ...(Object.keys(others).length > 0 ? { others } : {}),
+  };
 }
 
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -182,8 +221,11 @@ export function loadLayout(storage: Store | null = local()): TouchLayout {
 /** Kept with its format's version (an empty layout: the record removed, every button at its default) */
 export function saveLayout(layout: TouchLayout, storage: Store | null = local()): void {
   try {
-    if (Object.keys(layout.buttons).length === 0 && !layout.stick) storage?.removeItem(LAYOUT_KEY);
-    else storage?.setItem(LAYOUT_KEY, JSON.stringify({ version: LAYOUT_VERSION, ...layout }));
+    if (Object.keys(layout.buttons).length === 0 && !layout.stick && !layout.others) storage?.removeItem(LAYOUT_KEY);
+    else {
+      const { others, ...own } = layout;
+      storage?.setItem(LAYOUT_KEY, JSON.stringify({ version: LAYOUT_VERSION, ...others, ...own }));
+    }
   } catch {
     // (storage full or blocked: the layout kept for this page alone)
   }

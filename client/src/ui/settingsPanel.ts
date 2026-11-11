@@ -305,13 +305,16 @@ export class SettingsPanel {
     this.#render();
   }
 
-  /** Out of sight while the touch controls' layout editor is over it (not closed: its tab kept); the returned function
-   *  shows it again as it was (RV-1234) */
+  /** Out of sight while the touch controls' layout editor is over it (RV-1234): covered, not closed, so it's still the
+   *  open menu (Escape, a pad, the game's input read it so: RV-1249), its tab kept, and nothing in it reached; the
+   *  returned function uncovers it (closed meanwhile, it stays closed) */
   hideFor(): () => void {
-    const shown = !this.#root.hidden;
-    this.#root.hidden = true;
+    const root = this.#root;
+    root.classList.add("settings-covered");
+    root.inert = true;
     return () => {
-      if (shown) this.#root.hidden = false;
+      root.classList.remove("settings-covered");
+      root.inert = false;
     };
   }
 

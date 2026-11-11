@@ -85,6 +85,8 @@ const THROTTLE_BUTTONS: Readonly<Record<TouchSettings["throttle"], readonly Touc
 
 /** The fixed stick's spot by default (fractions of the screen) */
 const FIXED_STICK = { x: 0.2, y: 0.68 } as const;
+/** The stick's base half its size (px, style.css's .touch-stick-base at Stick Size 1) */
+const STICK_BASE_HALF = 76;
 
 /** The match the controls are for: its own buttons (free play's reset; training's retry, previous and next; online's
  *  scoreboard) */
@@ -221,7 +223,10 @@ export class TouchControls {
    *  Auto drive drives only then (a shot starts on any throttle, so it would start every shot by itself: RV-1232). A
    *  tap on Prev, Reset or Next holds it back at once, for the next two frames (`#commandHold`): its command puts the
    *  shot in its Countdown later in that frame, after the frame's input is read, and the Countdown's wait takes over the
-   *  next; a command that brings none (the reset's question) lets it drive again */
+   *  next; a command that brings none (the reset's question) lets it drive again. The wait is read as the input is
+   *  (`waiting`, the page's): a shot can come to its Countdown inside the game's frame before it (training's Skip Goal
+   *  Replay: RV-1246) */
+  waiting: () => boolean = () => false;
   #waiting = false;
   #armed = true;
   #commandHold = 0;
@@ -378,7 +383,7 @@ export class TouchControls {
 
   /** Each frame: whether the game is in play (no menu over it) and its mode; shown on a touch device in play, no pad, mouse
    *  or keyboard in use. Hidden, nothing is held. (Not while the layout editor is open: it's shown over everything) */
-  update(inPlay: boolean, mode: TouchMode, { waiting = false, airborne = false }: { readonly waiting?: boolean; readonly airborne?: boolean } = {}): void {
+  update(inPlay: boolean, mode: TouchMode, { airborne = false }: { readonly airborne?: boolean } = {}): void {
     if (this.#editing) return;
     // (Slide is air roll too: it says so in the air, the user's phone, 2026-11-10)
     if (airborne !== this.#airborne) {
@@ -386,9 +391,6 @@ export class TouchControls {
       const slide = this.#buttons.get("slide");
       if (slide) slide.textContent = airborne ? TOUCH_TEXT.airRoll : TOUCH_TEXT.slide;
     }
-    if (waiting && !this.#waiting) this.#armed = false;
-    this.#waiting = waiting;
-    this.#commandHold = waiting ? 0 : Math.max(0, this.#commandHold - 1);
     // (the screen kept on in play on a touch device, a pad in its hands or not)
     this.#wake.wanted = inPlay && this.#touched;
     const shown = inPlay && this.#touched && !this.#padUsed;
@@ -402,6 +404,8 @@ export class TouchControls {
     if (shown === this.#shown) return;
     this.#shown = shown;
     this.root.hidden = !shown;
+    // (the buttons' places kept inside the safe area at their sizes, measured now they're laid out)
+    if (shown) this.#applyLayout();
     document.body.classList.toggle("touch-play", shown);
     if (!shown) this.#release();
   }
@@ -422,7 +426,11 @@ export class TouchControls {
     if (!this.#shown || this.#editing) return null;
     const held = new Set<Action>();
     for (const [b, pointers] of this.#holding) if (pointers.size > 0) for (const a of TOUCH_ACTIONS[b]) held.add(a);
-    const holding = this.#waiting || this.#commandHold > 0;
+    const waiting = this.waiting();
+    if (waiting && !this.#waiting) this.#armed = false;
+    this.#waiting = waiting;
+    const holding = waiting || this.#commandHold > 0;
+    this.#commandHold = waiting ? 0 : Math.max(0, this.#commandHold - 1);
     const autoDrives = this.#settings.throttle === "auto" && !held.has("throttleReverse") && (!holding || this.#armed);
     if (autoDrives) held.add("throttleForward");
     const pressed = new Set(this.#pressed);
@@ -447,6 +455,11 @@ export class TouchControls {
 
   get editing(): boolean {
     return this.#editing !== null;
+  }
+
+  /** The editor's Done from elsewhere (Escape, a pad's Start or B: RV-1249) */
+  finishEditing(): void {
+    this.#finishEditing();
   }
 
   /** Every button and the fixed stick back to their default places (the settings' Reset Button Layout) */
@@ -522,7 +535,7 @@ export class TouchControls {
       const x = clamp(e.clientX, inset.left + halfW, right) / w;
       const y = clamp(e.clientY, inset.top + halfH, h - inset.bottom - halfH) / h;
       if (id === "stick") {
-        this.#layout = { ...this.#layout, stick: { x, y } };
+        this.#layout = { ...this.#layout, stick: { ...this.#layout.stick, x, y } };
         this.#restStick();
       } else this.#setPlace(id, { ...this.#place(id), x, y });
     });
@@ -567,15 +580,21 @@ export class TouchControls {
     if (this.#editing?.selected === b) this.#select(b);
   }
 
-  /** Each button at its place: moved (its centre at its fractions of the screen), sized, faded, hidden (shown faded in the
-   *  editor); the fixed stick at its spot */
+  /** Each button at its place: moved (its centre at its fractions of the screen, kept whole inside the safe area at its
+   *  size, whatever the screen or a size changed since: RV-1253), sized, faded, hidden (shown faded in the editor); the
+   *  fixed stick at its spot */
   #applyLayout(): void {
+    const within = (fraction: number, half: number, from: "left" | "top", to: "right" | "bottom"): string =>
+      `clamp(calc(env(safe-area-inset-${from}, 0px) + ${String(half)}px), ${String(fraction * 100)}%, ` +
+      `calc(100% - env(safe-area-inset-${to}, 0px) - ${String(half)}px))`;
     for (const [b, button] of this.#buttons) {
       const place = this.#place(b);
       const moved = place.x !== undefined && place.y !== undefined;
+      // (its size unscaled, as laid out: 0 while the controls are hidden, so placed again as they're shown)
+      const [halfW, halfH] = [(button.offsetWidth * place.scale) / 2, (button.offsetHeight * place.scale) / 2];
       button.style.position = moved ? "fixed" : "";
-      button.style.left = moved ? `${String((place.x ?? 0) * 100)}%` : "";
-      button.style.top = moved ? `${String((place.y ?? 0) * 100)}%` : "";
+      button.style.left = moved ? within(place.x ?? 0, halfW, "left", "right") : "";
+      button.style.top = moved ? within(place.y ?? 0, halfH, "top", "bottom") : "";
       button.style.right = moved ? "auto" : "";
       button.style.bottom = moved ? "auto" : "";
       button.style.translate = moved ? "-50% -50%" : "";
@@ -595,7 +614,12 @@ export class TouchControls {
   /** The fixed stick's centre (px): its spot in the layout, else its default */
   #fixedCentre(): { x: number; y: number } {
     const spot = this.#layout.stick ?? FIXED_STICK;
-    return { x: spot.x * window.innerWidth, y: spot.y * window.innerHeight };
+    // (kept whole in the left half and the safe area at its size now, a bigger Stick Size since too: RV-1253)
+    const [w, h] = [window.innerWidth, window.innerHeight];
+    const inset = safeInsets();
+    const half = this.#stickBase.offsetWidth / 2 || STICK_BASE_HALF * this.#settings.stickSize;
+    const within = (v: number, lo: number, hi: number): number => Math.min(Math.max(lo, hi), Math.max(lo, v));
+    return { x: within(spot.x * w, inset.left + half, w / 2 - half), y: within(spot.y * h, inset.top + half, h - inset.bottom - half) };
   }
 
   /** The stick at rest: the fixed one shown at its spot, its knob centred (in the editor too); the floating one hidden */

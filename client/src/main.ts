@@ -47,7 +47,7 @@ import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, cancelThumbButtons, readGamepad } from "./input/devices";
 import { TouchControls, type TouchMode, installTouchPage, touchDevice } from "./input/touch";
-import { frameDue } from "./input/touchSettings";
+import { FramePacer } from "./input/touchSettings";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
@@ -356,6 +356,7 @@ async function main(): Promise<void> {
   const touch = new TouchControls(document.body, () => {
     touchPause();
   });
+  touch.waiting = () => touchWaiting();
   input.touch = touch;
   touch.configure(settings.touch);
   // (in play, the bound keys' browser actions never taken: RV-1092)
@@ -486,7 +487,9 @@ async function main(): Promise<void> {
   // Escape: the modal's OK; back out of the settings or the main menu's page; a pause menu's question answered NO
   // (RV-478); else the pause menu opens or closes
   const escape = (): void => {
-    if (modal.isOpen) modal.close();
+    // (the touch controls' layout editor over everything: Escape is its Done, RV-1249)
+    if (touch.editing) touch.finishEditing();
+    else if (modal.isOpen) modal.close();
     else if (panel.isOpen) panel.escape();
     else if (editorEscape()) return;
     else if (shotSelectEscape()) return;
@@ -511,20 +514,23 @@ async function main(): Promise<void> {
   // (?pad: what the browser reports for each pad, over everything)
   const padReadout = new URLSearchParams(location.search).has("pad") ? new PadReadout(document.body) : null;
   const padNav = new PadMenuNav({
+    // (none under the touch controls' layout editor: its Start is Done, RV-1249)
     menu: () =>
-      modal.isOpen
-        ? visibleMenu("#modal")
-        : panel.isOpen
-          ? panel.confirming
-            ? visibleMenu("#settings-confirm")
-            : visibleMenu("#settings")
-          : mainMenu?.isOpen
-            ? visibleMenu("#main-menu")
-            : pause.isOpen
-              ? visibleMenu("#pause-menu")
-              : shotSelectOpen()
-                ? visibleMenu("#shot-select")
-                : (editorPadMenu() ?? (document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"))),
+      touch.editing
+        ? null
+        : modal.isOpen
+          ? visibleMenu("#modal")
+          : panel.isOpen
+            ? panel.confirming
+              ? visibleMenu("#settings-confirm")
+              : visibleMenu("#settings")
+            : mainMenu?.isOpen
+              ? visibleMenu("#main-menu")
+              : pause.isOpen
+                ? visibleMenu("#pause-menu")
+                : shotSelectOpen()
+                  ? visibleMenu("#shot-select")
+                  : (editorPadMenu() ?? (document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"))),
     // (B backs out of an open menu, a level at a time: never opens the pause menu; at the main menu's top, nothing)
     back: () => {
       if (modal.isOpen) modal.close();
@@ -541,6 +547,10 @@ async function main(): Promise<void> {
     // (Start toggles the pause menu only, closing the settings over it with it: it never backs out of a page; on the main
     // menu or under a modal, nothing: RV-475)
     start: () => {
+      if (touch.editing) {
+        touch.finishEditing();
+        return;
+      }
       if (modal.isOpen || (mainMenu?.isOpen ?? false)) return;
       // (its cue: the menu's select opening it, back closing it, RV-481)
       if (!pause.isOpen) {
@@ -1547,7 +1557,7 @@ async function main(): Promise<void> {
   let last = performance.now();
   // (a touch device draws at its Frame Rate at most: Settings → Touch, 60 by default; a desktop every frame)
   const capped = touchDevice();
-  let drawn = last;
+  const pacer = new FramePacer();
   // (the stat graphs' context: the display's refresh as measured, ours having no cap; our downstream's budget, the
   // updates needing up to about 140 KB/s, not the game's 15000 B/s; the speeds' units)
   const statContext = (): StatContext => ({
@@ -1598,20 +1608,16 @@ async function main(): Promise<void> {
       statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale, key);
   };
   const frame = (now: number): void => {
-    if (capped) {
-      const at = frameDue(now, drawn, settings.touch.frameRate);
-      drawn = at.drawn;
-      if (!at.due) {
-        requestAnimationFrame(frame);
-        return;
-      }
+    if (capped && !pacer.due(now, settings.touch.frameRate)) {
+      requestAnimationFrame(frame);
+      return;
     }
     // (raw: the games take their clamped real and world times from it, LT-3)
     const dt = (now - last) / 1000;
     last = now;
     padNav.frame(readGamepad(), now / 1000);
     padReadout?.update();
-    touch.update(!menusOpen() && !editorPage() && !endMenuShown(), touchMode(), { waiting: touchWaiting(), airborne: game.airborne() });
+    touch.update(!menusOpen() && !editorPage() && !endMenuShown(), touchMode(), { airborne: game.airborne() });
     const started = performance.now();
     game.frame(dt);
     statFrame(now / 1000, dt, performance.now() - started);

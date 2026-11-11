@@ -79,6 +79,31 @@ describe("SyncError", () => {
     }
   });
 
+  it("decays once a tick, drawn between the last tick's offset and this one at the frame's alpha; a correction moves both, so every alpha's drawn pose stays (RV-1247)", () => {
+    const e = new SyncError();
+    e.accumulate({ pos: vec3(100, 0, 0) }, { pos: vec3(0, 0, 0) });
+    e.tick(1 / 120);
+    const next = 100 * (1 - 4 / 120);
+    expect(e.locationAt(0).x).toBeCloseTo(100, 9);
+    expect(e.locationAt(1).x).toBeCloseTo(next, 9);
+    expect(e.locationAt(0.5).x).toBeCloseTo((100 + next) / 2, 9);
+    const alphas = [0, 0.3, 1];
+    const before = alphas.map((a) => e.locationAt(a).x);
+    e.accumulate({ pos: vec3(20, 0, 0) }, { pos: vec3(0, 0, 0) });
+    alphas.forEach((a, i) => {
+      expect(e.locationAt(a).x).toBeCloseTo((before[i] ?? 0) + 20, 9);
+    });
+    // (the rotation alike: halfway, half the turn between the two ticks' offsets)
+    const r = new SyncError();
+    r.accumulate({ pos: vec3(0, 0, 0), rot: turn(new Vector3(0, 0, 1), 0.2) }, { pos: vec3(0, 0, 0), rot: IDENTITY_ROT });
+    r.tick(1 / 120);
+    const angle = (q: Quaternion): number => 2 * Math.acos(Math.min(1, Math.abs(q.w)));
+    expect(angle(r.rotationAt(0, new Quaternion()))).toBeCloseTo(0.2, 6);
+    expect(angle(r.rotationAt(0.5, new Quaternion()))).toBeCloseTo((0.2 + angle(r.rotationAt(1, new Quaternion()))) / 2, 4);
+    r.clear();
+    expect(r.locationAt(0)).toEqual(vec3(0, 0, 0));
+  });
+
   it("ignores a negative frame time", () => {
     const e = new SyncError();
     e.accumulate({ pos: vec3(10, 0, 0) }, { pos: vec3(0, 0, 0) });

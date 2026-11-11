@@ -5,8 +5,11 @@
 // The game: after a resimulation SyncErrorLocation += pre - post (the rotation folded in as axis-angle, FUN_140eabb70);
 // each frame the error decays by min(dt x rate, 1) of itself (RBActor_TA.NetworkSyncSettings: LocationFixRate 4,
 // AngularFixRate 5), snapping to 0 below 0.1 uu^2 and 0.001 rad. Teleports aren't smoothed.
+// Ours decays once a tick (as the camera steps: camera/tickedCamera.ts), and is drawn between the last tick's offset and
+// this one's at the frame's alpha, as the body's poses are, so the camera, stepped with each tick's offset, and the drawn
+// body agree whatever the frames (RV-1247).
 import { Quaternion, type Vector3 } from "three";
-import { type Rot3, type Vec3, ZERO, add, dot, scale, sub } from "../math/vec";
+import { type Rot3, type Vec3, ZERO, add, dot, scale, sub, vec3 } from "../math/vec";
 import { toThreeQuaternion } from "../render/coords";
 
 export const LOCATION_FIX_RATE = 4;
@@ -23,16 +26,44 @@ export class SyncError {
   location: Vec3 = ZERO;
   /** Three's frame: applied on top of the drawn rotation */
   readonly rotation = new Quaternion();
+  /** The last tick's (the body drawn between it and this one) */
+  #previousLocation: Vec3 = ZERO;
+  readonly #previousRotation = new Quaternion();
+  readonly #at = new Quaternion();
 
-  /** A correction moved the body from `pre` to `post` (its present state, before and after). */
+  /** A correction moved the body from `pre` to `post` (its present state, before and after); the last tick's offset moves
+   *  with it, as the body's previous pose does (the session's #smooth), so the drawn pose stays where it was at any
+   *  alpha */
   accumulate(pre: { readonly pos: Vec3; readonly rot?: Rot3 }, post: { readonly pos: Vec3; readonly rot?: Rot3 }): void {
-    this.location = add(this.location, sub(pre.pos, post.pos));
+    const moved = sub(pre.pos, post.pos);
+    this.location = add(this.location, moved);
+    this.#previousLocation = add(this.#previousLocation, moved);
     if (pre.rot && post.rot) {
       // error' = error x (pre x post^-1): drawn = error' x post = error x pre, what was drawn before the correction
       // (the game's FUN_140eabb70: E' = E (x) d)
       const delta = toThreeQuaternion(pre.rot, tmpPre).multiply(toThreeQuaternion(post.rot, tmpPost).invert());
       this.rotation.multiply(delta).normalize();
+      this.#previousRotation.multiply(delta).normalize();
     }
+  }
+
+  /** One tick of `seconds`: this offset kept as the last tick's, then decayed */
+  tick(seconds: number): void {
+    this.#previousLocation = this.location;
+    this.#previousRotation.copy(this.rotation);
+    this.decay(seconds);
+  }
+
+  /** The offset (uu) at `alpha` between the last tick's (0) and this one (1) */
+  locationAt(alpha: number): Vec3 {
+    const a = this.#previousLocation;
+    const b = this.location;
+    return vec3(a.x + (b.x - a.x) * alpha, a.y + (b.y - a.y) * alpha, a.z + (b.z - a.z) * alpha);
+  }
+
+  /** The rotation offset at `alpha` (into `out`: by default one this error reuses) */
+  rotationAt(alpha: number, out: Quaternion = this.#at): Quaternion {
+    return out.slerpQuaternions(this.#previousRotation, this.rotation, alpha);
   }
 
   /** One rendered frame of `seconds`. */
@@ -52,15 +83,18 @@ export class SyncError {
   clear(): void {
     this.location = ZERO;
     this.rotation.identity();
+    this.#previousLocation = ZERO;
+    this.#previousRotation.identity();
   }
 
-  /** The drawn rotation: the error on top of `rot` (Three's frame, in place). */
-  applyRotation(rot: Quaternion): Quaternion {
-    return rot.premultiply(this.rotation);
+  /** The drawn rotation: the error at `alpha` on top of `rot` (Three's frame, in place). */
+  applyRotation(rot: Quaternion, alpha = 1): Quaternion {
+    return rot.premultiply(this.rotationAt(alpha));
   }
 
-  /** The drawn position: `pos` (Three's frame, in place) plus the error. */
-  applyPosition(pos: Vector3): Vector3 {
-    return pos.set(pos.x + this.location.x, pos.y + this.location.z, pos.z + this.location.y);
+  /** The drawn position: `pos` (Three's frame, in place) plus the error at `alpha`. */
+  applyPosition(pos: Vector3, alpha = 1): Vector3 {
+    const l = this.locationAt(alpha);
+    return pos.set(pos.x + l.x, pos.y + l.z, pos.z + l.y);
   }
 }

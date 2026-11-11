@@ -71,8 +71,18 @@ car) drawn at once. The formulas are the game's, run at a steady 120 Hz. Stepped
 behind a turning car changes with each frame's length (about the turn rate times the frame), so uneven frames (a
 phone's dropped ones, Firefox's timer, a hitch) wobbled the car on screen in a steady turn: up to 0.76° at 60 Hz with 15 %
 of frames dropped, a 1.1° jump on one 66 ms hitch; on ticks, none (the user's report, phone and Firefox). The mouse's
-free look (its counts, not a rate) is a frame's counts shared over its ticks. Its lag in a full-lock turn is the game's
-at 120 fps (3.7°; 3.2° at 60, 3.8° at 144).
+free look (its counts, not a rate) is a frame's counts shared over its ticks, kept only while the camera steps (none
+piled up through a goal replay: RV-1248).
+
+**120 Hz is the camera's reference rate, by choice** (RX82's RV-1251, option (a), 2026-11-10; the exact per-rate match,
+(b), only if the user asks for it later: the camera stepped at the display's measured refresh, the car's pose
+interpolated from the ticks at each step, also free of the wobble). Its lag in a full-lock turn (1410 uu/s, 653 uu) is
+the game's at 120 fps, 3.68°, whatever the display: the game's is 2.45° at 30 (ours +1.23°), 3.23° at 60 (+0.45°),
+3.76° at 144 (−0.08°), 3.92° at 240 (−0.24°). The air camera's fixed 1/60 lerp, run once a tick, settles a 90° turn in
+1650 ms (the game's 1683 at 60, 1617 at 240). Bought with it: no wobble from uneven frames (0.76° at 60 Hz with 15 % of
+frames dropped, a 1.1° jump on a 66 ms hitch, Firefox's 16/17 ms frames' 0.02° shimmer; all 0 now). Online the
+corrections' offsets (SyncError, notes/netcode-audit.md N-1) decay once a tick too and are drawn between the last two,
+so the camera and the drawn car take the same offset (RV-1247).
 
 **Camera_X.UpdateCamera**: the active state updates a persistent orientation `POV {Focus, Rotation, Distance,
 FOV, CalculatedLocation}`. Then `FinalizeOrientation`: normalize the rotation, set

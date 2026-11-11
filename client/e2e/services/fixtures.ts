@@ -25,7 +25,17 @@ export const test = base.extend({
  *  origin as the page's writes go: an account as a sign-up makes one, `label` and a few random letters its name, spaces as underscores: the name rules'), or to
  *  `subject`'s account if it has one already (a returning sign-in); its id and the name asked */
 export async function signIn(context: BrowserContext, label: string, subject = `e2e-${randomUUID()}`): Promise<{ account: string; name: string }> {
-  const name = `${label.replaceAll(" ", "_")}_${randomBytes(3).toString("hex")}`;
+  // (a name the word filter refuses, its random letters spelling something, 400: another tried, a few times at most)
+  for (let attempt = 1; ; attempt++) {
+    const signed = await trySignIn(context, `${label.replaceAll(" ", "_")}_${randomBytes(3).toString("hex")}`, subject);
+    if (signed.status !== 400 || attempt === 5) {
+      if (signed.status !== 200 || typeof signed.account !== "string") throw new Error(`the e2e sign-in: HTTP ${String(signed.status)}`);
+      return { account: signed.account, name: signed.name };
+    }
+  }
+}
+
+async function trySignIn(context: BrowserContext, name: string, subject: string): Promise<{ status: number; account: unknown; name: string }> {
   const page = await context.newPage();
   await page.goto("/healthz");
   const answer = await page.evaluate(
@@ -42,6 +52,5 @@ export async function signIn(context: BrowserContext, label: string, subject = `
     { subject, name },
   );
   await page.close();
-  if (answer.status !== 200 || typeof answer.account !== "string") throw new Error(`the e2e sign-in: HTTP ${String(answer.status)}`);
-  return { account: answer.account, name };
+  return { ...answer, name };
 }

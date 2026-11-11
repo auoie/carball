@@ -401,6 +401,12 @@ test.describe("the Touch settings on a phone", () => {
     await expect(touch).not.toHaveClass(/touch-editing/);
     // (the settings back as they were: their Touch tab)
     await expect(page.getByRole("button", { name: "Edit Button Layout" })).toBeVisible();
+    // (Escape while editing is Done: the settings still the open menu under it, not closed by it, RV-1249)
+    await page.getByRole("button", { name: "Edit Button Layout" }).tap();
+    await expect(touch).toHaveClass(/touch-editing/);
+    await page.keyboard.press("Escape");
+    await expect(touch).not.toHaveClass(/touch-editing/);
+    await expect(page.getByRole("button", { name: "Edit Button Layout" })).toBeVisible();
     // (a reload: the layout as left)
     await freePlayByTouch(page);
     const moved = await centre(page, ".touch-jump");
@@ -432,6 +438,44 @@ test.describe("the Touch settings on a phone", () => {
     const base = await page.locator(".touch-stick-base").boundingBox();
     if (!base) throw new Error("the stick isn't shown");
     expect(base.x + base.width).toBeLessThanOrEqual(844 / 2 + 1);
+  });
+
+  test("Auto drive in training with Skip Goal Replay: a shot run out, the next one waits in its Countdown too (RV-1246)", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("carball.settings.v1", JSON.stringify({ touch: { throttle: "auto" }, training: { skipReplay: true } }));
+    });
+    await menuPage(page);
+    // (a made-up pack: a 2 s shot with the ball out of reach, then a second)
+    const shotAt = (timeLimit: number, ball: number[], start: number[]): unknown => ({
+      timeLimit,
+      ball: { location: ball, launch: { pitch: 0, yaw: 16384 }, speed: 0 },
+      car: { location: start, rotation: { pitch: 0, yaw: 16384, roll: 0 }, startSpeed: 0 },
+    });
+    const pack = {
+      format: 1,
+      id: "e2e-touch-pack",
+      name: "E2E Touch Pack",
+      type: "striker",
+      difficulty: "easy",
+      shots: [shotAt(2, [1500, 0, 900], [0, -2000, 17]), shotAt(20, [0, 2000, 93], [0, -2000, 17])],
+    };
+    await page.evaluate((p) => {
+      (window as unknown as { carballFreeplay: { startTraining: (p: unknown) => void } }).carballFreeplay.startTraining(p);
+    }, pack);
+    const shot = (): Promise<string | undefined> =>
+      page.evaluate(() => {
+        const t = (window as unknown as { carballFreeplay: { training: () => { state: string; shot: number } | null } }).carballFreeplay.training();
+        return t ? `${t.state} ${String(t.shot)}` : undefined;
+      });
+    await expect.poll(shot).toBe("countdown 0");
+    const cdp = await page.context().newCDPSession(page);
+    await fingers(cdp, "touchStart", [{ id: 1, x: 200, y: 250 }]);
+    await fingers(cdp, "touchEnd", []);
+    await expect.poll(shot).toBe("active 0");
+    // (run out, its slow motion, no replay: the next shot, which waits)
+    await expect.poll(shot, { timeout: 15_000 }).toBe("countdown 1");
+    await page.waitForTimeout(1500);
+    expect(await shot()).toBe("countdown 1");
   });
 
   test("Auto drive in training: a shot waits in its Countdown till a touch; Next's shot waits again (RV-1232)", async ({ page }) => {

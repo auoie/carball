@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS, type Action } from "./bindings";
 import { withTouchStick } from "./devices";
 import { readControls } from "./mapping";
-import { EMPTY_LAYOUT, STICK_X_MAX, TOUCH_DEFAULTS, frameDue, loadLayout, readLayout, readTouch, saveLayout, shapeStick } from "./touchSettings";
+import { EMPTY_LAYOUT, FramePacer, STICK_X_MAX, TOUCH_DEFAULTS, loadLayout, readLayout, readTouch, saveLayout, shapeStick } from "./touchSettings";
 
 describe("the touch settings", () => {
   it("read within their ranges; anything else its default", () => {
@@ -23,25 +23,39 @@ describe("the touch settings", () => {
     expect(TOUCH_DEFAULTS.frameRate).toBe(60);
   });
 
-  it("the Frame Rate: a 120 Hz screen's every other frame at 60, every fourth at 30; a 60 Hz screen's each at 60; uncapped every one", () => {
-    const drawnAt = (screenHz: number, cap: number, seconds = 2): number => {
-      let drawn = 0;
-      let count = 0;
-      for (let i = 1; i <= screenHz * seconds; i++) {
-        // (the browser's frame times jitter a little)
-        const now = (i * 1000) / screenHz + (i % 3) * 0.3;
-        const at = frameDue(now, drawn, cap);
-        drawn = at.drawn;
-        if (at.due) count++;
-      }
-      return count / seconds;
+  it("the Frame Rate, phase-locked to the screen (RV-1245): a minute of frames, jittered, every gap the cap's", () => {
+    /** The gaps (in the screen's refreshes) between the frames drawn over a minute at `screenHz`, each frame's time
+     *  jittered by up to ±`jitter` ms (a seeded sequence), the first second left out (the refresh measured) */
+    const gaps = (screenHz: number, cap: number, jitter: number): Set<number> => {
+      const pacer = new FramePacer();
+      let seed = 7;
+      const noise = (): number => {
+        seed = (seed * 1664525 + 1013904223) % 4294967296;
+        return (seed / 4294967296 - 0.5) * 2 * jitter;
+      };
+      const drawn: number[] = [];
+      for (let i = 0; i < screenHz * 60; i++) if (pacer.due((i * 1000) / screenHz + noise(), cap) && i > screenHz) drawn.push(i);
+      return new Set(drawn.slice(1).map((v, k) => v - (drawn[k] ?? v)));
     };
-    expect(drawnAt(120, 60)).toBeCloseTo(60, -0.5);
-    expect(drawnAt(120, 30)).toBeCloseTo(30, -0.5);
-    expect(drawnAt(60, 60)).toBeCloseTo(60, -0.5);
-    expect(drawnAt(120, 0)).toBe(120);
-    // (a long stall: drawn at once, the cadence from then)
-    expect(frameDue(5000, 0, 60)).toEqual({ due: true, drawn: 5000 });
+    expect(gaps(120, 60, 0.3)).toEqual(new Set([2]));
+    expect(gaps(119.88, 60, 0.3)).toEqual(new Set([2]));
+    expect(gaps(120.12, 60, 0.3)).toEqual(new Set([2]));
+    expect(gaps(120, 30, 0.3)).toEqual(new Set([4]));
+    expect(gaps(240, 60, 0.3)).toEqual(new Set([4]));
+    expect(gaps(60, 60, 0.3)).toEqual(new Set([1]));
+    expect(gaps(60.06, 60, 0.3)).toEqual(new Set([1]));
+    expect(gaps(120, 0, 0.3)).toEqual(new Set([1]));
+    // (a 90 Hz screen at 60: two frames in three, a refresh or two apart)
+    expect(gaps(90, 60, 0.3)).toEqual(new Set([1, 2]));
+  });
+
+  it("the Frame Rate: a long stall draws at once, the cadence from there", () => {
+    const pacer = new FramePacer();
+    expect(pacer.due(0, 60)).toBe(true);
+    expect(pacer.due(8.3, 60)).toBe(false);
+    expect(pacer.due(5000, 60)).toBe(true);
+    expect(pacer.due(5008.3, 60)).toBe(false);
+    expect(pacer.due(5016.7, 60)).toBe(true);
   });
 
   it("shape the stick: nothing inside its deadzone, rescaled past it, full tilt sooner with more sensitivity; its direction kept", () => {
@@ -81,7 +95,10 @@ describe("the buttons' layout", () => {
         buttons: { jump: { x: 1.4, y: -1, scale: 5, opacity: 0, hidden: "no" }, hover: { scale: 1.1 }, "bad id!": {} },
         stick: { x: 0.5 },
       }),
-    ).toEqual({ buttons: { jump: { x: 1, y: 0, scale: 1.6, opacity: 0.2, hidden: false }, hover: { scale: 1.1, opacity: 1, hidden: false } } });
+    ).toEqual({
+      buttons: { jump: { x: 1, y: 0, scale: 1.6, opacity: 0.2, hidden: false }, hover: { scale: 1.1, opacity: 1, hidden: false } },
+      others: { future: { anything: true }, version: 7 },
+    });
     expect(readLayout("nonsense")).toEqual(EMPTY_LAYOUT);
     expect(readLayout({ buttons: { jump: [1, 2] } }).buttons["jump"]).toEqual({ scale: 1, opacity: 1, hidden: false });
     expect(loadLayout({ getItem: () => "{not json", setItem: () => undefined, removeItem: () => undefined })).toEqual(EMPTY_LAYOUT);
@@ -93,6 +110,22 @@ describe("the buttons' layout", () => {
     const layout = loadLayout(s);
     saveLayout({ buttons: { jump: { ...(layout.buttons["jump"] ?? { scale: 1, opacity: 1, hidden: false }), scale: 1.2 } } }, s);
     expect(JSON.parse(s.data.get("carball.touchLayout") ?? "{}")).toMatchObject({ buttons: { jump: { scale: 1.2, tint: 3 } } });
+  });
+
+  it("keeps a later version's record whole when this page saves it: its fields, its stick's, its version (RV-1250)", () => {
+    const s = store();
+    s.data.set("carball.touchLayout", JSON.stringify({ version: 2, preset: "claw", buttons: {}, stick: { x: 0.2, y: 0.6, size: 1.3 } }));
+    const layout = loadLayout(s);
+    saveLayout({ ...layout, buttons: { jump: { scale: 1.2, opacity: 1, hidden: false } } }, s);
+    expect(JSON.parse(s.data.get("carball.touchLayout") ?? "{}")).toEqual({
+      version: 2,
+      preset: "claw",
+      buttons: { jump: { scale: 1.2, opacity: 1, hidden: false } },
+      stick: { x: 0.2, y: 0.6, size: 1.3 },
+    });
+    // (an older record's version this page's)
+    saveLayout({ buttons: { jump: { scale: 1, opacity: 1, hidden: true } } }, s);
+    expect(JSON.parse(s.data.get("carball.touchLayout") ?? "{}")).toMatchObject({ version: 1 });
   });
 
   it("keeps the fixed stick in the left half, where a thumb takes it (RV-1233)", () => {
