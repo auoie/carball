@@ -79,8 +79,9 @@ quarter turn, a goal's slow motion).
 - **R is the screen's refresh**, so on a screen with a fixed refresh every frame drawn lands on a step (RX84's RV-1259):
   a desktop's measured from its frames (each interval over the whole refreshes it spans, a dropped frame two, averaged: a
   timer's jitter cancels; seeded from their median, or from the short ones' median when they're a sixth or more of them,
-  most frames doubled, RX85's RV-1268; taken every 30 frames, and at once when the newest eight are all the same and a
-  tenth or more shorter: a window moved to a faster screen, RV-1272), a touch device's from its frame pacer, which sees
+  most frames doubled, RX85's RV-1268; taken every 30 frames, and at once when the newest sixteen are all the same and a
+  tenth or more shorter: a window moved to a faster screen, RV-1272; the sixteen frames after a stall, a hidden tab's or
+  a hitch's catching up, never measured, RX86's RV-1278), a touch device's from its frame pacer, which sees
   every animation frame (input/touchSettings.ts FramePacer, the same estimate, exact: the step's length every frame,
   the lock holding the phase alone, RV-1270). A phone's Frame Rate cap that divides the refresh (120 Hz at 60 or 30, 60
   at 30, 90 at 30) is R instead: the game's feel at the cap (3.23° at 60), the frames drawn landing on its steps; a

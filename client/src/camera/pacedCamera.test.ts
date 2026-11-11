@@ -278,6 +278,18 @@ describe("the camera at the screen's rate", () => {
     check("60 Hz, 70 % doubled", desktop(dropping(60, 10, 0.7, r)));
   });
 
+  it("a stall, then a burst of short frames (a hidden tab caught up): the screen's rate kept, its lag (RV-1278)", () => {
+    for (const hz of [60, 144]) {
+      for (const burst of [8, 12, 16]) {
+        const shown = desktop([...even(hz, 3), 0.4, ...Array.from({ length: burst }, () => 0.002), ...even(hz, 3)]);
+        const frames = run(shown, turning);
+        const after = frames.slice(Math.round(hz * 3) + 1 + burst + Math.round(hz * 0.5)).map(onScreen);
+        const lag = hz === 60 ? 3.23 : 3.76;
+        expect(Math.max(...after.map(Math.abs)), `${String(hz)} Hz, a burst of ${String(burst)}`).toBeLessThan(lag + 0.15);
+      }
+    }
+  });
+
   it("a variable-refresh screen (no fixed refresh): a frame without a step keeps the car with its camera (RV-1259)", () => {
     const r = rng(13);
     const frames = half(run(desktop(Array.from({ length: 1000 }, () => 0.007 + 0.007 * r())), straight));

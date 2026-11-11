@@ -54,9 +54,11 @@ const CARRY = 0.15;
 const RECENTRE = 0.01;
 const RESTART = 0.02;
 /** A desktop's newest frames this much shorter than the refresh measured (a share): measured again from them at once (a
- *  window moved to a faster screen, RV-1272). A timer's jitter can't shorten eight in a row this much (their sum is eight
- *  refreshes less twice the jitter at most: 5 % at 144 Hz with ±2 ms) */
+ *  window moved to a faster screen, RV-1272). A timer's jitter can't shorten sixteen in a row this much (their sum is
+ *  sixteen refreshes less twice the jitter at most) */
 const MOVED = 0.1;
+/** The frames alike that measure a faster screen at once */
+const ALIKE = 16;
 
 /** A step planned in a frame: its moment (drawn position, in ticks), world and real seconds */
 interface Step {
@@ -77,6 +79,8 @@ export class PacedCamera {
   #last: { readonly at: number; readonly time: number } | null = null;
   readonly #intervals: number[] = [];
   #measured = 0;
+  /** Frames since a stall (a desktop's: its re-measure at once kept quiet through the burst after one) */
+  #sinceStall = ALIKE + 1;
   /** A desktop's refresh as measured (s) */
   #refresh = 1 / RATE.initial;
   /** The step's length (s): the rate's (`#base`), the lock's correction on it */
@@ -235,7 +239,9 @@ export class PacedCamera {
    *  from it: a window taken to a faster screen, RV-1272) */
   #measure(real: number): void {
     const ms = real * 1000;
-    if (!(ms > 0) || ms >= 250) return;
+    // (a stall: a hidden tab, a hitch; the frames after it may come in a burst, never a screen's: not measured)
+    this.#sinceStall = ms >= 100 || ms >= 4 * this.#refresh * 1000 ? 0 : this.#sinceStall + 1;
+    if (!(ms > 0) || ms >= 250 || this.#sinceStall <= ALIKE) return;
     this.#intervals.push(ms);
     if (this.#intervals.length > RATE.kept) this.#intervals.shift();
     this.#measured++;
@@ -244,15 +250,15 @@ export class PacedCamera {
       this.#refresh = 1 / Math.min(RATE.max, Math.max(RATE.min, 1000 / refreshOf(this.#intervals)));
       return;
     }
-    if (n >= RATE.first) {
-      // (all eight together, all the new screen's, and shorter, as a faster screen's are: dropped frames only ever lengthen
-      // them, a timer's jitter never shortens eight; a slower screen's longer frames leave no frame without a step, the
-      // next measure takes it)
-      const recent = this.#intervals.slice(-RATE.first);
-      const newest = [...recent].sort((a, b) => a - b)[RATE.first / 2] ?? 0;
+    if (n >= ALIKE && this.#sinceStall > 2 * ALIKE) {
+      // (sixteen together, all the new screen's, and shorter, as a faster screen's are: dropped frames only ever lengthen
+      // them, a timer's jitter never shortens sixteen; none of a stall's burst after it, RX86's RV-1278; a slower screen's
+      // longer frames leave no frame without a step, the next measure takes it)
+      const recent = this.#intervals.slice(-ALIKE);
+      const newest = [...recent].sort((a, b) => a - b)[ALIKE / 2] ?? 0;
       if (recent.every((v) => Math.abs(v / newest - 1) < 0.08) && newest < this.#refresh * 1000 * (1 - MOVED)) {
         // (the window's newest frames only, from here: the older ones a screen ago)
-        this.#intervals.splice(0, n - RATE.first);
+        this.#intervals.splice(0, n - ALIKE);
         this.#refresh = 1 / Math.min(RATE.max, Math.max(RATE.min, 1000 / newest));
       }
     }

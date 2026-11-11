@@ -155,6 +155,7 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
    pacer's refresh to it, resets, stalls, time away (2026-11-10).
 8. RX85's findings: the refresh with most frames doubled, a window's move, a phone's 30 cap, a faster screen at once
    (2026-11-10).
+9. RX86's RV-1278: a stall's burst never measured (2026-11-10).
 
 ## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
 
