@@ -95,6 +95,20 @@ export interface Pov {
 
 const copyPov = (p: Pov): Pov => ({ ...p });
 
+/** An update that spans `frames` of the player's nominal frames, made the same as that many of the game's updates
+ *  (ours, not the game's: notes/camera.md). The game's smoother `x += (T - x)(1 - e^(-lambda dt))` treats the whole of its
+ *  target's move as made at the step's end, so its lag behind a moving target depends on the step's length: uneven
+ *  frames wobble. Behind a target moving evenly, `frames` steps of dt / frames leave `x` further along than one step of
+ *  dt by this share of the target's move, exactly: q - (1 - q) q1 / ((1 - q1) frames), q = e^(-lambda dt),
+ *  q1 = q^(1 / frames). Added to the one step it gives those steps' result, and behind an evenly moving target the lag
+ *  the game has at the nominal rate, whatever the frames' lengths. 0 at frames = 1: the game's step itself */
+export function drift(lambda: number, dt: number, frames: number): number {
+  if (!(dt > 0) || !(frames > 0) || Math.abs(frames - 1) < 1e-9) return 0;
+  const q = Math.pow(2.71828, -lambda * dt);
+  const q1 = Math.pow(2.71828, (-lambda * dt) / frames);
+  return q - ((1 - q) * q1) / ((1 - q1) * frames);
+}
+
 /** Camera_X.FinalizeOrientation. */
 function finalize(p: Pov): void {
   p.rotation = normalizeRotator(p.rotation);
@@ -104,6 +118,8 @@ function finalize(p: Pov): void {
 /** CameraState_Car_TA's InterpVector structs and UpdateInterpVector (framerate-independent path). */
 class InterpVector {
   location: Vec3 = vec3(0, 0, 0);
+  /** The last update's target (its move since is `drift`'s; null: none to measure from) */
+  target: Vec3 | null = null;
   initialized = false;
   constructor(
     readonly rate: number,
@@ -113,17 +129,23 @@ class InterpVector {
   clone(): InterpVector {
     const copy = new InterpVector(this.rate, this.maxDistance);
     copy.location = this.location;
+    copy.target = this.target;
     copy.initialized = this.initialized;
     return copy;
   }
 
-  update(newValue: Vec3, dt: number): void {
+  /** `frames`: the nominal frames this update spans (1: the game's step) */
+  update(newValue: Vec3, dt: number, frames = 1): void {
+    const last = this.target;
+    this.target = newValue;
     if (!this.initialized) {
       this.initialized = true;
       this.location = newValue;
       return;
     }
     this.location = vSmoothInterpTo(this.location, newValue, this.rate, dt);
+    const share = last ? drift(this.rate, dt, frames) : 0;
+    if (last && share !== 0) this.location = add(this.location, scale(sub(newValue, last), share));
     let delta = sub(newValue, this.location);
     if (this.maxDistance > 0 && dot(delta, delta) > this.maxDistance * this.maxDistance) {
       delta = scale(normal(delta), this.maxDistance);
@@ -141,6 +163,8 @@ export interface CameraInput {
   readonly respawn: RespawnCameraInput | null;
   /** Free look running in this state: this frame's offset (rotator units); null: off (classic, or not allowed) */
   readonly freeLook: RotatorOffset | null;
+  /** The nominal frames this update spans (1: the game's update itself; `drift`) */
+  readonly frames: number;
 }
 
 /** ApplyFreeLook: the offset added, the pitch clamped to ±75° (truncated), no roll */
@@ -266,6 +290,15 @@ export class CarCameraState implements CameraState {
   #interpWall: Rotator = ZERO_ROTATOR;
   /** The view offset's pitch last applied to a free-look rotation */
   #appliedAnglePitch = 0;
+  /** The nominal frames this update spans, and the rotations' targets of the last update (`drift`: null where that
+   *  rotation wasn't followed then) */
+  #frames = 1;
+  #groundTarget: Rotator | null = null;
+  #ballTarget: Rotator | null = null;
+  /** The view's rotation and the camera's place before the last update, and the nominal frames that update spanned */
+  #rotationBefore: Rotator | null = null;
+  #locationBefore: Vec3 | null = null;
+  #framesBefore = 1;
   /** The next begin keeps the view's rotation and the other state's smoothing (free look: from the free-look ball cam
    *  to the car cam and back, CAM-14/15) */
   carryFrom: CarCameraState | null = null;
@@ -294,12 +327,23 @@ export class CarCameraState implements CameraState {
       this.#onGround = from.#onGround;
       this.#groundNormal = from.#groundNormal;
       this.#firstExecution = this.ballCam;
+      this.#forgetTargets();
       return;
     }
     this.#firstExecution = true;
     this.#focusInterp.initialized = false;
     this.#distanceInterp.initialized = false;
     this.#focusOffsetInterp.initialized = false;
+    this.#forgetTargets();
+  }
+
+  /** A state begun: no last targets for `drift` to measure a move from (their first update the game's step) */
+  #forgetTargets(): void {
+    this.#groundTarget = null;
+    this.#ballTarget = null;
+    this.#rotationBefore = null;
+    this.#locationBefore = null;
+    for (const interp of [this.#focusInterp, this.#distanceInterp, this.#focusOffsetInterp]) interp.target = null;
   }
 
   /** The car-facing frame (free look): RLerp(InterpRotationGround, InterpRotationWall, 1 - |ground normal z|) */
@@ -325,6 +369,8 @@ export class CarCameraState implements CameraState {
     // Free look (the car cam only): the view turns only by the look input; focus and distance follow the car-facing
     // frame (UpdateValidPOV's free-look order, notes/camera-respawn-goal.md CAM-13)
     const freeLook = this.ballCam ? null : input.freeLook;
+    this.#frames = input.frames;
+    const [rotationNow, locationNow] = [pov.rotation, pov.calculatedLocation];
     this.#updateViewOffset(settings);
     this.#updateAirGroundBlend(dt, car);
     this.#updateFocusWorldOffset(dt, car, lookAtBall);
@@ -337,6 +383,9 @@ export class CarCameraState implements CameraState {
     this.#updateFov(dt, car, settings, pov);
     if (freeLook) pov.rotation = applyFreeLook(pov.rotation, freeLook);
     else if (!this.ballCam) this.#updateRotationModifiers(car, pov);
+    this.#rotationBefore = this.#firstExecution ? null : rotationNow;
+    this.#locationBefore = this.#firstExecution ? null : locationNow;
+    this.#framesBefore = this.#frames;
     this.#firstExecution = false;
   }
 
@@ -360,20 +409,29 @@ export class CarCameraState implements CameraState {
   #updateFocusWorldOffset(dt: number, car: CarState, lookAtBall: boolean): void {
     if (lookAtBall) {
       this.#focusOffsetInterp.location = vec3(0, 0, this.#viewOffset.focusZ);
+      this.#focusOffsetInterp.target = null;
       return;
     }
     // On the ground the focus sits `height` above the car along the car's own up axis
     const offset = this.#airGroundBlend >= 1 ? scale(car.rot.up, this.#viewOffset.focusZ) : vec3(0, 0, this.#viewOffset.focusZ);
-    this.#focusOffsetInterp.update(offset, dt);
+    this.#focusOffsetInterp.update(offset, dt, this.#frames);
   }
 
   #updateFocus(dt: number, car: CarState, s: CameraSettings, pov: Pov, lookAtBall: boolean, freeLook: boolean): void {
     // Ball cam: the focus may not lag behind the car at all
     this.#focusInterp.maxDistance = lookAtBall ? 0.001 : CAR.focusInterpMaxDistance;
     const focus = add(car.pos, this.#focusOffsetInterp.location);
-    this.#focusInterp.update(focus, dt);
+    this.#focusInterp.update(focus, dt, this.#frames);
+    // (the view's direction is the last update's: the game's a frame before this one's end. An update spanning more or
+    // less than one nominal frame carries it on from the last update's turning over the frames past one: `drift`'s
+    // counterpart for the projection)
+    const before = this.#rotationBefore;
+    const turned =
+      before && this.#frames !== 1 && this.#framesBefore > 0
+        ? scaleRotator(normalizeRotator(subRotators(pov.rotation, before)), (this.#frames - 1) / this.#framesBefore)
+        : null;
     // (free look: along the car-facing frame, from where that frame would put the camera)
-    const forward = rotatorToVector(freeLook ? this.#carFacing() : pov.rotation);
+    const forward = rotatorToVector(freeLook ? this.#carFacing() : turned ? addRotators(pov.rotation, turned) : pov.rotation);
     const location = freeLook ? sub(pov.focus, scale(forward, pov.distance)) : pov.calculatedLocation;
     // Lagged focus sideways/vertically, but at the real focus's depth along the view
     let focusOffset = sub(this.#focusInterp.location, location);
@@ -383,10 +441,14 @@ export class CarCameraState implements CameraState {
   }
 
   #updateAirAndGroundCamera(dt: number, input: CameraInput, pov: Pov, lookAtBall: boolean, freeLook: boolean): void {
+    // (a rotation not followed this update is no last target for the next: `drift`)
     if (lookAtBall) {
+      this.#groundTarget = null;
       this.#updateBallCamRotation(dt, input.ball, pov);
       return;
     }
+    this.#ballTarget = null;
+    if (this.#airGroundBlend <= 0) this.#groundTarget = null;
     const { car, settings } = input;
     if (this.#airGroundBlend >= 1) {
       this.#updateGroundPov(dt, car, settings, pov, freeLook);
@@ -419,6 +481,8 @@ export class CarCameraState implements CameraState {
     let newRot = vectorToRotator(cameraDir);
     newRot = rotator(newRot.pitch + Math.min(this.#viewOffset.pitch, 16384 - newRot.pitch), newRot.yaw, newRot.roll);
 
+    const lastTarget = this.#groundTarget;
+    this.#groundTarget = newRot;
     if (this.#firstExecution) {
       pov.rotation = newRot;
       this.#interpGround = newRot;
@@ -426,11 +490,18 @@ export class CarCameraState implements CameraState {
       return;
     }
     const rateScale = lerp(1, 3.427, s.stiffness);
+    // (the game's step, and `drift`'s share of the target's turn since the last update)
+    const moved = lastTarget ? normalizeRotator(subRotators(newRot, lastTarget)) : null;
+    const smooth = (from: Rotator, rate: number): Rotator => {
+      const stepped = rSmoothInterpTo(from, newRot, rate, dt);
+      const share = moved ? drift(rate, dt, this.#frames) : 0;
+      return moved && share !== 0 ? addRotators(stepped, scaleRotator(moved, share)) : stepped;
+    };
     // (free look: each from its own last value, toward the car's forward and the angle, no roll; else from the view's)
     const fromGround = freeLook ? this.#interpGround : pov.rotation;
     const fromWall = freeLook ? this.#interpWall : pov.rotation;
-    const ground = s.stiffness < 1 ? rSmoothInterpTo(fromGround, newRot, CAR.groundRotationInterpRate * rateScale, dt) : newRot;
-    const wall = rSmoothInterpTo(fromWall, newRot, CAR.groundRotationInterpRateWall * rateScale, dt);
+    const ground = s.stiffness < 1 ? smooth(fromGround, CAR.groundRotationInterpRate * rateScale) : newRot;
+    const wall = smooth(fromWall, CAR.groundRotationInterpRateWall * rateScale);
     this.#interpGround = ground;
     this.#interpWall = wall;
     pov.rotation = rlerp(ground, wall, 1 - Math.abs(u.z));
@@ -446,13 +517,23 @@ export class CarCameraState implements CameraState {
     }
     const speedScale = Math.min(lengthOf(car.vel) / CAR_MAX_SPEED, 1);
     const interpRate = lerp(CAR.airVelocityInfluence, CAR.airVelocityInfluenceMaxSpeed, speedScale);
-    let newRot = vectorToRotator(sub(pov.focus, pov.calculatedLocation));
-    // The game uses a fixed 1/60 here, not DeltaTime
-    newRot = rlerp(pov.rotation, newRot, Math.min(interpRate * (1 / 60), 1));
-    // ScalePitch: flatten the pitch when moving backwards relative to the view
+    // (the camera's place is the last update's: the game's a frame before this one's end. An update spanning more or less
+    // than one nominal frame carries it on at the last update's speed over the frames past one, so the turn toward the
+    // focus is one frame's, as the game's: ours, nothing at frames = 1)
+    const before = this.#locationBefore;
+    const from =
+      before && this.#frames !== 1 && this.#framesBefore > 0
+        ? add(pov.calculatedLocation, scale(sub(pov.calculatedLocation, before), (this.#frames - 1) / this.#framesBefore))
+        : pov.calculatedLocation;
+    let newRot = vectorToRotator(sub(pov.focus, from));
+    // The game uses a fixed 1/60 here, not DeltaTime: a share a frame, so over `frames` of them that share compounded
+    // (ours; at frames = 1 the game's)
+    const share = Math.min(interpRate * (1 / 60), 1);
+    newRot = rlerp(pov.rotation, newRot, this.#frames === 1 ? share : 1 - (1 - share) ** this.#frames);
+    // ScalePitch: flatten the pitch when moving backwards relative to the view (once a frame: compounded alike)
     const speedScale2D = Math.hypot(car.vel.x, car.vel.y) / CAR_MAX_SPEED;
     if (dot(car.vel, rotatorToVector(newRot)) < 0) {
-      newRot = rotator(newRot.pitch * (1 - speedScale2D), newRot.yaw, newRot.roll);
+      newRot = rotator(newRot.pitch * (1 - speedScale2D) ** this.#frames, newRot.yaw, newRot.roll);
     }
     pov.rotation = newRot;
   }
@@ -465,13 +546,21 @@ export class CarCameraState implements CameraState {
     toBall = vectorToRotator(sub(ballLocation, pov.focus));
     const strength = Math.min(1, Math.max(0, (Math.abs(toBall.pitch) - BALL.pitchExtentMin) / (BALL.pitchExtentMax - BALL.pitchExtentMin)));
     toBall = rotator(lerp(this.#viewOffset.pitch, toBall.pitch, BALL.pitchScale * strength), toBall.yaw, toBall.roll);
-    pov.rotation = this.#firstExecution ? toBall : rSmoothInterpTo(pov.rotation, toBall, BALL.rotationRate, dt);
+    const lastTarget = this.#ballTarget;
+    this.#ballTarget = toBall;
+    if (this.#firstExecution) {
+      pov.rotation = toBall;
+      return;
+    }
+    const stepped = rSmoothInterpTo(pov.rotation, toBall, BALL.rotationRate, dt);
+    const share = lastTarget ? drift(BALL.rotationRate, dt, this.#frames) : 0;
+    pov.rotation = lastTarget && share !== 0 ? addRotators(stepped, scaleRotator(normalizeRotator(subRotators(toBall, lastTarget)), share)) : stepped;
   }
 
   #updateDistance(dt: number, car: CarState, s: CameraSettings, pov: Pov, freeLook: boolean): void {
     const viewDir = rotatorToVector(freeLook ? this.#carFacing() : pov.rotation);
     const newDistance = this.#viewOffset.distance + Math.max(dot(car.vel, viewDir) * CAR.distanceSpeedScale * (1 - s.stiffness), CAR.distanceOffsetMin);
-    this.#distanceInterp.update(vec3(newDistance, 0, 0), dt);
+    this.#distanceInterp.update(vec3(newDistance, 0, 0), dt, this.#frames);
     pov.distance = this.#distanceInterp.location.x;
   }
 
@@ -740,7 +829,7 @@ export class PlayerCamera {
 
   /** `respawn`: while the car is demolished (null otherwise); `realDt`: real time (the swivel's; `dt` is the world's,
    *  slowed after a goal: Camera_TA.UpdateSwivel divides by the time dilation) */
-  update(dt: number, car: CarState, ball: Vec3, controls: CameraControls, respawn: RespawnState | null = null, realDt = dt): CameraView {
+  update(dt: number, car: CarState, ball: Vec3, controls: CameraControls, respawn: RespawnState | null = null, realDt = dt, frames = 1): CameraView {
     if (car.demoed && !this.#wasDemoed) {
       this.#demolishedFlag = true;
       this.#wreck = car.pos;
@@ -768,7 +857,7 @@ export class PlayerCamera {
     const firstCarFrame = current !== wanted && wanted === this.#carCam && !fromLookAtBall;
     const active = mode !== null && canFreeLook && !controls.rear;
     const freeLook = active ? (firstCarFrame ? { pitch: 0, yaw: 0 } : this.#freeLook.update(dt, mode.axes, mode.settings)) : null;
-    const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear, respawn: respawnInput, freeLook };
+    const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear, respawn: respawnInput, freeLook, frames };
     if (current !== wanted) {
       // Free look: between the free-look ball cam (LookAtBall) and the car cam the view keeps its rotation and smoothing
       const cams = [this.#carCam, this.#ballCam];

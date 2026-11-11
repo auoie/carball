@@ -8,7 +8,7 @@
 import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/carballCamera";
-import { type FrameClock, PacedCamera } from "../camera/pacedCamera";
+import { FrameCamera } from "../camera/frameCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add } from "../math/vec";
 import { type NetGraphFeed, rawRoundTrip } from "../net/netStats";
@@ -61,7 +61,7 @@ import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
 import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
-import { fromThreeVector, rotateRl, toThreeQuaternion, toThreeVector } from "../render/coords";
+import { fromThreeVector, rotateRl } from "../render/coords";
 import { POST_GOAL_LOWEST_TICK, postGoalDilation } from "./goalSequence";
 import { type RecordedCar, ReplayRecorder, lastTouchTeam, onlineImpactFrame, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
@@ -179,10 +179,10 @@ export class Online {
   readonly #predictor: Predictor;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
-  /** The camera at the screen's rate, the car drawn as it sees it (camera/pacedCamera.ts) */
-  readonly #view = new PacedCamera(this.#camera);
-  /** A touch device's frames as its pacer knows them (the page's; none on a desktop) */
-  frameClock: () => FrameClock | null = () => null;
+  /** The player's camera, its updates across each frame (camera/frameCamera.ts) */
+  readonly #view = new FrameCamera(this.#camera);
+  /** The rate whose feel the camera has (the page's: its frames' rate of late, a touch device's Frame Rate) */
+  feelHz: () => number = () => 60;
   readonly #cars = new Map<number, CarEntry>();
   readonly #ballView = new BallView();
   /** The ball arrow by the player's car (HUD-17) */
@@ -535,13 +535,9 @@ export class Online {
       for (const { error } of this.#cars.values()) error.tick(TICK_SECONDS);
       this.#ballError.tick(TICK_SECONDS);
       this.#trackFlip();
-      // (each tick's car as drawn, its correction's offset on it, and ball, for the camera's steps between them)
+      // (each tick's car as drawn, its correction's offset on it, and ball, for the camera's updates between frames)
       const mine = this.#cars.get(this.#localCar);
-      if (mine) {
-        this.#newCarCamera(mine);
-        const at = this.#cameraInput(mine, mine.state.current, this.#ball.current.pos);
-        this.#view.tick(at.car, at.ball, at.respawn);
-      }
+      if (mine) this.#view.tick(this.#cameraInput(mine, mine.state.current, this.#ball.current.pos));
     }
     // Input packets at 60 Hz of real time, once a frame (slowed ticks after a goal don't stretch them: RV-4)
     // (DeltaSeconds / TimeDilation: the world time undilated, RV-22)
@@ -557,8 +553,11 @@ export class Online {
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
     this.#drawChat();
-    if (this.#replay) this.#drawReplay(real, this.#replay);
-    else this.#draw(world, ticks * TICK_SECONDS, real);
+    if (this.#replay) {
+      // (a goal replay's own camera: the player's starts afresh after it)
+      this.#view.idle();
+      this.#drawReplay(real, this.#replay);
+    } else this.#draw(world, ticks * TICK_SECONDS, real);
   }
 
   /** Quick chat (CHAT-7..9): a press of a chat key opens its category, the next sends that row's preset; not with the
@@ -990,25 +989,20 @@ export class Online {
   }
 
   #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
-    // (the camera's steps planned; the local car drawn as its last step saw it, at that step's moment (the frame's to
-    // within half a step), its correction's offset on it, so the two agree whatever the frames)
     const alpha = this.#clock.alpha;
-    if (this.#cars.has(this.#localCar)) this.#view.plan(realSeconds, alpha, this.frameClock());
-    const subject = this.#view.subject;
     let localDrawn: Vec3 | null = null;
     for (const [id, { view, state, error }] of this.#cars) {
       const { boosting, supersonic } = state.current;
       // (demolished as the server says: RV-84)
       const demoed = this.#drawnDemoed(id, state.current);
-      const followed = id === this.#localCar ? subject : null;
-      const pos = followed ? toThreeVector(followed.pos, this.#pos) : error.applyPosition(state.position(alpha, this.#pos), alpha);
+      const pos = error.applyPosition(state.position(alpha, this.#pos), alpha);
       if (id === this.#localCar && !demoed) localDrawn = fromThreeVector(pos);
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       // (a Blender model's wheels: the vehicle's suspension and steering, as this page's world has them)
       if (view.posesWheels) view.wheels = demoed ? null : { ...this.#world.carWheels(id), contact: state.current.wheelContact };
       view.update(
         pos,
-        followed ? toThreeQuaternion(followed.rot, this.#rot) : error.applyRotation(state.rotation(alpha, this.#rot), alpha),
+        error.applyRotation(state.rotation(alpha, this.#rot), alpha),
         boosting,
         demoed,
         supersonic,
@@ -1054,13 +1048,14 @@ export class Online {
 
     const local = this.#cars.get(this.#localCar);
     if (local) this.#newCarCamera(local);
+    else this.#view.idle();
     let view: CameraView | null = null;
     if (local) {
-      // The camera follows the drawn (smoothed) car and ball, its rotation too: at the display's rate, the scene drawn at
-      // its last step's moment (camera/pacedCamera.ts; its mouse's counts taken only here: none piled up through a goal
-      // replay, RV-1248)
+      // The camera follows the drawn (smoothed) car and ball, its rotation too, their corrections' offsets on them, its
+      // updates across the frame (camera/frameCamera.ts)
       const at = this.#cameraInput(local, local.state.blended(alpha), this.#ball.blended(alpha).pos, alpha);
-      const carView = this.#view.run(at.controls, at);
+      const span = { world: frameSeconds, real: realSeconds, scene: Math.max(0, frameSeconds - this.#clock.dropped) };
+      const carView = this.#view.frame(span, this.feelHz(), at, at.controls, alpha);
       if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
       view = this.#matchView(carView);
       this.#listener = view;

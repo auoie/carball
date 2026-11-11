@@ -48,7 +48,6 @@ import { Hud } from "./hud";
 import { InputDevices, cancelThumbButtons, readGamepad } from "./input/devices";
 import { TouchControls, type TouchMode, installTouchPage, touchDevice } from "./input/touch";
 import { FramePacer } from "./input/touchSettings";
-import type { FrameClock } from "./camera/pacedCamera";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
@@ -359,11 +358,16 @@ async function main(): Promise<void> {
   });
   touch.waiting = () => touchWaiting();
   input.touch = touch;
-  // (a touch device draws at its Frame Rate at most: Settings → Touch, 60 by default; a desktop every frame. Its pacer's
-  // screen refresh, cap and re-phases the camera's steps follow: camera/pacedCamera.ts)
+  // (a touch device draws at its Frame Rate at most: Settings → Touch, 60 by default; a desktop every frame)
   const capped = touchDevice();
   const pacer = new FramePacer();
-  const frameClock = (): FrameClock | null => (capped ? { refreshHz: pacer.refreshHz, capHz: settings.touch.frameRate, rephased: pacer.rephased } : null);
+  // (the rate whose feel the camera has, the player's own: the page's frames' rate of late (`refresh`, rough and steady:
+  // all it needs), a touch device's Frame Rate when it's the lower; 60 before any is measured: camera/frameCamera.ts)
+  const feelHz = (): number => {
+    const measured = refresh.recentHz;
+    const cap = capped ? settings.touch.frameRate : 0;
+    return cap > 0 ? Math.min(cap, measured ?? cap) : (measured ?? 60);
+  };
   touch.configure(settings.touch);
   // (in play, the bound keys' browser actions never taken: RV-1092)
   input.bound = (code) => keyBound(settings.bindings, code);
@@ -598,7 +602,7 @@ async function main(): Promise<void> {
   };
   if (!onlinePage) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled, { car: storedCar(), team: storedTeam() });
-    freeplay.frameClock = frameClock;
+    freeplay.feelHz = feelHz;
     touchMode = () => (freeplay.training ? "training" : "freeplay");
     touchWaiting = () => freeplay.training?.state === "countdown";
     freeplayRestart = () => {
@@ -1494,7 +1498,7 @@ async function main(): Promise<void> {
     const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
     endMenuShown = () => endScreen.menuShown;
     const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, inputEnabled, chat, statsUi, endUi);
-    online.frameClock = frameClock;
+    online.feelHz = feelHz;
     // (the match's guard from the game now: not once it's over or its connection gone)
     if (matchGuard) matchGuard.live = () => online.live;
     online.idleTip = new IdleTip(hudRoot);

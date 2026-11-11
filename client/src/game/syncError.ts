@@ -6,8 +6,8 @@
 // each frame the error decays by min(dt x rate, 1) of itself (RBActor_TA.NetworkSyncSettings: LocationFixRate 4,
 // AngularFixRate 5), snapping to 0 below 0.1 uu^2 and 0.001 rad. Teleports aren't smoothed.
 // Ours decays once a tick, and is drawn between the last tick's offset and this one's at the frame's alpha, as the body's
-// poses are, so the camera (told each tick's car with its offset, its steps blended between them:
-// camera/pacedCamera.ts) and the drawn body agree whatever the frames (RV-1247).
+// poses are, so the camera (on the car as drawn, and told each tick's with its offset: camera/frameCamera.ts) and the
+// drawn body agree whatever the frames (RV-1247).
 import { Quaternion, type Vector3 } from "three";
 import { type Rot3, type Vec3, ZERO, add, dot, scale, sub, vec3 } from "../math/vec";
 import { toThreeQuaternion } from "../render/coords";

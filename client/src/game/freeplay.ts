@@ -4,7 +4,7 @@ import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/carballCamera";
-import { type FrameClock, PacedCamera } from "../camera/pacedCamera";
+import { FrameCamera } from "../camera/frameCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type Team, type World } from "../engine/world";
 import { DEFAULT_CAR, carChoice } from "./cars";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
@@ -48,7 +48,7 @@ import { ReplayPlayback } from "./replayPlayback";
 import { ReplayRecorder, freeplayTouchTeam, recordCar } from "./replayRecorder";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
 import { FlipResetFx } from "../render/flipResetFx";
-import { fromThreeVector, toThreeQuaternion, toThreeVector } from "../render/coords";
+import { fromThreeVector } from "../render/coords";
 import { BALL_PATH, BallPathView, EDITOR_PATH } from "../render/ballPath";
 import type { CameraView } from "../camera/carballCamera";
 import { DisabledGoalView } from "../render/disabledGoal";
@@ -109,10 +109,10 @@ export class Freeplay {
   #playerId: number;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
-  /** The camera at the screen's rate, the car drawn as it sees it (camera/pacedCamera.ts) */
-  readonly #view = new PacedCamera(this.#camera);
-  /** A touch device's frames as its pacer knows them (the page's; none on a desktop) */
-  frameClock: () => FrameClock | null = () => null;
+  /** The player's camera, its updates across each frame (camera/frameCamera.ts) */
+  readonly #view = new FrameCamera(this.#camera);
+  /** The rate whose feel the camera has (the page's: its frames' rate of late, a touch device's Frame Rate) */
+  feelHz: () => number = () => 60;
   #carView: CarView;
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers();
@@ -403,8 +403,8 @@ export class Freeplay {
       this.#pushBall();
       this.#trackFlip();
       this.#handleEvents();
-      // (each tick's car and ball, for the camera's steps between them)
-      this.#view.tick(this.#car.current, this.#ball.current.pos, null, placed);
+      // (each tick's car and ball, for the camera's updates between frames)
+      this.#view.tick({ car: this.#car.current, ball: this.#ball.current.pos, respawn: null });
     }
 
     this.#draw(world, ticks * TICK_SECONDS, real);
@@ -1066,20 +1066,14 @@ export class Freeplay {
   /** `frameSeconds`: the frame's world time (slowed after a goal); `simulated`: seconds of physics run this frame;
    *  `realSeconds`: real time since the last frame. */
   #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
-    // (the player's camera's steps planned, unless the garage's or the editor's is the one drawn; the car drawn as its
-    // last step saw it, at that step's moment (the frame's to within half a step), so the two agree whatever the frames)
-    const ownCamera = this.#garageCamera === null && !(this.#editing && this.editorCamera);
     const alpha = this.#clock.alpha;
-    if (ownCamera) this.#view.plan(realSeconds, alpha, this.frameClock());
-    const subject = ownCamera ? this.#view.subject : null;
-    const carPosition = (): Vector3 => (subject ? toThreeVector(subject.pos, this.#pos) : this.#car.position(alpha, this.#pos));
     const car = this.#car.current;
-    const carDrawn = fromThreeVector(carPosition());
+    const carDrawn = fromThreeVector(this.#car.position(alpha, this.#pos));
     // (a Blender model's wheels: the vehicle's suspension and steering)
     if (this.#carView.posesWheels) this.#carView.wheels = { ...this.#world.carWheels(this.#playerId), contact: car.wheelContact };
     this.#carView.update(
-      carPosition(),
-      subject ? toThreeQuaternion(subject.rot, this.#rot) : this.#car.rotation(alpha, this.#rot),
+      this.#car.position(alpha, this.#pos),
+      this.#car.rotation(alpha, this.#rot),
       car.boosting,
       car.demoed,
       car.supersonic,
@@ -1116,11 +1110,19 @@ export class Freeplay {
     const pads = this.#world.boostPads();
     this.#padsView.update(pads, frameSeconds);
 
+    // (the player's camera on the car and ball as drawn, its updates across the frame: camera/frameCamera.ts; the
+    // garage's or the editor's drawn instead, the player's starts afresh after it)
+    const other = this.#garageCamera ?? (this.#editing ? this.editorCamera : null);
+    if (other) this.#view.idle();
     const view =
-      this.#garageCamera ??
-      (this.#editing && this.editorCamera
-        ? this.editorCamera
-        : this.#view.run(this.#cameraControls(), { car: this.#car.blended(alpha), ball: this.#ball.blended(alpha).pos, respawn: null }));
+      other ??
+      this.#view.frame(
+        { world: frameSeconds, real: realSeconds, scene: Math.max(0, frameSeconds - this.#clock.dropped) },
+        this.feelHz(),
+        { car: this.#car.blended(alpha), ball: this.#ball.blended(alpha).pos, respawn: null },
+        this.#cameraControls(),
+        alpha,
+      );
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     // The sounds before the render: started as soon as the frame knows them, not after drawing it (its sounds kept for a
     // goal replay to hear again: RA1 §1)

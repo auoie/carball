@@ -24,6 +24,7 @@ const f32 = Math.fround;
 
 export class FixedStep {
   #accumulator = 0; // f32, as the game's
+  #dropped = 0;
   readonly #step: number;
 
   constructor(
@@ -36,10 +37,19 @@ export class FixedStep {
   /** Adds a frame's world time (worldSeconds) and returns how many ticks to simulate now. */
   advance(frameSeconds: number): number {
     this.#accumulator = f32(this.#accumulator + f32(Math.max(0, frameSeconds)));
+    this.#dropped = 0;
     if (this.#accumulator < this.#step) return 0;
     const ticks = Math.trunc(f32(this.#accumulator / this.#step));
     this.#accumulator = f32(this.#accumulator - f32(ticks * this.#step));
-    return Math.min(ticks, this.maxTicksPerFrame);
+    const run = Math.min(ticks, this.maxTicksPerFrame);
+    this.#dropped = (ticks - run) * this.#step;
+    return run;
+  }
+
+  /** The world time the last `advance` dropped (its ticks past the most a frame runs): the scene moved that much less
+   *  than the frame's time (the camera steps the scene's: camera/frameCamera.ts) */
+  get dropped(): number {
+    return this.#dropped;
   }
 
   /** How far rendering is between the previous tick (0) and the latest one (1). */

@@ -28,4 +28,24 @@ describe("the refresh meter", () => {
     expect(stalled.hz).toBeNull();
     expect([nearestRate(59.4), nearestRate(143), nearestRate(47)]).toEqual([60, 144, 50]);
   });
+
+  it("the rate of late (the camera's feel): the highest of the last 10 s of frames, so it comes down; steady through doubled frames and a timer's jitter", () => {
+    const meter = new RefreshMeter();
+    expect(meter.recentHz).toBeNull();
+    feed(meter, 1000 / 144, 432);
+    expect(meter.recentHz).toBe(144);
+    // (the window moved to a 60 Hz screen: 144 for the 10 s its measures count, then 60; the latched one stays)
+    feed(meter, 1000 / 60, 300);
+    expect(meter.recentHz).toBe(144);
+    feed(meter, 1000 / 60, 420);
+    expect([meter.recentHz, meter.hz]).toEqual([60, 144]);
+    // (most frames doubled, each one's time a millisecond off either way: still the screen's)
+    const busy = new RefreshMeter();
+    const seen = new Set<number | null>();
+    for (let i = 0; i < 1800; i++) {
+      busy.add((i % 10 < 8 ? 2000 / 60 : 1000 / 60) + ((i * 7) % 5) * 0.5 - 1);
+      if (i > 120) seen.add(busy.recentHz);
+    }
+    expect([...seen]).toEqual([60]);
+  });
 });

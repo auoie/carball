@@ -41,7 +41,7 @@ everyone else): the user's request of 2026-11-10. Landscape only. This note is t
   decides it; its cadence pulled a tenth of the way to the frames it lands on, so a screen a little off its rate
   (119.88 Hz) never drifts into an uneven frame: RV-1245; after a missed vsync the cadence starts from the late frame,
   so the next keeps the interval, 3 then 2 refreshes at 120/60, not 3 then 1: RV-1254); physics keeps its 120 ticks a
-  second, and the camera steps at the frames' rate (notes/camera.md). The automatic default's frame-rate guard
+  second, and the camera has the game's feel at the Frame Rate, whatever the frames (notes/camera.md). The automatic default's frame-rate guard
   takes frames at the cap as not slow, and on a touch device watches all session long (each window that wasn't slow
   followed by another), so a phone that slows as it heats steps down then, once. Settings → Interface → Stat Graphs
   shows the frame rate and times in touch play (on the left under the top row, clear of the boost ring and the buttons;
@@ -156,6 +156,8 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
 8. RX85's findings: the refresh with most frames doubled, a window's move, a phone's 30 cap, a faster screen at once
    (2026-11-10).
 9. RX86's RV-1278: a stall's burst never measured (2026-11-10).
+10. The 2026-11-11 audit's camera (batch 2): the paced grid replaced (camera/frameCamera.ts: notes/camera.md); the
+    pacer no longer measures the screen for it.
 
 ## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
 

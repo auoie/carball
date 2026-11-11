@@ -65,55 +65,60 @@ Demolished camera: InitialFOV 120, FOVBlendTime 1.0, MaxZoomInFOV 15, MaxFOVBlen
 ## Algorithm (decompiled)
 Each frame, per rendered frame with the frame's DeltaTime (`Config.bFramerateIndependentInterp = True`).
 
-**Ours steps it at the screen's rate, on a steady clock** (`client/src/camera/pacedCamera.ts`; the user's choice,
-RX82's RV-1251 (b), 2026-11-10: "i care about feeling similar to the game"; RX84's fixes). The formulas are the game's,
-stepped as the game steps them at a rate R, so its lag behind a turning car is the game's at R: in a steady full-lock
-turn (1410 uu/s, 653 uu) 2.45° at 30, 3.23° at 60, 3.68° at 120, 3.76° at 144, 3.81° at 165, 3.92° at 240, and the air
-camera settles as the game's at R. At even frames it is the game's camera frame for frame (tested: a turn, the air's
-quarter turn, a goal's slow motion).
+**Ours: the game's feel at the player's own rate, whatever the frames** (`client/src/camera/frameCamera.ts`, `drift`
+in `carballCamera.ts`; the user's choice, RV-1251 (b), 2026-11-10: "i care about feeling similar to the game"; this
+shape the 2026-11-11 audit's, report 6's design observation, in place of the paced grid).
 
-- **Why a clock, not the frame's time:** stepped once a frame with that frame's length, the smoothing's lag behind a
-  turning car changes with each frame's length, so uneven frames (a phone's dropped ones, Firefox's timer, a hitch)
-  wobbled the car on screen in a steady turn: 0.76° at 60 Hz with 15 % of frames dropped, a 1.1° jump on a 66 ms hitch
-  (the user's report, phone and Firefox). Ours runs whole steps of 1/R on a grid phase-locked to the frames.
-- **R is the screen's refresh**, so on a screen with a fixed refresh every frame drawn lands on a step (RX84's RV-1259):
-  a desktop's measured from its frames (each interval over the whole refreshes it spans, a dropped frame two, averaged: a
-  timer's jitter cancels; seeded from their median, or from the short ones' median when they're a sixth or more of them,
-  most frames doubled, RX85's RV-1268; taken every 30 frames, and at once when the newest sixteen are all the same and a
-  tenth or more shorter: a window moved to a faster screen, RV-1272; the sixteen frames after a stall, a hidden tab's or
-  a hitch's catching up, never measured, RX86's RV-1278), a touch device's from its frame pacer, which sees
-  every animation frame (input/touchSettings.ts FramePacer, the same estimate, exact: the step's length every frame,
-  the lock holding the phase alone, RV-1270). A phone's Frame Rate cap that divides the refresh (120 Hz at 60 or 30, 60
-  at 30, 90 at 30) is R instead: the game's feel at the cap (3.23° at 60), the frames drawn landing on its steps; a
-  vsync missed (the pacer's re-phase) takes one step of the time that passed, as the game's on a late frame, the steps
-  from that frame on. A cap that doesn't divide it (90 Hz at 60, 144 at 60) steps at the refresh (90/60: 3.53°), its
-  frames a refresh or two apart each on a step, the car never shimmering against the ball (RV-1262: the user's choice
-  (i), 2026-11-10). A rate moved 2 % is a new one (another screen, a refresh changed, a cap chosen): the grid starts again
-  on it (RV-1269); the lock (a small phase and rate correction) follows a desktop's screen a little off the rate measured.
-  A variable-refresh screen has no fixed refresh: R follows its frames' mean rate, and the frames that come before a
-  step (8–10 % at 7–14 ms) keep the last step's car with its view (the car with its camera; a few uu from the scene, a
-  wobble of a few tenths of a degree): RV-1271, open, a real variable-refresh screen's to answer.
-- **Each step** takes the car and ball as they were at its moment, blended from the ticks (the last 32: car, ball,
-  respawn; online the car with its correction's offset, SyncError, notes/netcode-audit.md N-1, which decays once a tick
-  and is drawn between the last two: RV-1247), carried at most 0.15 tick past the newest (a timer's jitter: a wall's or a
-  touch's overshoot under 3 uu, RV-1263). The car it follows is drawn as its last step saw it, at that step's moment (the
-  frame's), so the two agree whatever the frames; a frame without a step (a variable-refresh screen's) keeps the last
-  step's car with its view.
-- **Resets, stalls, time away:** a reset forgets the ticks before it, so the new car is drawn at once with the view
-  behind it (RV-1260); a stall past a quarter second runs no steps, one step of the time the scene moved and the grid
-  from there (RV-1261: no more swing than the game's at a 40–100 ms hitch at 240 Hz); back after frames it didn't plan
-  (the editor's camera, a replay) only that frame's moving is stepped (RV-1264).
-- **Its inputs:** the frame's controls; the mouse's free look (its counts, not a rate) shared over the frame's steps,
-  taken only on a frame the camera runs (none piled up through a goal replay: RV-1248); the swivel's real time 1/R a
-  step; a goal's slow motion and the time the physics clock drops in a stall in each step's world time (the scene's).
-- Measured with the real camera code (pacedCamera.test.ts), on fixed-refresh screens: no frame without a step and the car
-  within 0.5 uu of its camera and 3 uu of the scene (a third of 60 Hz frames doubled, 30 to 45 % at 60 and 144 over ten
-  runs each, half and 70 % at 60, a 1 ms timer at 120, a window from 60 to 144 Hz, Firefox's 16/17 ms, ±1 ms of jitter,
-  phones at 144/60, 144/30, 120/30, 90/60 and 120/60 with 2 % of vsyncs missed, the 30 caps over ten runs); a steady turn
-  still on screen (under 0.01°; 0.05° at ±2 ms of jitter at 144, where the game's wobbles 0.5°); after a window's move,
-  still within 4 s whatever the time before it, a faster screen stepped every frame within 0.2 s; a phone's missed vsync
-  swinging no more than the game's camera on the same frames; a 40 ms hitch at 240 Hz under 0.1°; no step's moment more
-  than 0.15 tick past the newest. On a variable-refresh screen the car stays with its camera.
+- **The feel at a rate.** Every smoother in the camera is the game's `x += (T − x)(1 − e^(−λ·dt))`. Behind a target
+  moving at v, stepped every h, its lag settles at `v·h / (e^(λh) − 1)`: in a steady full-lock turn (1410 uu/s, 653 uu;
+  the ground rotation's λ 29.64 /s at stiffness 0.5) 2.45° at 30 frames a second, 3.23° at 60, 3.68° at 120, 3.76° at
+  144, 3.92° at 240. That's what the camera feels like at a frame rate.
+- **Why uneven frames wobble.** The step treats the whole of its target's move as made at its end, so the lag after a
+  frame depends on that frame's length: dropped frames, a busy browser's, a timer's jitter change it frame by frame
+  (0.76° at 60 Hz with 15 % of frames doubled, 1.1° on a 66 ms hitch: the user's report, phone and Firefox).
+- **Part A: whole updates across the frame.** Each frame runs the game's own update once for each nominal frame (1 /
+  the feel's rate) the scene's move spans, to the nearest whole number (8 at most), each on the car and ball as a frame
+  at its moment would have drawn them: between the two physics ticks about it, the later one's flags (the games tell
+  the camera each tick's car and ball; online the car with its correction's offset, SyncError, which decays once a tick:
+  RV-1247). A doubled frame is then exactly two of the game's updates.
+- **Part B: an update of any length lands where the game's would.** Each update is told the share of a nominal frame
+  it spans, and each smoother adds `drift(λ, dt, frames) × (T − lastT)`: the difference, exact for a target moving
+  evenly, between one step of that length and the game's steps at the nominal length (`q − (1 − q)·q1 / ((1 − q1)·
+  frames)`, q = e^(−λ·dt), q1 = q^(1/frames); 0 at a share of 1, so at even frames at the feel's rate the camera is the
+  game's, update for update). On the focus, focus offset and distance (InterpVector), the ground's and the wall's
+  rotations, and the ball cam's. With it: the view's direction the focus is projected along, and the camera's place the
+  air view turns from, are the last update's (the game's: a frame before this one's end), so each is carried on at the
+  last update's rate over the frames past one; the air view's fixed 1/60 share and its pitch's flattening, once a frame
+  in the game, are compounded over the share. A target not followed the update before (a state begun, the ball cam for
+  the car cam) has no last value: that update is the game's step.
+- **The rate (the feel's) needs no precision:** it sets the lag and nothing else (a 20 % error moves a steady lag
+  0.15°; no frames can make it wobble). It's the page's own frames' rate of late (`RefreshMeter.recentHz`: the nearest
+  common display rate of the fastest tenth of the last 120 frames, the highest such measure of the last 10 s, so it comes
+  down when a window moves to a slower screen), or a touch device's Frame Rate when that's the lower (a phone capped at
+  60 has the game's feel at 60, whatever its screen: 90 Hz at 60 too, which the grid couldn't without the car shimmering
+  against the ball); 60 before the first measure. A page can't see its screen's true refresh or its phase, only when its
+  own frames ran: the paced grid before this needed both, and five review rounds found the cases where they can't be
+  had (a phone's browser missing refreshes, most frames doubled, a variable-refresh screen: the audit's REN-01, 02, 03).
+- **The car is drawn at the frame's moment,** like the ball and every other car (the grid drew it at its last step's:
+  REN-03). A new car (a spawn's count, a teleport) is never blended across (REN-08); a frame another camera draws
+  (the garage's, the editor's, a goal replay's) and a reset start the player's afresh from its own car.
+- **The mouse's free look** is its counts, not a rate: a frame's are shared over its updates. The swivel's real time
+  and a goal's slow motion are each update's share of the frame's.
+- **Measured** (`frameCamera.test.ts`, the real camera code, physics clock and frame pacer):
+  - even frames at 30, 60, 120, 144, 165, 240 Hz: the game's camera frame for frame (a turn, the air's quarter turn,
+    a goal's slow motion, the ball cam);
+  - a steady turn, the car's yaw on screen within 0.01° at the feel's lag, where the game's own camera wobbles 0.2 to
+    2°: 15, 85 and 95 % of 60 Hz frames doubled, 45 % at 144, Firefox's 16/17 ms, ±1 and ±2 ms of timer jitter, a
+    variable-refresh screen (7 to 14 ms), a 66 ms hitch a second, a 120 Hz phone at 60 in a browser busy past a
+    refresh (frames 2 and 3 refreshes apart, 20 and 40 % late), a 90 Hz phone at 60;
+  - through transients (a slalom with a jump; the ball cam round a moving ball), the view against the even-frame
+    camera's at the same moments: doubled frames (40, 90 %) within 0.01° (the game's own: 1 to 3° off); frames that
+    fall between an even camera's (jitter, the phones' patterns) within 0.15°, half a pixel at 1080p, of an even
+    camera at some phase (the game's own 0.2 to 0.4° off every phase). Even-frame cameras themselves differ by 0.7 to
+    1.9° through a take-off by their frames' phase alone (when each first sees the car off the ground), so "the
+    even-frame camera" is one at the frames' own phase.
+- **What it gives up:** on uneven frames the camera isn't only the game's code (Part B's terms are ours); under a
+  timer's jitter the whole picture moves with the frame's time, as in any game.
 
 **Camera_X.UpdateCamera**: the active state updates a persistent orientation `POV {Focus, Rotation, Distance,
 FOV, CalculatedLocation}`. Then `FinalizeOrientation`: normalize the rotation, set
