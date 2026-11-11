@@ -153,6 +153,8 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
 6. The camera at the display's rate (RV-1251 (b), notes/camera.md), RX83's findings (2026-11-10).
 7. RX84's findings: the camera at the screen's refresh (a dividing cap's rate on a phone), every frame on a step, the
    pacer's refresh to it, resets, stalls, time away (2026-11-10).
+8. RX85's findings: the refresh with most frames doubled, a window's move, a phone's 30 cap, a faster screen at once
+   (2026-11-10).
 
 ## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
 

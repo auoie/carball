@@ -49,8 +49,14 @@ const STALL = 0.25;
 const DIVIDES = 0.1;
 /** The furthest a step's moment is carried past the newest tick (ticks: 1.25 ms, a timer's jitter) */
 const CARRY = 0.15;
-/** A rate this far off the lock's centre (a share) moves the centre to it */
+/** A rate this far off the lock's centre (a share) moves the centre to it; this far off the rate followed, a new rate:
+ *  the grid starts again on it (inside the lock's reach, so a window's move never leaves it slipping: RV-1269) */
 const RECENTRE = 0.01;
+const RESTART = 0.02;
+/** A desktop's newest frames this much shorter than the refresh measured (a share): measured again from them at once (a
+ *  window moved to a faster screen, RV-1272). A timer's jitter can't shorten eight in a row this much (their sum is eight
+ *  refreshes less twice the jitter at most: 5 % at 144 Hz with ±2 ms) */
+const MOVED = 0.1;
 
 /** A step planned in a frame: its moment (drawn position, in ticks), world and real seconds */
 interface Step {
@@ -118,10 +124,12 @@ export class PacedCamera {
     // (back after frames it didn't plan (the editor's camera, a replay): only this frame's moving stepped, RV-1264)
     const start = this.#drawn !== null && end - this.#drawn <= FRAME_TICKS ? this.#drawn : end - Math.min(FRAME_TICKS, real / TICK_SECONDS);
     this.#drawn = end;
-    const { period: base, capped } = this.#rateOf(real, frame);
-    // (a rate past the lock's reach of the one followed is a new one: the grid starts again on it; a little off the
-    // lock's centre, the range centred on it again, the lock carrying on)
-    if (Math.abs(base / this.#period - 1) > LOCK.range) [this.#base, this.#period, this.#grid] = [base, base, null];
+    const { period: base, capped, exact } = this.#rateOf(real, frame);
+    // (a rate moved past its jitter is a new one: the grid starts again on it; a little off the lock's centre, the range
+    // centred on it again, the lock carrying on. A touch device's, its pacer's exact measure, is the step's length every
+    // frame, the lock keeping the phase alone: RV-1270)
+    if (Math.abs(base / this.#period - 1) > RESTART) [this.#base, this.#period, this.#grid] = [base, base, null];
+    else if (exact) [this.#base, this.#period] = [base, base];
     else if (Math.abs(base / this.#base - 1) > RECENTRE) this.#base = base;
     const period = this.#period;
     // (a step due this much before its grid time: under half a step, so the frames' jitter never moves one from a frame
@@ -155,7 +163,7 @@ export class PacedCamera {
       if (steps.length > 0) {
         const offset = Math.min(early, Math.max(-early, now - this.#grid));
         this.#grid += LOCK.phase * offset;
-        this.#period = Math.min(this.#base * (1 + LOCK.range), Math.max(this.#base * (1 - LOCK.range), this.#period + LOCK.rate * offset));
+        if (!exact) this.#period = Math.min(this.#base * (1 + LOCK.range), Math.max(this.#base * (1 - LOCK.range), this.#period + LOCK.rate * offset));
       }
     }
     this.#planned = steps;
@@ -211,19 +219,20 @@ export class PacedCamera {
   /** The step's length: a touch device's cap where it divides the screen's refresh (its frames landing on every step),
    *  else the screen's refresh (a cap that doesn't divide it, 60 on a 90 Hz screen: frames a refresh or two apart, each on
    *  a step, none shimmering); a desktop's refresh measured from its frames */
-  #rateOf(real: number, frame: FrameClock | null): { readonly period: number; readonly capped: boolean } {
+  #rateOf(real: number, frame: FrameClock | null): { readonly period: number; readonly capped: boolean; readonly exact: boolean } {
     if (frame?.refreshHz) {
       const refresh = frame.refreshHz;
       const share = frame.capHz > 0 ? refresh / frame.capHz : 1;
       const whole = Math.round(share);
-      return whole >= 2 && Math.abs(share - whole) <= DIVIDES ? { period: whole / refresh, capped: true } : { period: 1 / refresh, capped: false };
+      const capped = whole >= 2 && Math.abs(share - whole) <= DIVIDES;
+      return { period: capped ? whole / refresh : 1 / refresh, capped, exact: true };
     }
     this.#measure(real);
-    return { period: this.#refresh, capped: false };
+    return { period: this.#refresh, capped: false, exact: false };
   }
 
-  /** A desktop's refresh from its frames' intervals, taken every so often: each interval over the whole refreshes it
-   *  spans (a dropped frame two), averaged (a timer's jitter cancels; their median's to start from) */
+  /** A desktop's refresh from its frames' intervals, taken every so often (and at once when the newest eight move away
+   *  from it: a window taken to a faster screen, RV-1272) */
   #measure(real: number): void {
     const ms = real * 1000;
     if (!(ms > 0) || ms >= 250) return;
@@ -231,14 +240,22 @@ export class PacedCamera {
     if (this.#intervals.length > RATE.kept) this.#intervals.shift();
     this.#measured++;
     const n = this.#intervals.length;
-    if (n !== RATE.first && (n < RATE.first || this.#measured % RATE.every !== 0)) return;
-    // (seeded from the median: a timer's jitter doesn't move it, nor dropped frames short of half)
-    let refresh = [...this.#intervals].sort((a, b) => a - b)[Math.floor(n / 2)] ?? 1000 / RATE.initial;
-    for (let pass = 0; pass < 2; pass++) {
-      const shares = this.#intervals.filter((v) => v <= 4.5 * refresh).map((v) => v / Math.max(1, Math.round(v / refresh)));
-      if (shares.length > 0) refresh = shares.reduce((a, b) => a + b, 0) / shares.length;
+    if (n === RATE.first || (n >= RATE.first && this.#measured % RATE.every === 0)) {
+      this.#refresh = 1 / Math.min(RATE.max, Math.max(RATE.min, 1000 / refreshOf(this.#intervals)));
+      return;
     }
-    this.#refresh = 1 / Math.min(RATE.max, Math.max(RATE.min, 1000 / refresh));
+    if (n >= RATE.first) {
+      // (all eight together, all the new screen's, and shorter, as a faster screen's are: dropped frames only ever lengthen
+      // them, a timer's jitter never shortens eight; a slower screen's longer frames leave no frame without a step, the
+      // next measure takes it)
+      const recent = this.#intervals.slice(-RATE.first);
+      const newest = [...recent].sort((a, b) => a - b)[RATE.first / 2] ?? 0;
+      if (recent.every((v) => Math.abs(v / newest - 1) < 0.08) && newest < this.#refresh * 1000 * (1 - MOVED)) {
+        // (the window's newest frames only, from here: the older ones a screen ago)
+        this.#intervals.splice(0, n - RATE.first);
+        this.#refresh = 1 / Math.min(RATE.max, Math.max(RATE.min, 1000 / newest));
+      }
+    }
   }
 
   /** The tick inputs at a drawn position (ticks): blended between the two ticks around it (not across a placing, nor a
@@ -259,3 +276,18 @@ export class PacedCamera {
 
 /** Further than a tick can move a car (uu: 2300 uu/s is 19 a tick): a teleport, not blended */
 const TELEPORT = 300;
+
+/** A refresh (ms) from frames' intervals (ms): each over the whole refreshes it spans (a dropped frame two), averaged (a
+ *  timer's jitter cancels). Seeded from their median (a timer's jitter doesn't move it), or from the median of the short
+ *  ones when they're a sixth or more of them (most frames doubled, the median a doubled one: RV-1268) */
+export function refreshOf(intervals: readonly number[]): number {
+  const median = (v: readonly number[]): number => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)] ?? 1000 / RATE.initial;
+  let refresh = median(intervals);
+  const short = intervals.filter((v) => v <= 0.6 * refresh);
+  if (short.length >= 0.15 * intervals.length) refresh = median(short);
+  for (let pass = 0; pass < 2; pass++) {
+    const shares = intervals.filter((v) => v <= 4.5 * refresh).map((v) => v / Math.max(1, Math.round(v / refresh)));
+    if (shares.length > 0) refresh = shares.reduce((a, b) => a + b, 0) / shares.length;
+  }
+  return refresh;
+}
