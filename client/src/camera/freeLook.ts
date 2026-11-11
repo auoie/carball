@@ -12,6 +12,10 @@ export interface FreeLookAxes {
   /** Positive looks right */
   readonly yaw: number;
   readonly source: FreeLookSource;
+  /** This update goes on from the last within one drawn frame (camera/frameCamera.ts: a frame's several updates): the
+   *  part of a rotator unit that one's offset left over is carried in, so the frame's turn is truncated once, as the
+   *  game's frame's is, not once an update (ours; absent: the game's update) */
+  readonly continued?: boolean;
 }
 
 export interface FreeLookSettings {
@@ -39,11 +43,14 @@ export const NO_FREE_LOOK: FreeLookAxes = { pitch: 0, yaw: 0, source: "stick" };
 export class FreeLookRate {
   #pitch = 0;
   #yaw = 0;
+  /** What the last offset's truncation left over (rotator units, each under one) */
+  #left = { pitch: 0, yaw: 0 };
 
   /** TurnOffFreeLook: the speed back to zero */
   reset(): void {
     this.#pitch = 0;
     this.#yaw = 0;
+    this.#left = { pitch: 0, yaw: 0 };
   }
 
   /** The frame's offset (rotator units, truncated toward zero) */
@@ -58,7 +65,11 @@ export class FreeLookRate {
     };
     this.#pitch = axis(this.#pitch, axes.pitch);
     this.#yaw = axis(this.#yaw, axes.yaw);
-    return { pitch: Math.trunc(this.#pitch * dt), yaw: Math.trunc(this.#yaw * dt) };
+    const pitch = this.#pitch * dt + (axes.continued ? this.#left.pitch : 0);
+    const yaw = this.#yaw * dt + (axes.continued ? this.#left.yaw : 0);
+    const offset = { pitch: Math.trunc(pitch), yaw: Math.trunc(yaw) };
+    this.#left = { pitch: pitch - offset.pitch, yaw: yaw - offset.yaw };
+    return offset;
   }
 }
 

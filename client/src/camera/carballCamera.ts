@@ -295,10 +295,11 @@ export class CarCameraState implements CameraState {
   #frames = 1;
   #groundTarget: Rotator | null = null;
   #ballTarget: Rotator | null = null;
-  /** The view's rotation and the camera's place before the last update, and the nominal frames that update spanned */
+  /** The view's rotation before the last update and the nominal frames that update spanned; the focus before this one */
   #rotationBefore: Rotator | null = null;
-  #locationBefore: Vec3 | null = null;
   #framesBefore = 1;
+  #focusBefore: Vec3 | null = null;
+  #focusOlder: Vec3 | null = null;
   /** The next begin keeps the view's rotation and the other state's smoothing (free look: from the free-look ball cam
    *  to the car cam and back, CAM-14/15) */
   carryFrom: CarCameraState | null = null;
@@ -342,7 +343,8 @@ export class CarCameraState implements CameraState {
     this.#groundTarget = null;
     this.#ballTarget = null;
     this.#rotationBefore = null;
-    this.#locationBefore = null;
+    this.#focusBefore = null;
+    this.#focusOlder = null;
     for (const interp of [this.#focusInterp, this.#distanceInterp, this.#focusOffsetInterp]) interp.target = null;
   }
 
@@ -370,7 +372,9 @@ export class CarCameraState implements CameraState {
     // frame (UpdateValidPOV's free-look order, notes/camera-respawn-goal.md CAM-13)
     const freeLook = this.ballCam ? null : input.freeLook;
     this.#frames = input.frames;
-    const [rotationNow, locationNow] = [pov.rotation, pov.calculatedLocation];
+    const rotationNow = pov.rotation;
+    this.#focusOlder = this.#firstExecution ? null : this.#focusBefore;
+    this.#focusBefore = this.#firstExecution ? null : pov.focus;
     this.#updateViewOffset(settings);
     this.#updateAirGroundBlend(dt, car);
     this.#updateFocusWorldOffset(dt, car, lookAtBall);
@@ -384,7 +388,6 @@ export class CarCameraState implements CameraState {
     if (freeLook) pov.rotation = applyFreeLook(pov.rotation, freeLook);
     else if (!this.ballCam) this.#updateRotationModifiers(car, pov);
     this.#rotationBefore = this.#firstExecution ? null : rotationNow;
-    this.#locationBefore = this.#firstExecution ? null : locationNow;
     this.#framesBefore = this.#frames;
     this.#firstExecution = false;
   }
@@ -517,25 +520,49 @@ export class CarCameraState implements CameraState {
     }
     const speedScale = Math.min(lengthOf(car.vel) / CAR_MAX_SPEED, 1);
     const interpRate = lerp(CAR.airVelocityInfluence, CAR.airVelocityInfluenceMaxSpeed, speedScale);
-    // (the camera's place is the last update's: the game's a frame before this one's end. An update spanning more or less
-    // than one nominal frame carries it on at the last update's speed over the frames past one, so the turn toward the
-    // focus is one frame's, as the game's: ours, nothing at frames = 1)
-    const before = this.#locationBefore;
-    const from =
-      before && this.#frames !== 1 && this.#framesBefore > 0
-        ? add(pov.calculatedLocation, scale(sub(pov.calculatedLocation, before), (this.#frames - 1) / this.#framesBefore))
-        : pov.calculatedLocation;
+    // The game's frame turns the view a share of the way toward the focus as seen from the camera's last place: toward
+    // a direction one frame of the focus's travel ahead of the view, which goes on ahead as the view turns (no smoother
+    // toward a fixed target: over n frames the view turns n shares of that one frame's angle). So an update spanning
+    // `frames` of them looks one nominal frame of the focus's move ahead (the camera's place carried on by the rest of
+    // the focus's move this update), and turns `frames` shares of it: the game's own step taken `frames` long, with the
+    // same steady lag whatever the frames' lengths (ours, RV-1301; the game's exactly at frames = 1)
+    const from = add(pov.calculatedLocation, this.#focusPastAFrame(pov.focus));
     let newRot = vectorToRotator(sub(pov.focus, from));
-    // The game uses a fixed 1/60 here, not DeltaTime: a share a frame, so over `frames` of them that share compounded
-    // (ours; at frames = 1 the game's)
+    // (the game's share is of a fixed 1/60 here, not DeltaTime)
     const share = Math.min(interpRate * (1 / 60), 1);
-    newRot = rlerp(pov.rotation, newRot, this.#frames === 1 ? share : 1 - (1 - share) ** this.#frames);
-    // ScalePitch: flatten the pitch when moving backwards relative to the view (once a frame: compounded alike)
+    const toFocus = newRot;
+    newRot = rlerp(pov.rotation, newRot, Math.min(share * this.#frames, 1));
+    // ScalePitch: flatten the pitch when moving backwards relative to the view. The game's frame: the pitch turned its
+    // share, then scaled by `keep`. Over `frames` of them that pair repeated, the turn a frame the same (the yaw's
+    // receding target): keep^frames of the pitch, and the turns' own scaled sum (ours; the game's at frames = 1)
     const speedScale2D = Math.hypot(car.vel.x, car.vel.y) / CAR_MAX_SPEED;
     if (dot(car.vel, rotatorToVector(newRot)) < 0) {
-      newRot = rotator(newRot.pitch * (1 - speedScale2D) ** this.#frames, newRot.yaw, newRot.roll);
+      const keep = 1 - speedScale2D;
+      if (this.#frames === 1 || !(keep > 0) || keep >= 1) {
+        newRot = rotator(newRot.pitch * Math.max(0, keep) ** this.#frames, newRot.yaw, newRot.roll);
+      } else {
+        const turn = rlerp(pov.rotation, toFocus, share).pitch - pov.rotation.pitch;
+        const kept = keep ** this.#frames;
+        newRot = rotator(pov.rotation.pitch * kept + (turn * keep * (1 - kept)) / (1 - keep), newRot.yaw, newRot.roll);
+      }
     }
     pov.rotation = newRot;
+  }
+
+  /** The focus's move this update past its first nominal frame's (nothing at frames = 1; back from its place now, where
+   *  the update spans less than a frame). Along its path through its last three places (this update's, the one before,
+   *  the one before that), the path's bend counted: a turn's chord over more than a frame points ahead of its first
+   *  frame's, and the lag would differ by the frames' lengths. Along the line of the last two when there's no third */
+  #focusPastAFrame(focus: Vec3): Vec3 {
+    const [f, before] = [this.#frames, this.#focusBefore];
+    if (!before || f === 1 || !(f > 0)) return vec3(0, 0, 0);
+    const moved = sub(focus, before);
+    const [older, fp] = [this.#focusOlder, this.#framesBefore];
+    if (!older || !(fp > 0)) return scale(moved, (f - 1) / f);
+    // (Lagrange's weights one frame after the update's start, the places at f + fp, f and 0 frames back)
+    const l0 = (1 - f) / (fp * (f + fp));
+    const l2 = (fp + 1) / ((f + fp) * f);
+    return sub(moved, add(scale(sub(older, before), l0), scale(moved, l2)));
   }
 
   /** CameraState_BallCam_TA.UpdateAirAndGroundCamera. */

@@ -86,37 +86,59 @@ shape the 2026-11-11 audit's, report 6's design observation, in place of the pac
   evenly, between one step of that length and the game's steps at the nominal length (`q − (1 − q)·q1 / ((1 − q1)·
   frames)`, q = e^(−λ·dt), q1 = q^(1/frames); 0 at a share of 1, so at even frames at the feel's rate the camera is the
   game's, update for update). On the focus, focus offset and distance (InterpVector), the ground's and the wall's
-  rotations, and the ball cam's. With it: the view's direction the focus is projected along, and the camera's place the
-  air view turns from, are the last update's (the game's: a frame before this one's end), so each is carried on at the
-  last update's rate over the frames past one; the air view's fixed 1/60 share and its pitch's flattening, once a frame
-  in the game, are compounded over the share. A target not followed the update before (a state begun, the ball cam for
-  the car cam) has no last value: that update is the game's step.
+  rotations, and the ball cam's. With it: the view's direction the focus is projected along is the last update's (the
+  game's: a frame before this one's end), so it is carried on at the last update's rate over the frames past one. A
+  target not followed the update before (a state begun, the ball cam for the car cam) has no last value: that update
+  is the game's step.
+- **The air view is no smoother** (RV-1301: the first version treated it as one and wobbled three times the game's
+  own in a steady air turn). The game's frame turns the view a fixed share s toward the focus as seen from the
+  camera's last place: a direction one frame of the focus's travel ahead of the view, which goes on ahead as the view
+  turns (the camera swings round the focus with it). So n frames turn the view n shares of that one frame's angle,
+  not 1 − (1 − s)^n of it. An update spanning `frames` of them is that step taken `frames` long: it looks ahead by
+  the focus's move over the *first* nominal frame of its span (taken along the focus's last three places, so a turn's
+  bend counts: along the chord alone the lag was off by half a frame's turn for each frame past one) and turns
+  min(1, s × frames) of the way. The steady lag is then the game's at any update length (19.110° in a 3000 uu air
+  circle for updates of 0.4 to 2 frames). The pitch's flattening (the pitch scaled by `keep` each frame the car flies
+  against the view) is that frame's pair repeated: keep^frames of the pitch, plus the turns' own scaled sum.
 - **The rate (the feel's) needs no precision:** it sets the lag and nothing else (a 20 % error moves a steady lag
   0.15°; no frames can make it wobble). It's the page's own frames' rate of late (`RefreshMeter.recentHz`: the nearest
-  common display rate of the fastest tenth of the last 120 frames, the highest such measure of the last 10 s, so it comes
-  down when a window moves to a slower screen), or a touch device's Frame Rate when that's the lower (a phone capped at
+  common display rate of the fast frames of the last 120, the highest such measure of the last 10 s, so it comes
+  down when a window moves to a slower screen). The fast frames are the cluster about the fastest tenth, and their
+  mean is the interval: the edge alone read a jittered 75 Hz as 90 (RV-1305). A stall (100 ms) and the 30 frames after
+  it aren't counted: a catch-up burst read 360 Hz for 10 s (RV-1302). A rate rises when two measures in a row agree and
+  holds while a twenty-fifth of the frames still run at it: one threshold for both flipped the feel between a rate and
+  its half at nine frames in ten doubled (RV-1303). Or a touch device's Frame Rate when that's the lower (a phone capped at
   60 has the game's feel at 60, whatever its screen: 90 Hz at 60 too, which the grid couldn't without the car shimmering
   against the ball); 60 before the first measure. A page can't see its screen's true refresh or its phase, only when its
   own frames ran: the paced grid before this needed both, and five review rounds found the cases where they can't be
   had (a phone's browser missing refreshes, most frames doubled, a variable-refresh screen: the audit's REN-01, 02, 03).
 - **The car is drawn at the frame's moment,** like the ball and every other car (the grid drew it at its last step's:
-  REN-03). A new car (a spawn's count, a teleport) is never blended across (REN-08); a frame another camera draws
-  (the garage's, the editor's, a goal replay's) and a reset start the player's afresh from its own car.
-- **The mouse's free look** is its counts, not a rate: a frame's are shared over its updates. The swivel's real time
-  and a goal's slow motion are each update's share of the frame's.
+  REN-03). A new car (a spawn's count, a demolition, a teleport) is never blended across (REN-08): the updates step to
+  it by the ticks, the car put there at its tick's moment (RV-1306), or with no ticks told, in the frame's one update.
+  A frame another camera draws (the garage's, the editor's, a goal replay's) and a reset start the player's afresh
+  from its own car.
+- **The mouse's free look** is its counts, not a rate: a frame's are shared over its updates, and the part of a
+  rotator unit each update's truncation leaves is carried to the next, so the frame's turn is truncated once, as the
+  game's frame's is (RV-1304). The swivel's real time and a goal's slow motion are each update's share of the frame's.
 - **Measured** (`frameCamera.test.ts`, the real camera code, physics clock and frame pacer):
   - even frames at 30, 60, 120, 144, 165, 240 Hz: the game's camera frame for frame (a turn, the air's quarter turn,
     a goal's slow motion, the ball cam);
   - a steady turn, the car's yaw on screen within 0.01° at the feel's lag, where the game's own camera wobbles 0.2 to
     2°: 15, 85 and 95 % of 60 Hz frames doubled, 45 % at 144, Firefox's 16/17 ms, ±1 and ±2 ms of timer jitter, a
     variable-refresh screen (7 to 14 ms), a 66 ms hitch a second, a 120 Hz phone at 60 in a browser busy past a
-    refresh (frames 2 and 3 refreshes apart, 20 and 40 % late), a 90 Hz phone at 60;
-  - through transients (a slalom with a jump; the ball cam round a moving ball), the view against the even-frame
-    camera's at the same moments: doubled frames (40, 90 %) within 0.01° (the game's own: 1 to 3° off); frames that
-    fall between an even camera's (jitter, the phones' patterns) within 0.15°, half a pixel at 1080p, of an even
-    camera at some phase (the game's own 0.2 to 0.4° off every phase). Even-frame cameras themselves differ by 0.7 to
-    1.9° through a take-off by their frames' phase alone (when each first sees the car off the ground), so "the
-    even-frame camera" is one at the frames' own phase.
+    refresh (frames 2 and 3 refreshes apart, 20 and 40 % late), a 90 Hz phone at 60. The car's place in the view
+    within 0.05° (the busy phone's 0.04°: the focus follows the car's curved path between updates as along a line;
+    the game's own 0.26°);
+  - a steady turn in the air on the same kinds of frames: the lag within 0.02° of the even camera's and still to
+    0.01°, where the game's own wobbles 0.03 to 0.25°;
+  - through transients, against the even-frame camera at the same moments, the view and the car's place in it, ten
+    seeds a pattern (one seed's worst frame is no guide). Doubled frames (40, 90 %): that camera's to 0.001°
+    everywhere, a jump included (the game's own 1 to 3° off). Frames that fall between an even camera's (jitter, the
+    phones' patterns): between events within 0.01° of an even camera at some phase (the game's own 0.2 to 0.4° off
+    every phase); in ball cam the same; through a slalom all in the air within 0.11°. **At a take-off or a landing
+    it is no one even camera's:** those differ among themselves by 0.7 to 1.9° by when each first sees the car off
+    the ground, and a frame between two of theirs is inside that spread, 0.3° from the nearest at worst (mean 0.1 to
+    0.16°), as the game's own camera on such frames is.
 - **What it gives up:** on uneven frames the camera isn't only the game's code (Part B's terms are ours); under a
   timer's jitter the whole picture moves with the frame's time, as in any game.
 

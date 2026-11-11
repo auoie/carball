@@ -63,7 +63,12 @@ export class FrameCamera {
    *  that is */
   frame(span: FrameSpan, feelHz: number, now: Followed, controls: CameraControls, alpha = 1): CameraView {
     const at = this.#index - 1 + alpha;
-    const last = this.#last && !placed(this.#last.followed.car, now.car, span.scene) ? this.#last : null;
+    // (a car put where it is since the last frame, a spawn, a demolition, a teleport: stepped to all the same where the
+    // ticks tell when, each update the scene as drawn at its moment and the car put there at its tick's, as a frame
+    // there would have seen it (one update on the wreck for the whole frame was 2 degrees off for that frame, RV-1306).
+    // With no ticks to tell when: this frame's update alone, nothing blended across)
+    const jumped = this.#last !== null && placed(this.#last.followed.car, now.car, span.scene);
+    const last = this.#last && (!jumped || this.#told(this.#last.at, at)) ? this.#last : null;
     this.#last = { followed: now, at };
     // (the nominal frames the scene's move spans: its world time undilated, at the feel's rate)
     const frames = span.world > 0 ? ((span.scene * span.real) / span.world) * feelHz : 0;
@@ -72,7 +77,7 @@ export class FrameCamera {
     let view: CameraView | null = null;
     for (let i = 1; i <= updates; i++) {
       const then = i === updates ? now : this.#drawnAt(last.at + ((at - last.at) * i) / updates, last.followed, now, i / updates);
-      view = this.camera.update(span.scene / updates, then.car, then.ball, shared(controls, updates), then.respawn, span.real / updates, frames / updates);
+      view = this.camera.update(span.scene / updates, then.car, then.ball, shared(controls, updates, i), then.respawn, span.real / updates, frames / updates);
     }
     return view ?? this.camera.update(span.scene, now.car, now.ball, controls, now.respawn, span.real);
   }
@@ -89,6 +94,12 @@ export class FrameCamera {
       return { car: blendStates(a.car, b.car, at - base), ball: lerp(a.ball, b.ball, at - base), respawn: b.respawn };
     }
     return { car: blendStates(last.car, now.car, share), ball: lerp(last.ball, now.ball, share), respawn: now.respawn };
+  }
+
+  /** Whether every tick about the scene's moments from `from` to `to` (in ticks) was told and is kept */
+  #told(from: number, to: number): boolean {
+    for (let k = Math.floor(from); k <= Math.ceil(to); k++) if (!this.#ticks.some((t) => t.index === k)) return false;
+    return true;
   }
 
   /** A frame another camera draws (the garage's, the editor's, a replay's): the next of this one's starts from its own
@@ -112,10 +123,20 @@ function placed(last: CarState, now: CarState, sceneSeconds: number): boolean {
   return moved > PLACED.speed * sceneSeconds + PLACED.slack;
 }
 
-/** The frame's controls for one of its `updates`: the mouse's free look is its counts (camera/freeLook.ts), not a rate,
- *  so each update takes its share of them (the frame's turn the same however many updates it runs) */
-function shared(controls: CameraControls, updates: number): CameraControls {
+/** The frame's controls for the `index`th of its `updates`. The free look turns the view by whole rotator units, each
+ *  update's offset truncated: the updates after the first carry in what the one before left over, so the frame's turn
+ *  is truncated once, as the game's frame's is (two updates each lost up to a unit: a tenth of a slow mouse turn on a
+ *  variable-refresh screen, RV-1304). The mouse's free look is its counts (camera/freeLook.ts), not a rate, so each
+ *  update takes its share of them */
+function shared(controls: CameraControls, updates: number, index: number): CameraControls {
   const look = controls.freeLook;
-  if (updates === 1 || look?.axes.source !== "mouse") return controls;
-  return { ...controls, freeLook: { ...look, axes: { ...look.axes, pitch: look.axes.pitch / updates, yaw: look.axes.yaw / updates } } };
+  if (updates === 1 || !look) return controls;
+  const mouse = look.axes.source === "mouse";
+  const axes = {
+    ...look.axes,
+    pitch: mouse ? look.axes.pitch / updates : look.axes.pitch,
+    yaw: mouse ? look.axes.yaw / updates : look.axes.yaw,
+    continued: index > 1,
+  };
+  return { ...controls, freeLook: { ...look, axes } };
 }

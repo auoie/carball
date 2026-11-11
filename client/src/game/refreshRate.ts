@@ -19,27 +19,73 @@ export function nearestRate(hz: number): number {
 /** How long a measure counts for `recentHz` (ms of frames) */
 const RECENT_MS = 10_000;
 
+/** A frame this long (ms) is a stall, and the frames just after one aren't the screen's: a browser may run the callbacks
+ *  it owes in a burst, 2 or 3 ms apart, and two dozen of those were the fastest tenth of the window: 360 Hz read for the
+ *  10 s a measure counts (RV-1302). Neither it nor the `AFTER_STALL` frames after it are counted */
+const STALL_MS = 100;
+const AFTER_STALL = 30;
+
+/** The fastest frames are a cluster about the screen's interval (the rest are two and three of it): its mean is the
+ *  interval, not its fast edge, which a timer's jitter of a millisecond puts a rate too high (75 read as 90, 144 as
+ *  180: RV-1305). From the fast percentile, the cluster is the intervals within this factor of its mean either way,
+ *  found in a few rounds (the edge first, then each round's mean) */
+const CLUSTER = 1.5;
+const CLUSTER_ROUNDS = 4;
+
+/** The feel's rate holds while this share of the recent frames are still as fast as it (within `HOLD_MARGIN` of its
+ *  interval), where it takes `PERCENTILE` of them to raise it. One threshold for both flipped the feel between the
+ *  screen's rate and half of it when about nine frames in ten were doubled (RV-1303) */
+const HOLD_PERCENTILE = 0.04;
+const HOLD_MARGIN = 1.25;
+
+/** The middle of the cluster of fast intervals in `sorted` (ms) */
+function fastInterval(sorted: readonly number[]): number {
+  let fast = sorted[Math.floor(sorted.length * PERCENTILE)] ?? sorted[0] ?? 1000 / 60;
+  for (let round = 0; round < CLUSTER_ROUNDS; round++) {
+    const cluster = sorted.filter((v) => v <= fast * CLUSTER && v >= fast / CLUSTER);
+    if (cluster.length === 0) break;
+    fast = cluster.reduce((a, b) => a + b, 0) / cluster.length;
+  }
+  return fast;
+}
+
 export class RefreshMeter {
   readonly #recent: number[] = [];
   #added = 0;
+  #skip = 0;
   #latched: number | null = null;
-  /** The measures of the last `RECENT_MS`: when (the frames' time added, ms) and what */
+  /** The feel's measures of the last `RECENT_MS`: when (the frames' time added, ms) and what */
   #measures: { readonly at: number; readonly hz: number }[] = [];
+  #last: number | null = null;
   #time = 0;
 
-  /** A frame's interval (ms; a stall's or a hidden tab's, 250 or more, not counted) */
+  /** A frame's interval (ms; a hidden tab's, 250 or more, not counted; nor a stall and the frames just after it) */
   add(ms: number): void {
-    if (!(ms > 0) || ms >= 250) return;
+    if (!(ms > 0) || ms >= 250) {
+      if (ms >= 250) this.#skip = AFTER_STALL;
+      return;
+    }
     this.#time += ms;
+    if (ms >= STALL_MS) this.#skip = AFTER_STALL;
+    else if (this.#skip > 0) this.#skip--;
+    else this.#count(ms);
+  }
+
+  #count(ms: number): void {
     this.#recent.push(ms);
     if (this.#recent.length > KEPT) this.#recent.shift();
     this.#added++;
     if (this.#recent.length < EVERY || this.#added % EVERY !== 0) return;
     const sorted = [...this.#recent].sort((a, b) => a - b);
-    const fast = sorted[Math.floor(sorted.length * PERCENTILE)] ?? sorted[0] ?? 1000 / 60;
-    const hz = nearestRate(1000 / fast);
+    const hz = nearestRate(1000 / fastInterval(sorted));
     this.#latched = Math.max(this.#latched ?? 0, hz);
-    this.#measures = [...this.#measures.filter((m) => m.at > this.#time - RECENT_MS), { at: this.#time, hz }];
+    // (for the feel a rate rises once two measures in a row agree on it, and holds while a few frames still run at it)
+    const agreed = Math.min(hz, this.#last ?? hz);
+    this.#last = hz;
+    const held = this.recentHz;
+    const holds = held !== null && (sorted[Math.floor(sorted.length * HOLD_PERCENTILE)] ?? Infinity) <= (1000 / held) * HOLD_MARGIN;
+    const counted = holds ? Math.max(agreed, held) : agreed;
+    this.#measures = [...this.#measures.filter((m) => m.at > this.#time - RECENT_MS), { at: this.#time, hz: counted }];
   }
 
   /** The refresh (Hz), null before a measure */

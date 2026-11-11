@@ -59,11 +59,20 @@ const facing = (yaw: number): Rot3 => ({ forward: vec3(Math.cos(yaw), Math.sin(y
 /** A path: the car at each tick (and the ball, where it moves) */
 type Path = (tick: number) => { car: CarState; ball: Vec3 };
 
-/** A steady full-lock turn to the left (1410 uu/s on a 653 uu circle: the reviews') */
+/** A steady full-lock turn (1410 uu/s on a 653 uu circle: the reviews'), the car moving the way its velocity points */
 const turning: Path = (tick) => {
-  const th = (-1410 / 653) * tick * TICK_SECONDS;
+  const th = (1410 / 653) * tick * TICK_SECONDS;
   return {
     car: car(vec3(653 * Math.sin(th), 653 - 653 * Math.cos(th), 17), vec3(Math.cos(th) * 1410, Math.sin(th) * 1410, 0), facing(th)),
+    ball: STILL_BALL,
+  };
+};
+
+/** A steady turn in the air (1410 uu/s on a 3000 uu circle, 400 uu up): the air camera's own following */
+const airCircle: Path = (tick) => {
+  const th = (1410 / 3000) * tick * TICK_SECONDS;
+  return {
+    car: car(vec3(3000 * Math.sin(th), 3000 - 3000 * Math.cos(th), 400), vec3(Math.cos(th) * 1410, Math.sin(th) * 1410, 0), facing(th), false),
     ball: STILL_BALL,
   };
 };
@@ -220,18 +229,29 @@ function phone(hz: number, cap: number, seconds: number, o: { busy: number; slow
   return out;
 }
 
-/** The worst difference (degrees) of the view's direction on a run from an even-frame camera's at the same moments: at
- *  each of the run's frames (its first second left out), the nearest of the even runs given, each one's view taken
- *  between its two frames about that moment. One even run: the same frames' phase (a run whose frames fall on its own).
- *  Several, their frames a share of a frame apart: any phase's, for a run whose frames fall between an even run's, since
- *  even-frame cameras themselves differ by their frames' phase through a transient (0.7 to 1.9° through a jump's
- *  take-off: when each first sees the car off the ground) */
-function fromEven(frames: readonly Frame[], evenRuns: readonly (readonly Frame[])[]): number {
-  let worst = 0;
+const pitchOf = (v: Vec3): number => Math.atan2(v.z, Math.hypot(v.x, v.y));
+/** Where a car is in a view: its direction off the view's own (degrees right and up) and its distance (uu) */
+function placeIn(position: Vec3, forward: Vec3, of: Vec3): { yaw: number; pitch: number; distance: number } {
+  const d = vec3(of.x - position.x, of.y - position.y, of.z - position.z);
+  return { yaw: degrees(yawOf(d) - yawOf(forward)), pitch: degrees(pitchOf(d) - pitchOf(forward)), distance: Math.hypot(d.x, d.y, d.z) };
+}
+/** The frame's car in its own view */
+const place = (f: Frame): { yaw: number; pitch: number; distance: number } => placeIn(f.view.position, f.view.forward, f.car.pos);
+
+/** How far a run is from an even-frame camera at the same moments, the worst of its frames from `from` s on (to `to`):
+ *  the view's direction (degrees), and the car's place in the view, its direction (degrees) and its distance (uu). At
+ *  each frame, the nearest of the even runs given, each one's view taken between its two frames about that moment. One
+ *  even run: the same frames' phase (a run whose frames fall on its own). Several, their frames a share of a frame
+ *  apart: any phase's, for a run whose frames fall between an even run's, since even-frame cameras themselves differ
+ *  by their frames' phase through a transient (0.7 to 1.9 degrees through a jump's take-off: when each first sees the
+ *  car off the ground) */
+function fromEven(frames: readonly Frame[], evenRuns: readonly (readonly Frame[])[], from = 1, to = Infinity): { view: number; car: number; distance: number } {
+  const worst = { view: 0, car: 0, distance: 0 };
   const at = evenRuns.map(() => 0);
+  const mix = (a: Vec3, b: Vec3, t: number): Vec3 => vec3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
   for (const f of frames) {
-    if (f.at < 1) continue;
-    let nearest = Infinity;
+    if (f.at < from || f.at >= to) continue;
+    let nearest: { view: number; car: number; distance: number } | null = null;
     evenRuns.forEach((evenRun, n) => {
       let k = at[n] ?? 0;
       while (k + 1 < evenRun.length && (evenRun[k + 1]?.at ?? Infinity) < f.at) k++;
@@ -240,10 +260,21 @@ function fromEven(frames: readonly Frame[], evenRuns: readonly (readonly Frame[]
       if (!a || !b) return;
       const t = (f.at - a.at) / (b.at - a.at);
       const yaw = yawOf(a.view.forward) + (degrees(yawOf(b.view.forward) - yawOf(a.view.forward)) * Math.PI * t) / 180;
-      const pitch = a.view.forward.z + (b.view.forward.z - a.view.forward.z) * t;
-      nearest = Math.min(nearest, Math.max(Math.abs(degrees(yawOf(f.view.forward) - yaw)), (Math.abs(f.view.forward.z - pitch) * 180) / Math.PI));
+      const pitch = pitchOf(a.view.forward) + (pitchOf(b.view.forward) - pitchOf(a.view.forward)) * t;
+      const forward = vec3(Math.cos(yaw) * Math.cos(pitch), Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch));
+      const [ours, theirs] = [place(f), placeIn(mix(a.view.position, b.view.position, t), forward, f.car.pos)];
+      const off = {
+        view: Math.max(Math.abs(degrees(yawOf(f.view.forward) - yaw)), Math.abs(degrees(pitchOf(f.view.forward) - pitch))),
+        car: Math.max(Math.abs(degrees(((ours.yaw - theirs.yaw) * Math.PI) / 180)), Math.abs(ours.pitch - theirs.pitch)),
+        distance: Math.abs(ours.distance - theirs.distance),
+      };
+      if (!nearest || off.view < nearest.view) nearest = off;
     });
-    if (Number.isFinite(nearest)) worst = Math.max(worst, nearest);
+    const found = nearest as { view: number; car: number; distance: number } | null;
+    if (!found) continue;
+    worst.view = Math.max(worst.view, found.view);
+    worst.car = Math.max(worst.car, found.car);
+    worst.distance = Math.max(worst.distance, found.distance);
   }
   return worst;
 }
@@ -342,10 +373,60 @@ describe("the camera across a frame", () => {
       ["a 90 Hz phone at 60: a refresh, then two", phone(90, 60, 12, { busy: 5, slow: 5, late: 0 }), 60, 3.23, 0.08],
     ];
     for (const [name, shown, feel, lag, gameWobbles] of cases) {
-      const seen = half(run(shown, turning, { feel })).map(onScreen);
+      const frames = half(run(shown, turning, { feel }));
+      const seen = frames.map(onScreen);
       expect(range(seen), name).toBeLessThan(0.01);
       expect(Math.abs(mean(seen)), name).toBeCloseTo(lag, 2);
-      expect(range(half(run(shown, turning, { feel, game: true })).map(onScreen)), `${name}: the game's own`).toBeGreaterThan(gameWobbles);
+      // (and the car itself still in the view: where it's drawn, to 0.05 degrees (the busy phone's 0.04: the focus
+      // follows the car's curved path between updates as along a straight line), and how far, a hundredth of a uu;
+      // the game's own camera on the same frames moves it over twice as far)
+      const wander = (of: Frame[]): number => Math.max(range(of.map((f) => place(f).yaw)), range(of.map((f) => place(f).pitch)));
+      const game = half(run(shown, turning, { feel, game: true }));
+      expect(wander(frames), `${name}: the car's place`).toBeLessThan(0.05);
+      expect(wander(frames), `${name}: the car's place, against the game's own`).toBeLessThan(wander(game) / 2);
+      expect(range(frames.map((f) => place(f).distance)), `${name}: the car's distance`).toBeLessThan(0.01);
+      expect(range(game.map(onScreen)), `${name}: the game's own`).toBeGreaterThan(gameWobbles);
+    }
+  });
+
+  it("follows a steady turn in the air as the game does at the feel's rate, still on screen whatever the frames (RV-1301)", () => {
+    const lagOf = (f: Frame): number => degrees(yawOf(f.car.vel) - yawOf(f.view.forward));
+    const settled = (frames: Frame[]): Frame[] => frames.filter((f) => f.at > 7);
+    const at = (hz: number): number => mean(settled(run(even(hz, 14), airCircle, { feel: hz })).map(lagOf));
+    expect([at(60), at(144)].map((v) => +v.toFixed(2))).toEqual([19.11, 18.45]);
+    const r = rng(1);
+    const cases: [string, number[], number, number][] = [
+      // [the frames, the feel's rate, the game's own wobble on them at least]
+      ["60 Hz, 40 % of frames doubled", doubled(60, 14, 0.4, r), 60, 0.2],
+      ["60 Hz, each frame's time ±1 ms", jittered(60, 14, 0.001, r), 60, 0.005],
+      ["a 120 Hz phone at 60, the page busy: 2 and 3 refreshes a frame", phone(120, 60, 14, { busy: 12, slow: 20, late: 0.2 }), 60, 0.08],
+      ["the same, 40 % of its frames late", phone(120, 60, 14, { busy: 12, slow: 20, late: 0.4 }), 60, 0.08],
+      ["a 90 Hz phone at 60: a refresh, then two", phone(90, 60, 14, { busy: 5, slow: 5, late: 0 }), 60, 0.02],
+      ["a variable-refresh screen, 7 to 14 ms a frame", Array.from({ length: 1400 }, () => 0.007 + 0.007 * r()), 144, 0.05],
+      // (the feel not the frames' own rate: before the first measure on a 144 Hz screen, after a window's move to a
+      // 60 Hz one. Every update a fraction of a nominal frame, or several of them)
+      ["144 Hz frames at a feel of 60", even(144, 14), 60, 0],
+      ["60 Hz frames at a feel of 144", even(60, 14), 144, 0],
+    ];
+    for (const [name, shown, feel, gameWobbles] of cases) {
+      const seen = settled(run(shown, airCircle, { feel })).map(lagOf);
+      expect(Math.abs(mean(seen) - at(feel)), `${name}: its lag ${mean(seen).toFixed(3)}`).toBeLessThan(0.02);
+      expect(range(seen), name).toBeLessThan(0.01);
+      const game = settled(run(shown, airCircle, { feel, game: true })).map(lagOf);
+      if (gameWobbles > 0) expect(range(game), `${name}: the game's own`).toBeGreaterThan(gameWobbles);
+      else expect(Math.abs(mean(game) - at(feel)), `${name}: the game's own lag is the frames' rate's`).toBeGreaterThan(0.5);
+    }
+    // (the camera alone, every update the same share of a nominal frame: the lag the game's at any share)
+    for (const share of [0.417, 0.5, 0.75, 1.25, 1.5, 2]) {
+      const camera = new PlayerCamera();
+      const lags: number[] = [];
+      for (let i = 0; (i * share) / 60 < 14; i++) {
+        const t = (i * share) / 60 / TICK_SECONDS;
+        const here = blendStates(airCircle(Math.floor(t)).car, airCircle(Math.floor(t) + 1).car, t - Math.floor(t));
+        const view = camera.update(share / 60, here, STILL_BALL, CAR_CAM, null, share / 60, share);
+        if ((i * share) / 60 > 7) lags.push(degrees(yawOf(here.vel) - yawOf(view.forward)));
+      }
+      expect(Math.abs(mean(lags) - at(60)), `updates of ${String(share)} of a frame: ${mean(lags).toFixed(3)}`).toBeLessThan(0.005);
     }
   });
 
@@ -361,38 +442,135 @@ describe("the camera across a frame", () => {
     }
   });
 
-  it("through transients it shows what the even-frame camera shows at the same moments: a slalom with a jump, the ball cam round a moving ball", () => {
-    const r = rng(11);
-    // (frames that fall on an even run's own: its phase's camera, to a hundredth of a degree; frames that fall between:
-    // any phase's, twenty-four of them (0.7 ms apart), to 0.15°, half a pixel at 1080p)
-    const onPhase: [string, number[]][] = [
-      ["60 Hz, 40 % of frames doubled", doubled(60, 9, 0.4, r)],
-      ["60 Hz, 90 % doubled", doubled(60, 9, 0.9, r)],
-    ];
-    const anyPhase: [string, number[]][] = [
-      ["60 Hz, each frame's time ±1 ms", jittered(60, 9, 0.001, r)],
-      ["a 120 Hz phone at 60, the page busy: 2 and 3 refreshes a frame", phone(120, 60, 9, { busy: 12, slow: 20, late: 0.2 })],
-      ["the same, 40 % of its frames late", phone(120, 60, 9, { busy: 12, slow: 20, late: 0.4 })],
-      ["a 90 Hz phone at 60: a refresh, then two", phone(90, 60, 9, { busy: 5, slow: 5, late: 0 })],
-    ];
-    for (const [what, path, controls, gameOff] of [
-      ["a slalom with a jump", slalomWithAJump(), CAR_CAM, 0.4],
-      ["the ball cam round a moving ball", roundAMovingBall(), BALL_CAM, 0.4],
+  // Through transients, against the even-frame camera at the same moments: the view's direction and the car's place in
+  // it. Ten seeds of each pattern, the thresholds theirs (one seed's worst frame is no guide: the landing's read 0.15
+  // with one and 0.3 with another).
+  // - Frames that fall on an even run's own (doubled ones): that run's camera, everywhere, to a thousandth of a degree.
+  // - Frames that fall between: any phase's, twenty-four of them (0.7 ms apart). Between events, a hundredth of a
+  //   degree. At a take-off or a landing no closer than even cameras are to each other: they differ by 0.7 to 1.9
+  //   degrees by when each first sees the car off the ground, and a frame that falls between two of theirs is inside
+  //   that spread, no one camera's (0.3 degrees from the nearest at worst, as the game's own camera on such frames is).
+  const SEEDS = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+  const ON_GRID: [string, (seed: number) => number[]][] = [
+    ["60 Hz, 40 % of frames doubled", (seed) => doubled(60, 12.5, 0.4, rng(seed))],
+    ["60 Hz, 90 % doubled", (seed) => doubled(60, 12.5, 0.9, rng(seed))],
+  ];
+  const BETWEEN: [string, (seed: number) => number[]][] = [
+    ["60 Hz, each frame's time ±1 ms", (seed) => jittered(60, 12.5, 0.001, rng(seed))],
+    ["a 120 Hz phone at 60, the page busy: 2 and 3 refreshes a frame", (seed) => phone(120, 60, 12.5, { busy: 12, slow: 20, late: 0.2, seed })],
+    ["the same, 40 % of its frames late", (seed) => phone(120, 60, 12.5, { busy: 12, slow: 20, late: 0.4, seed })],
+    ["a 90 Hz phone at 60: a refresh, then two", (seed) => phone(90, 60, 12.5, { busy: 5, slow: 5, late: 0, seed })],
+  ];
+  const evenRunsOf = (path: Path, controls: CameraControls): Frame[][] =>
+    Array.from({ length: 24 }, (_, n) => run([...(n > 0 ? [n / 24 / 60] : []), ...even(60, 13)], path, { feel: 60, controls }));
+  type Off = ReturnType<typeof fromEven>;
+  const worstOf = (all: readonly Off[]): Off => ({
+    view: Math.max(...all.map((a) => a.view)),
+    car: Math.max(...all.map((a) => a.car)),
+    distance: Math.max(...all.map((a) => a.distance)),
+  });
+
+  it("through a slalom with a jump it shows what the even-frame camera shows at the same moments, the car where that camera has it", () => {
+    const path = slalomWithAJump();
+    const evenRuns = evenRunsOf(path, CAR_CAM);
+    /** The jump: from its take-off (3 s) to the view settled after its landing (4.3 s) */
+    const jump = [2.95, 4.9] as const;
+    const between = (frames: Frame[], refs: Frame[][]): Off => worstOf([fromEven(frames, refs, 1, jump[0]), fromEven(frames, refs, jump[1])]);
+    for (const [name, make] of ON_GRID) {
+      const off = worstOf(SEEDS.map((seed) => fromEven(run(make(seed), path, { feel: 60 }), evenRuns.slice(0, 1))));
+      expect(Math.max(off.view, off.car), name).toBeLessThan(0.001);
+      expect(off.distance, name).toBeLessThan(0.01);
+      const game = fromEven(run(make(1), path, { feel: 60, game: true }), evenRuns.slice(0, 1));
+      expect(game.view, `${name}: the game's own`).toBeGreaterThan(1);
+      expect(game.car, `${name}: the game's own, the car's place`).toBeGreaterThan(0.3);
+    }
+    for (const [name, make] of BETWEEN) {
+      const runs = SEEDS.map((seed) => run(make(seed), path, { feel: 60 }));
+      const calm = worstOf(runs.map((frames) => between(frames, evenRuns)));
+      expect(calm.view, `${name}, between events`).toBeLessThan(0.01);
+      expect(calm.car, `${name}, between events: the car's place`).toBeLessThan(0.05);
+      expect(calm.distance, `${name}, between events: the car's distance`).toBeLessThan(0.15);
+      const events = runs.map((frames) => fromEven(frames, evenRuns, jump[0], jump[1]));
+      expect(worstOf(events).view, `${name}, the jump: the worst seed`).toBeLessThan(0.4);
+      expect(mean(events.map((e) => e.view)), `${name}, the jump: the seeds' mean`).toBeLessThan(0.2);
+      expect(worstOf(events).car, `${name}, the jump: the car's place`).toBeLessThan(0.3);
+      // (the game's own camera on the same frames, between events: off every phase's, but for the jitter's)
+      if (!name.includes("±1 ms")) {
+        const game = between(run(make(1), path, { feel: 60, game: true }), evenRuns);
+        expect(game.view, `${name}: the game's own`).toBeGreaterThan(0.15);
+        expect(game.car, `${name}: the game's own, the car's place`).toBeGreaterThan(0.15);
+      }
+    }
+    // (the spread the jump's bound is inside: even cameras a part of a frame apart, through the jump)
+    const apart = Math.max(...[6, 12, 18].map((n) => fromEven(evenRuns[n] ?? [], evenRuns.slice(0, 1), jump[0], jump[1]).view));
+    expect(apart).toBeGreaterThan(0.7);
+  });
+
+  it("the same in ball cam round a moving ball, and through a slalom all in the air", () => {
+    /** The slalom flown: 400 uu up, never on the ground (the air camera's own turning, no take-off or landing in it) */
+    const flown = slalomWithAJump();
+    const airSlalom: Path = (tick) => {
+      const on = flown(tick).car;
+      return { car: car(vec3(on.pos.x, on.pos.y, 400), vec3(on.vel.x, on.vel.y, 0), on.rot, false), ball: STILL_BALL };
+    };
+    for (const [what, path, controls, from, view, gameView] of [
+      ["the ball cam round a moving ball", roundAMovingBall(), BALL_CAM, 1, 0.01, 0.1],
+      // (from 6 s: the air camera's start, another camera's by its first frame's length, takes that long to fade)
+      ["a slalom in the air", airSlalom, CAR_CAM, 6, 0.15, 0.1],
     ] as const) {
-      const evenRuns = Array.from({ length: 24 }, (_, n) => run([...(n > 0 ? [n / 24 / 60] : []), ...even(60, 9)], path, { feel: 60, controls }));
-      const evenRun = evenRuns.slice(0, 1);
-      for (const [name, shown] of onPhase) {
-        expect(fromEven(run(shown, path, { feel: 60, controls }), evenRun), `${what}, ${name}`).toBeLessThan(0.01);
+      const evenRuns = evenRunsOf(path, controls);
+      for (const [name, make] of ON_GRID) {
+        const off = worstOf(SEEDS.map((seed) => fromEven(run(make(seed), path, { feel: 60, controls }), evenRuns.slice(0, 1), from)));
+        expect(Math.max(off.view, off.car), `${what}, ${name}`).toBeLessThan(0.002);
+        expect(off.distance, `${what}, ${name}`).toBeLessThan(0.01);
+        expect(
+          fromEven(run(make(1), path, { feel: 60, controls, game: true }), evenRuns.slice(0, 1), from).view,
+          `${what}, ${name}: the game's own`,
+        ).toBeGreaterThan(0.5);
       }
-      for (const [name, shown] of anyPhase) {
-        expect(fromEven(run(shown, path, { feel: 60, controls }), evenRuns), `${what}, ${name}`).toBeLessThan(0.15);
-        // (the game's own camera on the same frames: off every phase's)
-        expect(fromEven(run(shown, path, { feel: 60, controls, game: true }), evenRuns), `${what}, ${name}: the game's own`).toBeGreaterThan(
-          name.includes("±1 ms") ? 0 : 0.15,
-        );
+      for (const [name, make] of BETWEEN) {
+        const off = worstOf(SEEDS.map((seed) => fromEven(run(make(seed), path, { feel: 60, controls }), evenRuns, from)));
+        expect(off.view, `${what}, ${name}`).toBeLessThan(view);
+        expect(off.car, `${what}, ${name}: the car's place`).toBeLessThan(0.05);
+        expect(off.distance, `${what}, ${name}: the car's distance`).toBeLessThan(0.15);
+        if (!name.includes("±1 ms")) {
+          expect(fromEven(run(make(1), path, { feel: 60, controls, game: true }), evenRuns, from).view, `${what}, ${name}: the game's own`).toBeGreaterThan(
+            gameView,
+          );
+        }
       }
-      const gameRun = run(onPhase[0]?.[1] ?? [], path, { feel: 60, controls, game: true });
-      expect(fromEven(gameRun, evenRun), `${what}: the game's own`).toBeGreaterThan(gameOff);
+    }
+  });
+
+  it("the air view's pitch, flattened while the car flies back toward the camera, the game's at any share of a frame an update", () => {
+    // (forwards for 3 s, then back the way it came and diving: its velocity against the view's direction, so the game
+    // scales the pitch down each frame while the view comes round)
+    const flyingBack = (t: number): CarState => {
+      const back = Math.max(0, t - 3);
+      const vel = t < 3 ? vec3(1400, 0, 0) : vec3(-1000, 0, -1200);
+      return car(vec3(1400 * Math.min(t, 3) - 1000 * back, 0, 3000 - 1200 * back), vel, facing(0), false);
+    };
+    /** The view's pitch (degrees) at each of `times`, every update `share` of a nominal frame at 60 */
+    const pitches = (share: number, times: readonly number[]): number[] => {
+      const camera = new PlayerCamera();
+      const out: number[] = [];
+      for (let i = 1; out.length < times.length; i++) {
+        const t = (i * share) / 60;
+        const view = camera.update(share / 60, flyingBack(t), STILL_BALL, CAR_CAM, null, share / 60, share);
+        if (t >= (times[out.length] ?? Infinity)) out.push(degrees(pitchOf(view.forward)));
+      }
+      return out;
+    };
+    const times = [3.1, 3.2, 3.3, 3.4, 3.5];
+    const game = pitches(1, times);
+    expect(Math.max(...game.map(Math.abs))).toBeGreaterThan(1);
+    for (const share of [0.417, 0.5, 0.75, 1.25, 1.5]) {
+      pitches(share, times).forEach((pitch, i) => {
+        expect(
+          Math.abs(pitch - (game[i] ?? 0)),
+          `updates of ${String(share)} of a frame, at ${String(times[i])} s: ${pitch.toFixed(2)} for ${(game[i] ?? 0).toFixed(2)}`,
+        ).toBeLessThan(0.06);
+      });
     }
   });
 
@@ -404,26 +582,39 @@ describe("the camera across a frame", () => {
     expect(range(after)).toBeLessThan(0.01);
   });
 
-  it("the mouse's free look whole: a frame's counts shared over its updates, so doubled frames turn it as far as even ones", () => {
+  it("the mouse's free look whole: a frame's counts shared over its updates and truncated once a frame, the game's turn on the same frames (RV-1304)", () => {
     const still: Path = () => turning(0);
     const look = (yaw: number): CameraControls => ({
       ...CAR_CAM,
       freeLook: { axes: { pitch: 0, yaw, source: "mouse" }, settings: { smoothing: false, accelRate: 1, decelRate: 1, freeLookSpeed: 1 }, ballCamHold: false },
     });
-    const turned = (shown: Shown): number => {
-      const frames = run(shown, still, { feel: 60, controls: (_, dt) => look(Math.round(dt * 360)) });
+    /** The view's turn over the frames, the mouse moving 720 counts a second (whole counts each frame) */
+    const turned = (shown: Shown, feel: number, game = false): number => {
+      let [counts, owed] = [0, 0];
+      const frames = run(shown, still, {
+        feel,
+        game,
+        controls: (_, dt) => {
+          owed += dt * 720;
+          const now = Math.floor(owed - counts);
+          counts += now;
+          return look(now);
+        },
+      });
       const last = frames[frames.length - 1];
-      return last ? yawOf(last.view.forward) : 0;
+      return last ? degrees(yawOf(last.view.forward) - yawOf(frames[0]?.view.forward ?? vec3(1, 0, 0))) : 0;
     };
-    const pattern = [1, 1, 2, 1, 1, 1, 2, 2, 1];
-    const uneven: number[] = [];
-    for (let left = 120, i = 0; left > 0; i++) {
-      const n = Math.min(pattern[i % pattern.length] ?? 1, left);
-      uneven.push(n / 60);
-      left -= n;
+    const r = rng(2);
+    for (const [name, shown, feel] of [
+      ["60 Hz, 40 % of frames doubled", doubled(60, 2, 0.4, r), 60],
+      // (frames of one to two nominal ones, two updates in many: each lost up to a unit of its own, a tenth of the turn)
+      ["a variable-refresh screen, 7 to 14 ms a frame, at a feel of 144", Array.from({ length: 190 }, () => 0.007 + 0.007 * r()), 144],
+      ["a 120 Hz phone at 60, the page busy", phone(120, 60, 2, { busy: 12, slow: 20, late: 0.3 }), 60],
+    ] as const) {
+      const [ours, game] = [turned(shown, feel), turned(shown, feel, true)];
+      expect(Math.abs(game), name).toBeGreaterThan(4);
+      expect(ours, name).toBeCloseTo(game, 9);
     }
-    expect(Math.abs(turned(even(60, 2)))).toBeGreaterThan(0.02);
-    expect(turned(uneven)).toBeCloseTo(turned(even(60, 2)), 6);
   });
 });
 
@@ -519,14 +710,76 @@ describe("the camera's updates a frame", () => {
     };
     expect(next(0)).toEqual([{ at: 0, frames: 1 }]);
     expect(next(40)).toHaveLength(2);
-    // (the garage's camera, a replay's, drawn for a while: the player's starts from its own car)
+    // (the garage's camera, a replay's, drawn for a while: the player's starts from its own car, wherever that is: far
+    // off, or a frame's drive on)
     view.idle();
     expect(next(900)).toEqual([{ at: 900, frames: 1 }]);
+    expect(next(940)).toHaveLength(2);
+    view.idle();
+    expect(next(980)).toEqual([{ at: 980, frames: 1 }]);
     view.reset();
     expect(next(-3000)).toEqual([{ at: -3000, frames: 1 }]);
+    expect(next(-2960)).toHaveLength(2);
+    view.reset();
+    expect(next(-2920)).toEqual([{ at: -2920, frames: 1 }]);
+    expect(next(-2960)).toHaveLength(2);
+    expect(next(-3000)).toHaveLength(2);
     // (a new car: its spawn's count; a teleport: further than any car drives in the frame)
     expect(next(-2960, 1)).toEqual([{ at: -2960, frames: 1 }]);
     expect(next(-2920, 1)).toHaveLength(2);
     expect(next(2000, 1)).toEqual([{ at: 2000, frames: 1 }]);
+  });
+
+  it("a reset forgets the ticks: the frame after it steps from its own car, never between a tick from before and one since", () => {
+    const camera = new Recording();
+    const view = new FrameCamera(camera);
+    view.tick(at(0));
+    view.tick(at(10));
+    view.frame(span(1 / 60), 60, at(5), CAR_CAM, 0.5);
+    // (the car put 45 uu on, a reset: near enough that the ticks about it would pass for a drive)
+    view.reset();
+    view.frame(span(1 / 60), 60, at(50), CAR_CAM, 0.5);
+    view.tick(at(60));
+    view.tick(at(70));
+    camera.updates.length = 0;
+    view.frame(span(2 / 60), 60, at(65), CAR_CAM, 0.5);
+    // (halfway from the reset's frame, the car at 50, to this one's at 65; with the old ticks kept, between the tick
+    // at 10 and the one at 60)
+    expect(camera.updates.map((u) => u.at.x)).toEqual([57.5, 65]);
+  });
+
+  it("a car demolished or put elsewhere inside a frame is stepped to by the ticks: each update the scene at its moment, the even-frame camera's view (RV-1306)", () => {
+    const camera = new Recording();
+    const view = new FrameCamera(camera);
+    const wreck = (x: number): { car: CarState; ball: Vec3; respawn: null } => ({ ...at(x), car: { ...at(x).car, demoed: true } });
+    view.tick(at(0));
+    view.tick(at(10));
+    view.frame(span(1 / 60), 60, at(10), CAR_CAM, 1);
+    // (a doubled frame of four ticks, the car demolished at the last of them: the first update is the car alive, two
+    // ticks on; the second this frame's wreck. One update on the wreck for the whole frame, before)
+    view.tick(at(20));
+    view.tick(at(30));
+    view.tick(at(40));
+    view.tick(wreck(50));
+    camera.updates.length = 0;
+    view.frame(span(2 / 60), 60, wreck(50), CAR_CAM, 1);
+    expect(camera.updates.map((u) => u.at.x)).toEqual([30, 50]);
+    // (and a new car far off, its spawn at a tick inside the frame: the old place up to that tick, then the new)
+    for (const x of [50, 50, 50]) view.tick(wreck(x));
+    view.tick(at(-3000, 1));
+    camera.updates.length = 0;
+    view.frame(span(2 / 60), 60, at(-3000, 1), CAR_CAM, 1);
+    expect(camera.updates.map((u) => u.at.x)).toEqual([50, -3000]);
+    // (through a demolition on doubled frames: the even-frame camera's view at the same moments, to a thousandth of a
+    // degree, where it was 2 degrees off for the frame)
+    const demolished: Path = (tick) => {
+      const live = turning(Math.min(tick, 301));
+      return tick > 301 ? { ...live, car: { ...live.car, demoed: true, vel: vec3(0, 0, 0) } } : live;
+    };
+    const evenRun = [run(even(60, 4), demolished, { feel: 60 })];
+    for (const seed of [1, 2, 3, 5, 8, 13]) {
+      const off = fromEven(run(doubled(60, 4, 0.6, rng(seed)), demolished, { feel: 60 }), evenRun, 1);
+      expect(off.view, `seed ${String(seed)}`).toBeLessThan(0.001);
+    }
   });
 });
