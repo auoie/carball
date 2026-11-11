@@ -10,6 +10,7 @@
 // buttons at once).
 import type { Action } from "./bindings";
 import type { TouchSnapshot } from "./mapping";
+import { safeInsets } from "../ui/stage";
 import {
   type ButtonPlace,
   DEFAULT_PLACE,
@@ -54,6 +55,8 @@ export const TOUCH_TEXT = {
   jump: "Jump",
   boost: "Boost",
   slide: "Slide",
+  /** Slide's words in the air: air roll is what it does there */
+  airRoll: "Air Roll",
   ballCam: "Ball Cam",
   reset: "Reset",
   previous: "Prev",
@@ -86,6 +89,11 @@ const FIXED_STICK = { x: 0.2, y: 0.68 } as const;
 /** The match the controls are for: its own buttons (free play's reset; training's retry, previous and next; online's
  *  scoreboard) */
 export type TouchMode = "freeplay" | "training" | "online";
+
+/** The buttons that start a training shot, as the stick does (CTR-5's throttle, jump, boost); training's commands put it
+ *  back in its Countdown (RV-1232) */
+const STARTS_SHOT: ReadonlySet<TouchButton> = new Set(["jump", "boost", "gas", "reverse", "brake"]);
+const SHOT_COMMANDS: ReadonlySet<TouchButton> = new Set(["previous", "reset", "next"]);
 
 const MODE_BUTTONS: Readonly<Record<TouchMode, readonly TouchButton[]>> = {
   freeplay: ["reset"],
@@ -209,6 +217,15 @@ export class TouchControls {
   readonly #wake = new ScreenWake();
   #settings: TouchSettings = TOUCH_DEFAULTS;
   #layout: TouchLayout = loadLayout();
+  /** A training shot waiting in its Countdown, and whether the stick or a driving button was touched since it began:
+   *  Auto drive drives only then (a shot starts on any throttle, so it would start every shot by itself: RV-1232). A
+   *  tap on Prev, Reset or Next holds it back at once, for the next two frames (`#commandHold`): its command puts the
+   *  shot in its Countdown later in that frame, after the frame's input is read, and the Countdown's wait takes over the
+   *  next; a command that brings none (the reset's question) lets it drive again */
+  #waiting = false;
+  #armed = true;
+  #commandHold = 0;
+  #airborne = false;
   /** The layout editor open: its selected piece (a button, or the fixed stick), what to do when it's done */
   #editing: { selected: TouchButton | "stick" | null; done: () => void } | null = null;
 
@@ -232,6 +249,7 @@ export class TouchControls {
         this.#stickOrigin = centre;
       } else this.#stickOrigin = { x: e.clientX, y: e.clientY };
       this.#stickPointer = e.pointerId;
+      this.#armed = true;
       zone.setPointerCapture(e.pointerId);
       this.#moveStick(e.clientX, e.clientY);
     });
@@ -360,8 +378,17 @@ export class TouchControls {
 
   /** Each frame: whether the game is in play (no menu over it) and its mode; shown on a touch device in play, no pad, mouse
    *  or keyboard in use. Hidden, nothing is held. (Not while the layout editor is open: it's shown over everything) */
-  update(inPlay: boolean, mode: TouchMode): void {
+  update(inPlay: boolean, mode: TouchMode, { waiting = false, airborne = false }: { readonly waiting?: boolean; readonly airborne?: boolean } = {}): void {
     if (this.#editing) return;
+    // (Slide is air roll too: it says so in the air, the user's phone, 2026-11-10)
+    if (airborne !== this.#airborne) {
+      this.#airborne = airborne;
+      const slide = this.#buttons.get("slide");
+      if (slide) slide.textContent = airborne ? TOUCH_TEXT.airRoll : TOUCH_TEXT.slide;
+    }
+    if (waiting && !this.#waiting) this.#armed = false;
+    this.#waiting = waiting;
+    this.#commandHold = waiting ? 0 : Math.max(0, this.#commandHold - 1);
     // (the screen kept on in play on a touch device, a pad in its hands or not)
     this.#wake.wanted = inPlay && this.#touched;
     const shown = inPlay && this.#touched && !this.#padUsed;
@@ -395,7 +422,9 @@ export class TouchControls {
     if (!this.#shown || this.#editing) return null;
     const held = new Set<Action>();
     for (const [b, pointers] of this.#holding) if (pointers.size > 0) for (const a of TOUCH_ACTIONS[b]) held.add(a);
-    if (this.#settings.throttle === "auto" && !held.has("throttleReverse")) held.add("throttleForward");
+    const holding = this.#waiting || this.#commandHold > 0;
+    const autoDrives = this.#settings.throttle === "auto" && !held.has("throttleReverse") && (!holding || this.#armed);
+    if (autoDrives) held.add("throttleForward");
     const pressed = new Set(this.#pressed);
     this.#pressed.clear();
     return { stick: this.#stick, held, pressed, stickDrives: this.#settings.throttle === "stick" };
@@ -453,6 +482,8 @@ export class TouchControls {
       if (this.#editing || e.pointerType === "mouse") return;
       button.setPointerCapture(e.pointerId);
       pointers.add(e.pointerId);
+      if (STARTS_SHOT.has(b)) this.#armed = true;
+      else if (SHOT_COMMANDS.has(b) && this.#mode === "training") [this.#commandHold, this.#armed] = [2, false];
       for (const a of TOUCH_ACTIONS[b]) this.#pressed.add(a);
       button.classList.add("held");
     });
@@ -480,8 +511,16 @@ export class TouchControls {
     });
     piece.addEventListener("pointermove", (e) => {
       if (!this.#editing || e.pointerId !== dragging) return;
-      const x = Math.min(1, Math.max(0, e.clientX / window.innerWidth));
-      const y = Math.min(1, Math.max(0, e.clientY / window.innerHeight));
+      // (its centre kept so the whole of it is inside the safe area (RV-1235); the stick's in the left half too, where
+      // a thumb takes it (RV-1233))
+      const [w, h] = [window.innerWidth, window.innerHeight];
+      const inset = safeInsets();
+      const rect = piece.getBoundingClientRect();
+      const [halfW, halfH] = [rect.width / 2, rect.height / 2];
+      const right = id === "stick" ? w / 2 - halfW : w - inset.right - halfW;
+      const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(lo, hi), Math.max(lo, v));
+      const x = clamp(e.clientX, inset.left + halfW, right) / w;
+      const y = clamp(e.clientY, inset.top + halfH, h - inset.bottom - halfH) / h;
       if (id === "stick") {
         this.#layout = { ...this.#layout, stick: { x, y } };
         this.#restStick();

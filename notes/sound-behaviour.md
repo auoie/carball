@@ -42,6 +42,12 @@ install; every native was decompiled in the live project, and the addresses are 
 - Local car: IsLocal ≥ 0.5, sound 2D (centred; panned by SplitScreenPosition).
 - Remote car: 3D, with an attenuation curve.
 
+**Ours, before the context runs** (`client/src/audio/audio.ts`): the browser starts it only from a press (a click, a
+key, a finger's lift), so until then (a pad's player taps nothing; a match's page reached without one; iOS's
+interrupted context) nothing is scheduled on it: no voices steered, no one-shots, no ambience, only the sounds counted.
+Its parameters' events piled up there frame after frame otherwise, half the main thread in a 3v3 and memory growing
+1.8 MB/s, a plain `.value` set no better (SMOKE1's RV-1238); the volumes (`apply`, once a change) still set.
+
 ## Events
 | # | Trigger | Wwise event(s) | Parameters | Timing | Notes |
 |---|---|---|---|---|---|

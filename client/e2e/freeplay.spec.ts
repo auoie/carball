@@ -754,3 +754,49 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   await expect(page.locator("#main-menu")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("a sound context that never starts (a pad's player taps nothing, iOS's interrupted one): nothing scheduled on it, every frame; the sounds still counted (RV-1238)", async ({
+  page,
+}) => {
+  // (the page's context kept suspended, its resume refused; each AudioParam event counted)
+  await page.addInitScript(() => {
+    const Original = window.AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        void this.suspend();
+      }
+      override resume(): Promise<void> {
+        return Promise.resolve();
+      }
+    };
+    const counter = window as unknown as { paramEvents: number };
+    counter.paramEvents = 0;
+    for (const name of ["setTargetAtTime", "setValueAtTime", "linearRampToValueAtTime", "exponentialRampToValueAtTime"] as const) {
+      const original = Object.getOwnPropertyDescriptor(AudioParam.prototype, name)?.value as (this: AudioParam, ...args: number[]) => AudioParam;
+      Object.defineProperty(AudioParam.prototype, name, {
+        value(this: AudioParam, ...args: number[]) {
+          counter.paramEvents++;
+          return original.apply(this, args);
+        },
+      });
+    }
+  });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
+  const audio = (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { carballAudio: () => AudioStats }).carballAudio());
+  const events = (): Promise<number> => page.evaluate(() => (window as unknown as { paramEvents: number }).paramEvents);
+  await expect.poll(async () => (await audio()).state).toBe("suspended");
+  // (driving and jumping for two seconds: the engine's voice and the jumps' sounds would set dozens a frame)
+  const before = await events();
+  await page.keyboard.down("KeyW");
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Space");
+    await page.waitForTimeout(500);
+  }
+  await page.keyboard.up("KeyW");
+  expect(await events()).toBe(before);
+  expect((await audio()).played.jump ?? 0).toBeGreaterThan(0);
+  expect((await audio()).cars).toBe(0);
+});

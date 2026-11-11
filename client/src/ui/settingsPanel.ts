@@ -305,6 +305,16 @@ export class SettingsPanel {
     this.#render();
   }
 
+  /** Out of sight while the touch controls' layout editor is over it (not closed: its tab kept); the returned function
+   *  shows it again as it was (RV-1234) */
+  hideFor(): () => void {
+    const shown = !this.#root.hidden;
+    this.#root.hidden = true;
+    return () => {
+      if (shown) this.#root.hidden = false;
+    };
+  }
+
   close(): void {
     this.#stopCapture();
     const was = this.isOpen;
@@ -802,7 +812,19 @@ export class SettingsPanel {
         apply({ fixedStick: value === "fixed" });
       },
     });
+    const frameRate = cycler({
+      label: T.frameRate,
+      options: ([60, 30, 0] as const).map((v) => [String(v), T.frameRates[v]] as [string, string]),
+      value: String(touch.frameRate),
+      data: { setting: "frameRate" },
+      onChange: (value) => {
+        apply({ frameRate: value === "30" ? 30 : value === "0" ? 0 : 60 });
+      },
+    });
+    const frameHelp = el("p", { className: "settings-hint", textContent: T.frameRateHelp });
     box.prepend(throttle, help, stick);
+    // (before the tab's Reset to defaults, its last: the layout's row, its tip, then the frame rate)
+    const tail: HTMLElement[] = [frameRate, frameHelp];
     const layout = this.touchLayout;
     if (layout) {
       const edit = el("button", { textContent: T.editLayout });
@@ -814,10 +836,11 @@ export class SettingsPanel {
         layout.reset();
       });
       const row = el("div", { className: "settings-touch-layout" }, [edit, reset]);
-      const last = box.lastElementChild;
-      if (last) last.before(row);
-      else box.append(row);
+      tail.unshift(row, el("p", { className: "settings-hint", textContent: T.layoutHelp }));
     }
+    const last = box.lastElementChild;
+    if (last) last.before(...tail);
+    else box.append(...tail);
     return box;
   }
 

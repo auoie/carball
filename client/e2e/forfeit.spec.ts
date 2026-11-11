@@ -3,7 +3,7 @@
 // so its tests take turns on it). Players join blue, orange, blue, ...
 // (Under the suite's load a third page can take over 10 s to answer: the checks are on the first page, and the match's
 // end is read from the phases it recorded, which outlast its 8.3 s podium.)
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
 import { ends, join as joinServer, leave, leaveAll, newPlayer as newServerPlayer, ownName } from "./players";
 import type { Browser } from "@playwright/test";
@@ -228,8 +228,17 @@ test("on a phone: the match's end screen has no touch controls over it, and its 
   const exit = phone.locator("#end-screen button[data-action=exit]");
   await expect(exit).toBeVisible({ timeout: 45_000 });
   await expect(touch).toBeHidden();
+  // (its buttons 44 px on the screen, the stage's scale undone: RV-1239)
+  const tall = async (target: Locator): Promise<void> => {
+    const box = await target.boundingBox();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(43.5);
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(43.5);
+  };
+  await tall(exit);
   await exit.tap();
   // (its question, as a click's: Yes leaves)
-  await phone.getByRole("button", { name: /^yes$/i }).tap();
+  const yes = phone.getByRole("button", { name: /^yes$/i });
+  await tall(yes);
+  await yes.tap();
   await expect(phone.locator("#main-menu")).toBeVisible({ timeout: 30_000 });
 });

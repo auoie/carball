@@ -47,6 +47,7 @@ import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, cancelThumbButtons, readGamepad } from "./input/devices";
 import { TouchControls, type TouchMode, installTouchPage, touchDevice } from "./input/touch";
+import { frameDue } from "./input/touchSettings";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
@@ -174,7 +175,8 @@ async function main(): Promise<void> {
   let settings = loadSettings();
   // (Display Mode: Fullscreen asked for at the page's first press, the loading screen's too (a match's page, its full
   // screen ended with the menu's: RV-1111), its keyboard locked there for the keys needed: RV-1091, RV-1112)
-  const displayMode = new DisplayMode({ keys: () => lockedKeys(settings.bindings) });
+  // (a touch device's full screen comes back at the next tap after an edge swipe leaves it: the user's phone, 2026-11-10)
+  const displayMode = new DisplayMode({ keys: () => lockedKeys(settings.bindings), returns: touchDevice });
   // (a touch device always full screen where its browser allows: a phone's bars take too much of it; notes/mobile.md)
   let fullscreen = settings.options.fullscreen;
   displayMode.set(fullscreen || touchDevice(), false);
@@ -347,6 +349,8 @@ async function main(): Promise<void> {
   // mode's buttons from the match being played: set as the pause menu and free play are made)
   let touchPause = (): void => undefined;
   let touchMode = (): TouchMode => (onlinePage ? "online" : "freeplay");
+  // (a training shot waiting in its Countdown: Auto drive holds back till the player's first touch, RV-1232)
+  let touchWaiting = (): boolean => false;
   // (a match's end screen up, its menu tapped: no touch controls over it, RV-1209; set as the online match is made)
   let endMenuShown = (): boolean => false;
   const touch = new TouchControls(document.body, () => {
@@ -406,7 +410,8 @@ async function main(): Promise<void> {
   // (the Touch tab's layout editor: over everything, the settings under it again when it's done)
   panel.touchLayout = {
     edit: () => {
-      touch.editLayout(() => undefined);
+      // (the settings out of sight while it's open, back on its Touch tab when it's done: RV-1234)
+      touch.editLayout(panel.hideFor());
     },
     reset: () => {
       touch.resetLayout();
@@ -568,12 +573,15 @@ async function main(): Promise<void> {
     frame(dt: number): void;
     /** The viewed car's and the ball's velocities (the Stat Graphs' Speed rows) */
     speeds(): { readonly car: Vec3 | null; readonly ball: Vec3 | null };
+    /** The player's car off the ground (the touch controls' Slide reads Air Roll) */
+    airborne(): boolean;
     /** Each frame's network rows (online), at `now` (s) */
     netFrame?(now: number): void;
   };
   if (!onlinePage) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled, { car: storedCar(), team: storedTeam() });
     touchMode = () => (freeplay.training ? "training" : "freeplay");
+    touchWaiting = () => freeplay.training?.state === "countdown";
     freeplayRestart = () => {
       freeplay.restart();
     };
@@ -1305,7 +1313,10 @@ async function main(): Promise<void> {
     };
     // (the automatic default's frame-rate guard: in free play only, never in a match; once ever, while the player hasn't
     // chosen and a lower level's left: settings/video.ts guardWanted)
-    const guard = guardWanted(settings.video, renderer.draws, videoAuto?.guard) ? new AutoVideoGuard() : null;
+    // (a touch device's watches all session long, a phone slowing as it heats; at its Frame Rate, not slow: the user's
+    // OnePlus, 2026-11-10)
+    const frameCap = (): number | null => (capped && settings.touch.frameRate > 0 ? settings.touch.frameRate : null);
+    const guard = guardWanted(settings.video, renderer.draws, videoAuto?.guard) ? new AutoVideoGuard({ rolling: touchDevice() }) : null;
     // (offline: the network and input-buffer rows read 0)
     NetGraphFeed.offline(statData);
     // (Select Shot: its binding opens it over the game, a shot chosen starts at once)
@@ -1393,6 +1404,7 @@ async function main(): Promise<void> {
     };
     game = {
       speeds: () => freeplay.speeds(),
+      airborne: () => freeplay.airborne(),
       frame(dt) {
         // (the editor first: its camera and shot for this frame's drawing)
         editor?.frame(dt);
@@ -1404,7 +1416,7 @@ async function main(): Promise<void> {
         matchmaking.frame(performance.now() / 1000);
         view.update(matchmaking.state, { menuUp: cancelHere(), padMode: padNav.padMode, now: performance.now() / 1000 });
         // (a hidden tab's or a hitch's time not counted: AutoVideoGuard; the player's choice since wins: guardStep)
-        if (guard && !guard.done && guard.frame(dt, document.visibilityState === "visible", refresh.hz)) {
+        if (guard && !guard.done && guard.frame(dt, document.visibilityState === "visible", refresh.hz, frameCap())) {
           const stepped = guardStep(settings.video);
           if (stepped) panel.apply({ ...settings, video: stepped });
         }
@@ -1512,6 +1524,7 @@ async function main(): Promise<void> {
     online.statFeed = netFeed;
     game = {
       speeds: () => online.speeds(),
+      airborne: () => online.airborne(),
       netFrame: (now) => {
         netFeed.frame(now);
       },
@@ -1532,6 +1545,9 @@ async function main(): Promise<void> {
   loading.step("firstFrame");
   await renderer.warmUp();
   let last = performance.now();
+  // (a touch device draws at its Frame Rate at most: Settings → Touch, 60 by default; a desktop every frame)
+  const capped = touchDevice();
+  let drawn = last;
   // (the stat graphs' context: the display's refresh as measured, ours having no cap; our downstream's budget, the
   // updates needing up to about 140 KB/s, not the game's 15000 B/s; the speeds' units)
   const statContext = (): StatContext => ({
@@ -1582,12 +1598,20 @@ async function main(): Promise<void> {
       statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale, key);
   };
   const frame = (now: number): void => {
+    if (capped) {
+      const at = frameDue(now, drawn, settings.touch.frameRate);
+      drawn = at.drawn;
+      if (!at.due) {
+        requestAnimationFrame(frame);
+        return;
+      }
+    }
     // (raw: the games take their clamped real and world times from it, LT-3)
     const dt = (now - last) / 1000;
     last = now;
     padNav.frame(readGamepad(), now / 1000);
     padReadout?.update();
-    touch.update(!menusOpen() && !editorPage() && !endMenuShown(), touchMode());
+    touch.update(!menusOpen() && !editorPage() && !endMenuShown(), touchMode(), { waiting: touchWaiting(), airborne: game.airborne() });
     const started = performance.now();
     game.frame(dt);
     statFrame(now / 1000, dt, performance.now() - started);

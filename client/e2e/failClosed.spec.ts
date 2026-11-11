@@ -10,7 +10,7 @@ const SITE = "http://carball.test";
 
 test.use({
   launchOptions: {
-    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", `--unsafely-treat-insecure-origin-as-secure=${SITE}`],
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--mute-audio", `--unsafely-treat-insecure-origin-as-secure=${SITE}`],
   },
 });
 

@@ -126,6 +126,11 @@ export class GameAudio {
     this.#listen(f.camera);
     const played = [...this.#detector.update(f.world, f.simulated), ...(f.triggered ?? [])];
     for (const event of played) this.#play(event);
+    // (nothing scheduled while the context isn't running: never unlocked (a pad's player taps nothing, a match's page
+    // reached without a press) or interrupted (iOS): its parameters' events pile up there frame after frame, the page
+    // slowing and its memory growing, half the main thread in a 3v3 (RV-1238); the sounds of then would all start at
+    // once on its unlocking. Counted all the same)
+    if (!this.#running()) return played;
     this.#steerVoices(f.world.cars, f.localCar, f.throttle);
     this.#ambience.tick();
     return played;
@@ -140,9 +145,10 @@ export class GameAudio {
   replayFrame(cars: ReadonlyMap<number, VoiceCar & ReplayMoves>, camera: CameraView, replay: ReplayAudio): void {
     this.#setMode("replay");
     this.#listen(camera);
-    this.#steerVoices(cars, null, 0);
     for (const event of replayMoveEvents(this.#replayMoves, cars)) this.#play(event);
     for (const event of replay.sounds) this.#play(event);
+    if (!this.#running()) return; // (as frame's: RV-1238)
+    this.#steerVoices(cars, null, 0);
     this.#ambience.tick();
   }
 
@@ -166,6 +172,7 @@ export class GameAudio {
   /** A goal: the explosion and fanfare, up close. */
   goal(): void {
     this.#count("goal");
+    if (!this.#running()) return;
     this.#synth.goal(this.#effects, this.#ctx.currentTime);
   }
 
@@ -177,6 +184,7 @@ export class GameAudio {
   /** A chat line with a sender's name, one's own too (CHAT-17: the HUD's CHATMESSAGE event) */
   chatMessage(): void {
     this.#count("chat");
+    if (!this.#running()) return;
     this.#synth.chatMessage(this.#effects, this.#ctx.currentTime);
   }
 
@@ -184,42 +192,49 @@ export class GameAudio {
    *  from the replay's camera as the jumps and dodges are (3D, a remote car's: SND-9, the user's report 2026-10-18) */
   flipReset(at: Vec3 | null = null): void {
     this.#count("flipReset");
+    if (!this.#running()) return;
     this.#synth.flipReset(at ? this.#panner(at, this.#effects) : this.#effects, this.#ctx.currentTime);
   }
 
   /** The kickoff countdown: `secondsLeft` 3, 2, 1, then 0 for go. */
   countdown(secondsLeft: number): void {
     this.#count(secondsLeft === 0 ? "go" : "countdown");
+    if (!this.#running()) return;
     this.#synth.beep(this.#effects, this.#ctx.currentTime, secondsLeft === 0);
   }
 
   /** A search starts (START_MATCH_SEARCH's place, MM-12: our own sound) */
   searchStart(): void {
     this.#count("searchStart");
+    if (!this.#running()) return;
     this.#synth.searchStart(this.#effects, this.#ctx.currentTime);
   }
 
   /** The menus' cues (MENU-18: our own sounds) */
   menu(cue: MenuCue): void {
     this.#count(`menu-${cue}`);
+    if (!this.#running()) return;
     this.#synth.menu(this.#effects, this.#ctx.currentTime, cue);
   }
 
   /** Cancel Search (the menus' CANCEL, MM-12: our own sound) */
   searchCancel(): void {
     this.#count("searchCancel");
+    if (!this.#running()) return;
     this.#synth.searchCancel(this.#effects, this.#ctx.currentTime);
   }
 
   /** One of the clock's last ten seconds (HT-7: its own cue, not the kickoff's) */
   endCounter(): void {
     this.#count("endCounter");
+    if (!this.#running()) return;
     this.#synth.endCounter(this.#effects, this.#ctx.currentTime);
   }
 
   /** "Overtime!", "One Minute Remaining!", "30 Seconds Remaining!" (HT-7: each its own cue, whatever the setting) */
   announcement(kind: "overtime" | "oneMinute" | "thirtySeconds"): void {
     this.#count(kind);
+    if (!this.#running()) return;
     this.#synth.announcement(this.#effects, this.#ctx.currentTime, kind);
   }
 
@@ -238,6 +253,10 @@ export class GameAudio {
     this.#ambience.dispose();
     for (const { voice } of this.#voices.values()) voice.dispose();
     void this.#ctx.close();
+  }
+
+  #running(): boolean {
+    return this.#ctx.state === "running";
   }
 
   #count(kind: string): void {
@@ -280,6 +299,7 @@ export class GameAudio {
 
   #play(event: SoundEvent): void {
     this.#count(event.kind);
+    if (!this.#running()) return; // (RV-1238: as frame's)
     // (every sound at the context's time, as all of ours: it starts with the next block the browser renders; an offset
     // only waited, 5 ms of the delay the user heard, 2026-10-22)
     const when = this.#ctx.currentTime;

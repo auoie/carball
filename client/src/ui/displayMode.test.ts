@@ -3,7 +3,7 @@ import { DEFAULT_BINDINGS, lockedKeys } from "../input/bindings";
 import { DisplayMode, type FullscreenDocument } from "./displayMode";
 
 /** A page whose full screen a test drives: its requests (granted or refused), exits, locks and presses */
-function page(opts: { enabled?: boolean; refuse?: boolean } = {}) {
+function page(opts: { enabled?: boolean; refuse?: boolean; returns?: boolean } = {}) {
   const log: string[] = [];
   const listeners = new Map<string, (() => void)[]>();
   const on = (kind: string, f: () => void): void => {
@@ -54,7 +54,12 @@ function page(opts: { enabled?: boolean; refuse?: boolean } = {}) {
     allow: () => {
       refuse = false;
     },
-    mode: new DisplayMode({ keys: () => ["Escape", "KeyW"], doc, target, keyboard: () => keyboard }),
+    /** The player leaves full screen (Escape held, an edge swipe), not the page */
+    leave: () => {
+      full = null;
+      fire("fullscreenchange");
+    },
+    mode: new DisplayMode({ keys: () => ["Escape", "KeyW"], doc, target, keyboard: () => keyboard, returns: () => opts.returns ?? false }),
   };
 }
 
@@ -98,6 +103,21 @@ describe("Display Mode (RV-1091, RV-1112, RV-1113, RV-1116)", () => {
     p.fire("pointerup");
     await settle();
     expect(p.full()).toBe(true);
+  });
+
+  it("left by the player: a desktop's stays left; a touch device's comes back at the next tap (an edge swipe left it)", async () => {
+    for (const returns of [false, true]) {
+      const p = page({ returns });
+      p.mode.set(true, false);
+      p.fire("pointerup");
+      await settle();
+      expect(p.full()).toBe(true);
+      p.leave();
+      p.fire("pointerdown");
+      p.fire("pointerup");
+      await settle();
+      expect(p.full(), returns ? "a touch device's" : "a desktop's").toBe(returns);
+    }
   });
 
   it("nothing where the page can't go full screen (an iPhone's Safari)", () => {

@@ -20,7 +20,8 @@ everyone else): the user's request of 2026-11-10. Landscape only. This note is t
 - **Full screen:** a touch device asks for it at its first touch whatever the Display Mode setting (`DisplayMode`, its
   `fullscreen || touchDevice()`), and turns to landscape once in it where the browser allows (Android's
   `screen.orientation.lock`). A touch's user activation comes as the finger lifts, so the lift asks too (pointerup,
-  touchend). iPhone Safari has no element full screen: the web app manifest (`public/manifest.json`: 192 and 512 px
+  touchend). Left by the player (Android's edge swipe, its back gesture), it comes back at the next tap: the user's
+  phone, 2026-11-10 (a desktop's Escape is respected, as ever). iPhone Safari has no element full screen: the web app manifest (`public/manifest.json`: 192 and 512 px
   icons and a maskable one, rendered from favicon.svg, as Chrome's install wants: RV-1228) and a hint on an iPhone ("Tap
   Share, then Add to Home Screen") make the home-screen app the way, dismissed once for good. An iPad's Safari has
   element full screen (16.4 on): its hint only where that's missing (RV-1226).
@@ -30,8 +31,19 @@ everyone else): the user's request of 2026-11-10. Landscape only. This note is t
 - **The screen kept on** in play on a touch device (`navigator.wakeLock`), let go under a menu, taken again when the page
   comes back.
 - **Sound:** unlocked by a touch's end or a click too (iOS Safari doesn't start audio from a finger landing).
-- **GPU:** a touch device gets the weak-GPU defaults (an iPhone's WebGL says only "Apple GPU") and a pixel ratio of 1.5
-  at most (2 elsewhere): a phone holds 60 fps (30 in Low Power Mode).
+- **GPU:** a touch device gets the weak-GPU defaults (an iPhone's WebGL says only "Apple GPU": Render Quality
+  Performance, 70 % each way; Render Detail Quality, no bloom or depth of field) and a pixel ratio of 1.5 at most (2
+  elsewhere).
+- **Frame rate:** a touch device draws 60 frames a second at most by default (Settings → Touch → Frame Rate: 60, 30,
+  Uncapped): a 120 Hz phone (the user's OnePlus 10 Pro, 2026-11-10: choppy, delayed, hot) drew twice that for nothing
+  but heat. The loop skips animation frames until one is due (`frameDue`: a quarter interval early counts, so a 120 Hz
+  screen's every other frame is 60); physics keeps its 120 ticks a second. The automatic default's frame-rate guard
+  takes frames at the cap as not slow, and on a touch device watches all session long (each window that wasn't slow
+  followed by another), so a phone that slows as it heats steps down then, once. Settings → Interface → Stat Graphs
+  shows the frame rate and times in touch play (on the left under the top row, clear of the boost ring and the buttons;
+  touches pass through).
+- **The end screen and the questions** (Exit's Yes, the pause menu's, the players menu's actions): 44 px on the screen
+  on a touch device, the HUD's stage scale undone (`--stage-scale`, ~0.54 on a phone: RV-1239).
 - **Pads:** a Bluetooth pad works as on a desktop. Safari's Xbox pad is the "Xbox Wireless Controller", so a bare
   "Wireless Controller" (a DualShock 4's name in some browsers) means PlayStation glyphs only without "Xbox".
 
@@ -71,10 +83,19 @@ button). The screen's wake lock asks once at a time, a lock that comes unwanted 
   to its place (its centre at fractions of the screen, so another size of screen keeps it), the selected one Smaller,
   Bigger, Fainter, Stronger, hidden or shown; the fixed stick dragged too; Reset All; Done. Kept in its own record
   (`carball.touchLayout`, `{version, buttons, stick}`): read from any version, its values checked, a later page's buttons
-  kept, so an update never wipes it. Reset Button Layout puts every button back.
+  kept, so an update never wipes it; a later page's fields of a button kept too, an older tab's save not stripping them
+  (RV-1236). Reset Button Layout puts every button back. The editor is its own screen (opaque; the settings hidden under
+  it and back on Done: RV-1234); a piece dragged stays whole inside the safe area (RV-1235), the fixed stick in the left
+  half, where a thumb takes it (RV-1233, on reading too).
+- **Auto drive in training:** a shot starts on any throttle, so Auto drive holds back while a shot waits in its
+  Countdown until the stick or a driving button (Jump, Boost, Brake) is touched; Prev, Reset and Next put it back to
+  waiting at once (their command moves the shot later in that frame, after its input is read: RV-1232).
 - **Buttons (actions, not pad buttons):** Jump (also the replay skip, as the pad's A), Boost, Slide (powerslide and air
   roll at once, as the default keyboard's right mouse button and the Legacy pad's X do; the default pad's X is powerslide
-  alone, its air roll on LT: RV-1218), Ball cam. They press the actions directly: the default pad
+  alone, its air roll on LT: RV-1218; it reads "Air Roll" while the car is in the air, the user's phone, 2026-11-10),
+  Ball cam. In the air the right thumb has Air Roll, Boost and Jump to choose between; the Touch tab's tip says to drag
+  Slide to the left for a left finger (a button wins over the stick's zone). No air-roll toggle (the user: the label is
+  enough). They press the actions directly: the default pad
   binds both Reverse and Air roll to LT, so pressing pad buttons would cross them. A tap shorter than a frame counts,
   as a key's tap; the jump's latch keeps it for a tick.
 - **The top row:** Pause (the pause menu, as the pad's Start), then the mode's own: free play's Reset; training's
@@ -115,6 +136,19 @@ browser tests' 640 × 360 pages already; Turnstile's widget at a phone's size is
    phone size), the training editor by touch (its free camera, keyboard-only, hidden), the WebTransport notice, the
    web app manifest.
 3. The touch settings (the throttle's models, the stick's), the layout editor, RX80's findings (2026-11-10).
+4. RX81's findings, the user's first phone feedback (full screen back after an edge swipe, the Air Roll label, the
+   frame rate cap and the guard following heat, the turning jitter: the camera on the ticks, notes/camera.md), SMOKE1's
+   RV-1238 (no sound scheduled on a stopped context) and RV-1239 (the end screen's targets) (2026-11-10).
+
+## The phone profile (SMOKE1, static's, `.agents/bullet-diff/mobile-smoke.md`)
+
+Phone emulation at 844 × 390, 4× CPU (a phone's main thread, roughly), the 3090 for the GPU (its figures indicative):
+free play 60 fps, p95 6 ms, no long tasks, an 886 × 409 buffer (1.5 × 70 %); a 3v3 with five Wisps 56–59 fps, the main
+thread 86 % busy (three.js, the six cars' prediction, particles): CPU-bound, so a lower resolution wouldn't help it;
+~0.5 GB in all; the car answers the stick 54 ms after a touch. The load ends with one 1.8 s task (the glasshouse built,
+three.js's first frame). Changed for the phone from it: the frame rate cap (a 120 Hz phone drew twice the frames), the
+guard following heat, RV-1238 (sound never unlocked cost half the main thread and grew memory 1.8 MB/s). Not changed (the
+profile doesn't show them mattering): the pixel ratio, the post pass, the glasshouse's detail, particles.
 
 ## Checks only a real phone can answer
 

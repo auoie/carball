@@ -155,17 +155,19 @@ export function resolveVideo(s: VideoState, weakGpu: boolean): VideoState {
  *  `capSpread` of their 10th) read as a cap. A frame `hitch` s or longer, or one in a hidden tab, isn't counted */
 export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45, trim: 0.05, capMargin: 1.1, capSpread: 1.08, hitch: 0.25 } as const;
 
-/** The step's decision from the measured intervals (s) and the display's refresh (Hz; null: not measured) */
+/** The step's decision from the measured intervals (s), the display's refresh (Hz; null: not measured) and the page's own
+ *  frame cap (Hz: a touch device's Frame Rate; null: none): frames at the cap aren't slow, only ones slower than it */
 export function guardDecision(
   frames: readonly number[],
   refreshHz: number | null = null,
+  capHz: number | null = null,
 ): { readonly slow: boolean; readonly capped: boolean; readonly step: boolean } {
   const sorted = [...frames].sort((a, b) => a - b);
   const kept = sorted.slice(0, Math.max(1, Math.floor(sorted.length * (1 - AUTO_GUARD.trim))));
   const mean = kept.reduce((s, v) => s + v, 0) / kept.length;
   const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? 0;
   const capped = refreshHz !== null ? at(0.5) <= AUTO_GUARD.capMargin / refreshHz : at(0.9) <= at(0.1) * AUTO_GUARD.capSpread;
-  const slow = mean > AUTO_GUARD.slowFrame;
+  const slow = mean > Math.max(AUTO_GUARD.slowFrame, capHz ? AUTO_GUARD.capMargin / capHz : 0);
   return { slow, capped, step: slow && !capped };
 }
 
@@ -182,21 +184,30 @@ export function guardStep(video: VideoSettings): VideoSettings | null {
 }
 
 /** The guard over one free-play session: fed each frame's interval (s) and whether the tab is seen; `step` once when it
- *  decides to step down */
+ *  decides to step down. `rolling` (a touch device's): a window that wasn't slow is followed by another, all session
+ *  long, so a phone that slows as it heats steps down then */
 export class AutoVideoGuard {
   #time = 0;
-  readonly #frames: number[] = [];
+  #frames: number[] = [];
   #done = false;
+  readonly #rolling: boolean;
 
-  /** Whether this frame decided a step down (once at most); `refreshHz` the display's as measured (null: not yet) */
-  frame(seconds: number, visible = true, refreshHz: number | null = null): boolean {
+  constructor({ rolling = false }: { readonly rolling?: boolean } = {}) {
+    this.#rolling = rolling;
+  }
+
+  /** Whether this frame decided a step down (once at most); `refreshHz` the display's as measured (null: not yet),
+   *  `capHz` the page's own frame cap (null: none) */
+  frame(seconds: number, visible = true, refreshHz: number | null = null, capHz: number | null = null): boolean {
     if (this.#done || !(seconds > 0) || !visible || seconds >= AUTO_GUARD.hitch) return false;
     this.#time += seconds;
     if (this.#time <= AUTO_GUARD.warmUp) return false;
     this.#frames.push(seconds);
     if (this.#time < AUTO_GUARD.warmUp + AUTO_GUARD.measure) return false;
-    this.#done = true;
-    return guardDecision(this.#frames, refreshHz).step;
+    const step = guardDecision(this.#frames, refreshHz, capHz).step;
+    if (step || !this.#rolling) this.#done = true;
+    else [this.#time, this.#frames] = [AUTO_GUARD.warmUp, []];
+    return step;
   }
 
   get done(): boolean {

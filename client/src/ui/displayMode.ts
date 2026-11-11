@@ -4,7 +4,8 @@
 // locking the keyboard where it can (Chromium's Keyboard Lock) for the keys needed alone (lockedKeys: Escape, Ctrl+W and
 // the like reach the game, so a held Ctrl or Alt bind's chords are the game's alone, RV-1091; never Tab nor the system
 // key, Alt+Tab and the Windows key the system's, RV-1112); a long Escape leaves full screen, and the page doesn't pull the
-// player back until it's chosen again. Windowed leaves full screen. Nothing where the browser has no full screen (an
+// player back until it's chosen again (a touch device's is: left by an edge swipe or the back gesture, full screen comes
+// back at the next tap, notes/mobile.md). Windowed leaves full screen. Nothing where the browser has no full screen (an
 // iPhone's Safari: RV-1113).
 interface KeyboardLock {
   readonly lock?: (codes?: string[]) => Promise<void>;
@@ -25,6 +26,9 @@ export interface DisplayModeDeps {
   readonly doc?: FullscreenDocument;
   readonly target?: Pick<Window, "addEventListener">;
   readonly keyboard?: () => KeyboardLock | undefined;
+  /** Full screen asked again at the next press once the player has left it (a touch device's: its edge swipe leaves it
+   *  unasked, and it has no other way back; a desktop's Escape is respected) */
+  readonly returns?: () => boolean;
 }
 
 const pageKeyboard = (): KeyboardLock | undefined => (navigator as { readonly keyboard?: KeyboardLock }).keyboard;
@@ -43,6 +47,7 @@ export class DisplayMode {
   readonly #keys: () => string[];
   readonly #doc: FullscreenDocument;
   readonly #keyboard: () => KeyboardLock | undefined;
+  readonly #returns: () => boolean;
   #fullscreen = false;
   /** This page has asked for full screen since Fullscreen was chosen (or the page loaded) */
   #asked = false;
@@ -51,6 +56,7 @@ export class DisplayMode {
     this.#keys = deps.keys;
     this.#doc = deps.doc ?? document;
     this.#keyboard = deps.keyboard ?? pageKeyboard;
+    this.#returns = deps.returns ?? (() => false);
     const target = deps.target ?? window;
     // (any press: a click, a key, a pad's button reaches the page as neither; a finger's lift too: a touch's user
     // activation comes as it ends, not as it lands, notes/mobile.md)
@@ -65,6 +71,7 @@ export class DisplayMode {
     }
     this.#doc.addEventListener("fullscreenchange", () => {
       if (this.#doc.fullscreenElement !== null) this.#lock();
+      else if (this.#returns()) this.#asked = false;
     });
   }
 

@@ -103,6 +103,8 @@ export function fitStage(el: HTMLElement, last: { key: string }): ContentStage {
     el.style.width = `${String(stage.width)}px`;
     el.style.height = `${String(stage.height)}px`;
     el.style.transform = stageTransform(stage);
+    // (its scale for the stylesheet: a touch device's targets 44 px on the screen, not on the stage: RV-1239)
+    el.style.setProperty("--stage-scale", String(stage.scale));
   }
   return stage;
 }

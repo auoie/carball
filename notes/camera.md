@@ -63,7 +63,16 @@ Demolished camera: InitialFOV 120, FOVBlendTime 1.0, MaxZoomInFOV 15, MaxFOVBlen
   D-pad down/up ball helpers. The base preset puts gamepad air roll on the left trigger; "Legacy" puts it on X.
 
 ## Algorithm (decompiled)
-Each frame, per rendered frame with the frame's DeltaTime (`Config.bFramerateIndependentInterp = True`):
+Each frame, per rendered frame with the frame's DeltaTime (`Config.bFramerateIndependentInterp = True`).
+
+**Ours steps it on the physics ticks instead** (`client/src/camera/tickedCamera.ts`, 2026-11-10): once a tick with
+that tick's car and ball, drawn between its last two views at the frame's alpha as the car is; a cut (rear view, a new
+car) drawn at once. The formulas are the game's, run at a steady 120 Hz. Stepped once a frame, the smoothing's lag
+behind a turning car changes with each frame's length (about the turn rate times the frame), so uneven frames (a
+phone's dropped ones, Firefox's timer, a hitch) wobbled the car on screen in a steady turn: up to 0.76° at 60 Hz with 15 %
+of frames dropped, a 1.1° jump on one 66 ms hitch; on ticks, none (the user's report, phone and Firefox). The mouse's
+free look (its counts, not a rate) is a frame's counts shared over its ticks. Its lag in a full-lock turn is the game's
+at 120 fps (3.7°; 3.2° at 60, 3.8° at 144).
 
 **Camera_X.UpdateCamera**: the active state updates a persistent orientation `POV {Focus, Rotation, Distance,
 FOV, CalculatedLocation}`. Then `FinalizeOrientation`: normalize the rotation, set

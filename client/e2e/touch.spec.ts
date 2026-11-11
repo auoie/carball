@@ -87,6 +87,9 @@ test.describe("a phone in landscape", () => {
     await fingers(cdp, "touchStart", [{ id: 3, ...jump }]);
     await fingers(cdp, "touchEnd", []);
     await expect.poll(async () => (await car(page)).onGround, { timeout: 2000 }).toBe(false);
+    // (in the air Slide says what it does there; back on the ground, Slide again)
+    await expect(page.locator(".touch-slide")).toHaveText("Air Roll");
+    await expect(page.locator(".touch-slide")).toHaveText("Slide", { timeout: 5000 });
   });
 
   test("a training pack's controls: its Prev, Reset and Next", async ({ page }) => {
@@ -382,6 +385,8 @@ test.describe("the Touch settings on a phone", () => {
     await page.getByRole("button", { name: "Edit Button Layout" }).tap();
     const touch = page.locator("#touch");
     await expect(touch).toHaveClass(/touch-editing/);
+    // (its own screen: the settings out of sight under it, RV-1234)
+    await expect(page.locator("#settings")).toBeHidden();
     const cdp = await page.context().newCDPSession(page);
     const jump = await centre(page, ".touch-jump");
     await fingers(cdp, "touchStart", [{ id: 1, ...jump }]);
@@ -394,6 +399,8 @@ test.describe("the Touch settings on a phone", () => {
     await page.getByRole("button", { name: "Hide" }).tap();
     await page.getByRole("button", { name: "Done" }).tap();
     await expect(touch).not.toHaveClass(/touch-editing/);
+    // (the settings back as they were: their Touch tab)
+    await expect(page.getByRole("button", { name: "Edit Button Layout" })).toBeVisible();
     // (a reload: the layout as left)
     await freePlayByTouch(page);
     const moved = await centre(page, ".touch-jump");
@@ -407,5 +414,49 @@ test.describe("the Touch settings on a phone", () => {
     await page.locator("#settings .settings-tab", { hasText: "Touch" }).tap();
     await page.getByRole("button", { name: "Reset Button Layout" }).tap();
     expect(await page.evaluate(() => localStorage.getItem("carball.touchLayout"))).toBeNull();
+  });
+
+  test("the fixed stick dragged in the editor stays in the left half, where a thumb takes it (RV-1233)", async ({ page }) => {
+    await touchSettings(page, { fixedStick: true });
+    await menuPage(page);
+    await page
+      .locator("#main-menu")
+      .getByRole("button", { name: /^settings$/i })
+      .tap();
+    await page.locator("#settings .settings-tab", { hasText: "Touch" }).tap();
+    await page.getByRole("button", { name: "Edit Button Layout" }).tap();
+    const cdp = await page.context().newCDPSession(page);
+    await fingers(cdp, "touchStart", [{ id: 1, ...(await centre(page, ".touch-stick-base")) }]);
+    await fingers(cdp, "touchMove", [{ id: 1, x: 760, y: 200 }]);
+    await fingers(cdp, "touchEnd", []);
+    const base = await page.locator(".touch-stick-base").boundingBox();
+    if (!base) throw new Error("the stick isn't shown");
+    expect(base.x + base.width).toBeLessThanOrEqual(844 / 2 + 1);
+  });
+
+  test("Auto drive in training: a shot waits in its Countdown till a touch; Next's shot waits again (RV-1232)", async ({ page }) => {
+    await touchSettings(page, { throttle: "auto" });
+    await menuPage(page);
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^play$/i }).tap({ timeout: 30_000 });
+    await menu.getByRole("button", { name: /^custom training$/i }).tap();
+    await menu.locator(".main-menu-training-tabs").getByRole("tab", { name: "Starter Packs" }).tap();
+    await menu.locator('[data-training-panel="starter"] .main-menu-pack', { hasText: "First Touches" }).tap();
+    await expect(menu).toBeHidden();
+    const shot = (): Promise<string | undefined> =>
+      page.evaluate(() => (window as unknown as { carballFreeplay: { training: () => { state: string } | null } }).carballFreeplay.training()?.state);
+    await expect.poll(shot).toBe("countdown");
+    await page.waitForTimeout(1500);
+    expect(await shot(), "no touch yet").toBe("countdown");
+    // (the stick touched where it lands, untilted: Auto drive drives, which starts the shot)
+    const cdp = await page.context().newCDPSession(page);
+    await fingers(cdp, "touchStart", [{ id: 1, x: 200, y: 250 }]);
+    await fingers(cdp, "touchEnd", []);
+    await expect.poll(shot).toBe("active");
+    // (Next: its shot in its Countdown, waiting again; the tap itself no start)
+    await page.locator("#touch").getByRole("button", { name: "Next" }).tap();
+    await expect.poll(shot).toBe("countdown");
+    await page.waitForTimeout(1500);
+    expect(await shot(), "Next's shot").toBe("countdown");
   });
 });

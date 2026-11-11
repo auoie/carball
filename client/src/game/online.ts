@@ -8,6 +8,7 @@
 import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/carballCamera";
+import { TickedCamera } from "../camera/tickedCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add } from "../math/vec";
 import { type NetGraphFeed, rawRoundTrip } from "../net/netStats";
@@ -55,7 +56,7 @@ import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
 import { SendClock, cameraInputs, newCar, updateSwitches } from "./cameraInput";
-import type { FreeLookControls } from "../camera/carballCamera";
+import type { CameraControls, FreeLookControls, RespawnState } from "../camera/carballCamera";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
@@ -178,6 +179,8 @@ export class Online {
   readonly #predictor: Predictor;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
+  /** The camera stepped on the ticks, drawn between its last two views (camera/tickedCamera.ts) */
+  readonly #view = new TickedCamera(this.#camera);
   readonly #cars = new Map<number, CarEntry>();
   readonly #ballView = new BallView();
   /** The ball arrow by the player's car (HUD-17) */
@@ -407,6 +410,12 @@ export class Online {
     return { car: this.#cars.get(this.#localCar)?.state.current.vel ?? null, ball: this.#ball.current.vel };
   }
 
+  /** This player's car off the ground (the touch controls' Slide reads Air Roll then) */
+  airborne(): boolean {
+    const car = this.#cars.get(this.#localCar)?.state.current;
+    return car !== undefined && !car.onGround && !car.demoed;
+  }
+
   get stats(): OnlineStats {
     return {
       ping: this.#session.ping,
@@ -510,6 +519,9 @@ export class Online {
         this.#minDilation = Math.min(this.#minDilation, postGoalDilation(n));
       }
     }
+    // (a tick's real time: the swivel's, stretched in a goal's slow motion)
+    const realTick = world > 0 ? (TICK_SECONDS * real) / world : TICK_SECONDS;
+    this.#view.frame(ticks, this.#freeLook);
     for (let i = 0; i < ticks; i++) {
       // (after the match the server freezes every car, and in the goal replay the cars are gone: send it nothing then,
       // so the prediction agrees)
@@ -521,6 +533,13 @@ export class Online {
       this.#world.takeEvents(); // goals come from the server
       this.#pushStates();
       this.#trackFlip();
+      // (the player's camera stepped with this tick's car; not under a goal replay, which has its own)
+      const mine = this.#cars.get(this.#localCar);
+      if (mine && !this.#replay) {
+        this.#newCarCamera(mine);
+        const at = this.#cameraInput(mine, mine.state.current, this.#ball.current.pos);
+        this.#view.tick(at.car, at.ball, at.controls, at.respawn, realTick);
+      }
     }
     // Input packets at 60 Hz of real time, once a frame (slowed ticks after a goal don't stretch them: RV-4)
     // (DeltaSeconds / TimeDilation: the world time undilated, RV-22)
@@ -935,6 +954,39 @@ export class Online {
 
   /** `frameSeconds`: the frame's world time (slowed after a goal); `simulated`: seconds of physics run this frame;
    *  `realSeconds`: real time since the last frame. */
+  /** A kickoff's new car (the game destroys the cars and spawns new ones): the camera starts over behind it (GS-16); a
+   *  respawn after a demolition blends as usual */
+  #newCarCamera(local: CarEntry): void {
+    const spawns = local.state.current.spawnCount;
+    if (spawns === this.#localSpawns) return;
+    this.#localSpawns = spawns;
+    if (this.#world.kickoffCountdown() > 0) this.#view.reset();
+    this.#rear = newCar({ ballCam: this.#ballCam, rear: this.#rear }).rear;
+  }
+
+  /** What the camera follows: the car as drawn (`car`, the prediction's: its smoothed correction's offset and turn on it)
+   *  and the ball (`ball`, its correction's offset on it); demolished, the respawn cameras follow the spot picked
+   *  (respawns wait after a goal: CAM-29) */
+  #cameraInput(local: CarEntry, car: CarState, ball: Vec3): { car: CarState; ball: Vec3; controls: CameraControls; respawn: RespawnState | null } {
+    const e = local.error.rotation;
+    const rot = { forward: rotateRl(car.rot.forward, e), right: rotateRl(car.rot.right, e), up: rotateRl(car.rot.up, e) };
+    const demoed = this.#drawnDemoed(this.#localCar, local.state.current);
+    const { spawnSelection: pick, team } = local.state.current;
+    const phase = this.#match?.phase;
+    const respawn = demoed
+      ? {
+          held: phase === "postGoal" || phase === "replay",
+          selected: pick.side === null ? null : (this.#world.respawnSpots(team, pick.side)[pick.index] ?? null),
+        }
+      : null;
+    return {
+      car: { ...car, pos: add(car.pos, local.error.location), rot, demoed },
+      ball: add(ball, this.#ballError.location),
+      controls: { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook },
+      respawn,
+    };
+  }
+
   #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
     const alpha = this.#clock.alpha;
     let localDrawn: Vec3 | null = null;
@@ -996,34 +1048,13 @@ export class Online {
     this.#padsView.update(pads, frameSeconds);
 
     const local = this.#cars.get(this.#localCar);
-    // A kickoff's new car (the game destroys the cars and spawns new ones): the camera starts over behind it (GS-16);
-    // a respawn after a demolition blends as usual
-    const spawns = local?.state.current.spawnCount;
-    if (spawns !== undefined && spawns !== this.#localSpawns) {
-      this.#localSpawns = spawns;
-      if (this.#world.kickoffCountdown() > 0) this.#camera.reset();
-      this.#rear = newCar({ ballCam: this.#ballCam, rear: this.#rear }).rear;
-    }
+    if (local) this.#newCarCamera(local);
     let view: CameraView | null = null;
     if (local) {
-      // The camera follows the drawn (smoothed) car and ball, its rotation too
-      const car = local.state.blended(alpha);
-      const e = local.error.rotation;
-      const rot = { forward: rotateRl(car.rot.forward, e), right: rotateRl(car.rot.right, e), up: rotateRl(car.rot.up, e) };
-      const demoed = this.#drawnDemoed(this.#localCar, local.state.current);
-      const drawnCar = { ...car, pos: add(car.pos, local.error.location), rot, demoed };
-      const drawnBall = add(this.#ball.blended(alpha).pos, this.#ballError.location);
-      // Demolished: the respawn cameras follow the spot picked (respawns wait after a goal: CAM-29)
-      const { spawnSelection: pick, team } = local.state.current;
-      const phase = this.#match?.phase;
-      const respawn = demoed
-        ? {
-            held: phase === "postGoal" || phase === "replay",
-            selected: pick.side === null ? null : (this.#world.respawnSpots(team, pick.side)[pick.index] ?? null),
-          }
-        : null;
-      const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
-      const carView = this.#camera.update(frameSeconds, drawnCar, drawnBall, controls, respawn, realSeconds);
+      // The camera follows the drawn (smoothed) car and ball, its rotation too: stepped on the ticks, drawn between its
+      // last two views (camera/tickedCamera.ts)
+      const at = this.#cameraInput(local, local.state.blended(alpha), this.#ball.blended(alpha).pos);
+      const carView = this.#view.view(alpha, at.car, at.ball, at.controls, at.respawn);
       if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
       view = this.#matchView(carView);
       this.#listener = view;

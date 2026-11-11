@@ -4,6 +4,7 @@ import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/carballCamera";
+import { TickedCamera } from "../camera/tickedCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type Team, type World } from "../engine/world";
 import { DEFAULT_CAR, carChoice } from "./cars";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
@@ -38,7 +39,7 @@ import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
 import { cameraInputs, newCar, updateSwitches } from "./cameraInput";
-import type { FreeLookControls } from "../camera/carballCamera";
+import type { CameraControls, FreeLookControls } from "../camera/carballCamera";
 import type { ReplayPlan } from "../net/protocol";
 import { Fade } from "../render/fade";
 import { LOAD_FADE_IN } from "./matchSequence";
@@ -108,6 +109,8 @@ export class Freeplay {
   #playerId: number;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
+  /** The camera stepped on the ticks, drawn between its last two views (camera/tickedCamera.ts) */
+  readonly #view = new TickedCamera(this.#camera);
   #carView: CarView;
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers();
@@ -254,6 +257,12 @@ export class Freeplay {
     return { car: this.#car.current.vel, ball: this.#ball.current.vel };
   }
 
+  /** The player's car off the ground (the touch controls' Slide reads Air Roll then) */
+  airborne(): boolean {
+    const car = this.#car.current;
+    return !car.onGround && !car.demoed;
+  }
+
   frame(rawSeconds: number): void {
     this.#applyBoostSetting();
     let replay = this.#replay;
@@ -379,6 +388,11 @@ export class Freeplay {
     const inputActive = controls.throttle !== 0 || controls.steer !== 0 || controls.jump || controls.boost;
     const wantsStart = this.#training?.state === "countdown" && inputActive;
     const ticks = this.#clock.advance(world);
+    // (the player's camera stepped each tick, unless the garage's or the editor's is the one drawn; a tick's real time
+    // the swivel's, stretched in a goal's slow motion)
+    const ownCamera = this.#garageCamera === null && !(this.#editing && this.editorCamera);
+    const realTick = world > 0 ? (TICK_SECONDS * real) / world : TICK_SECONDS;
+    if (ownCamera) this.#view.frame(ticks, this.#freeLook);
     for (let i = 0; i < ticks; i++) {
       const held = this.#world.kickoffCountdown() > 0;
       this.#world.setControls(this.#playerId, { ...controls, jump: this.#jump.tick(controls.jump) });
@@ -392,6 +406,7 @@ export class Freeplay {
       this.#pushBall();
       this.#trackFlip();
       this.#handleEvents();
+      if (ownCamera) this.#view.tick(this.#car.current, this.#ball.current.pos, this.#cameraControls(), null, realTick);
     }
 
     this.#draw(world, ticks * TICK_SECONDS, real);
@@ -1043,7 +1058,11 @@ export class Freeplay {
     this.#car.push(this.#world.car(this.#playerId));
     this.#pushBall();
     this.#pushBall();
-    this.#camera.reset();
+    this.#view.reset();
+  }
+
+  #cameraControls(): CameraControls {
+    return { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
   }
 
   /** `frameSeconds`: the frame's world time (slowed after a goal); `simulated`: seconds of physics run this frame;
@@ -1093,12 +1112,11 @@ export class Freeplay {
     const pads = this.#world.boostPads();
     this.#padsView.update(pads, frameSeconds);
 
-    const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
     const view =
       this.#garageCamera ??
       (this.#editing && this.editorCamera
         ? this.editorCamera
-        : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds));
+        : this.#view.view(alpha, this.#car.blended(alpha), this.#ball.blended(alpha).pos, this.#cameraControls(), null));
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     // The sounds before the render: started as soon as the frame knows them, not after drawing it (its sounds kept for a
     // goal replay to hear again: RA1 §1)

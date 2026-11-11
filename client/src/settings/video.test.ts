@@ -150,6 +150,42 @@ describe("the automatic default", () => {
     expect(stepped).toBe(true);
   });
 
+  it("a touch device's Frame Rate: frames at its cap aren't slow, slower ones are; a 120 Hz screen's measured refresh no matter", () => {
+    const at30 = Array.from({ length: 120 }, (_, i) => (i % 2 ? 1 / 30 + 0.002 : 1 / 30 - 0.002));
+    expect(guardDecision(at30, 120, 30)).toMatchObject({ slow: false, step: false });
+    expect(guardDecision(at30, 120)).toMatchObject({ slow: true, step: true });
+    expect(
+      guardDecision(
+        Array.from({ length: 120 }, () => 1 / 24),
+        120,
+        30,
+      ),
+    ).toMatchObject({ slow: true, step: true });
+    expect(
+      guardDecision(
+        Array.from({ length: 120 }, () => 1 / 60),
+        120,
+        60,
+      ),
+    ).toMatchObject({ slow: false });
+  });
+
+  it("rolling (a touch device's): a window that wasn't slow is followed by another; a phone slowing as it heats steps then, once", () => {
+    const guard = new AutoVideoGuard({ rolling: true });
+    const decisions: boolean[] = [];
+    // (a minute at 60, then slowed to 35 by heat)
+    for (let t = 0; t < 60; t += 1 / 60) decisions.push(guard.frame(1 / 60, true, 120, 60));
+    expect(decisions.some(Boolean)).toBe(false);
+    expect(guard.done).toBe(false);
+    for (let t = 0; t < AUTO_GUARD.measure * 2 + 0.1; t += 1 / 35) decisions.push(guard.frame(1 / 35, true, 120, 60));
+    expect(decisions.filter(Boolean)).toEqual([true]);
+    expect(guard.done).toBe(true);
+    // (not rolling, a desktop's: one window, then done)
+    const once = new AutoVideoGuard();
+    for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 0.1; t += 1 / 60) once.frame(1 / 60);
+    expect(once.done).toBe(true);
+  });
+
   it("hitches: a few long frames trimmed, none 0.25 s or longer counted", () => {
     const jitter = (i: number): number => (1 / 60) * (i % 2 === 0 ? 0.9 : 1.1);
     const frames = Array.from({ length: 240 }, (_, i) => (i % 40 === 0 ? 0.2 : jitter(i)));

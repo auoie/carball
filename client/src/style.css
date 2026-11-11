@@ -379,6 +379,13 @@ textarea {
   display: none;
 }
 
+/* (in touch play on the left under the top row: the right is the boost ring's and the buttons'; touches pass through) */
+body.touch-play .stat-graphs {
+  top: calc(env(safe-area-inset-top, 0px) + 60px);
+  right: auto;
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
+}
+
 /* (the old readouts: replaced by the Stat Graphs (HUD-21), a clean screen as the game's; kept unseen for the browser
    tests that read them) */
 #info {
@@ -4631,7 +4638,8 @@ body.pad-mode .settings-tab-glyph {
    outlined; its bar top centre */
 #touch.touch-editing {
   z-index: 30;
-  background: rgba(4, 8, 16, 0.85);
+  /* (its own screen: nothing of the menus under it shows through, RV-1234) */
+  background: #0b111c;
 }
 
 .touch-editing .touch-button[data-layout-hidden] {
@@ -4736,6 +4744,16 @@ body.touch-play #ballcam-toggle {
 
 .touch-device .editor-button {
   min-height: 40px;
+}
+
+/* (the end screen's and the questions' buttons: 44 px on the screen, the HUD's stage scaling them down, ~0.54 on a phone:
+   RV-1239) */
+.touch-device .end-button,
+.touch-device .end-question button,
+.touch-device .pause-question button,
+.touch-device .players-action {
+  min-width: calc(44px / var(--stage-scale, 1));
+  min-height: calc(44px / var(--stage-scale, 1));
 }
 
 /* (the settings' tabs one row a finger scrolls sideways: a phone's height kept for the page) */

@@ -11,7 +11,8 @@ export default defineConfig({
     baseURL: "http://localhost:4173",
     channel: "chrome",
     viewport: { width: 1280, height: 720 },
-    launchOptions: { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] },
+    // (muted: the game's sounds never reach the machine's speakers; its audio still runs, the tests reading it)
+    launchOptions: { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--mute-audio"] },
   },
   projects: [
     { name: "local", testIgnore: "services/**" },

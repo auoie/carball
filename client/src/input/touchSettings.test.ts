@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS, type Action } from "./bindings";
 import { withTouchStick } from "./devices";
 import { readControls } from "./mapping";
-import { EMPTY_LAYOUT, TOUCH_DEFAULTS, loadLayout, readLayout, readTouch, saveLayout, shapeStick } from "./touchSettings";
+import { EMPTY_LAYOUT, STICK_X_MAX, TOUCH_DEFAULTS, frameDue, loadLayout, readLayout, readTouch, saveLayout, shapeStick } from "./touchSettings";
 
 describe("the touch settings", () => {
   it("read within their ranges; anything else its default", () => {
@@ -16,8 +16,32 @@ describe("the touch settings", () => {
       stickSize: 1.5,
       sensitivity: 0.5,
       deadzone: 0.2,
+      frameRate: 60,
     });
-    expect(readTouch({ throttle: "turbo", fixedStick: "yes", stickSize: Number.NaN })).toEqual(TOUCH_DEFAULTS);
+    expect(readTouch({ throttle: "turbo", fixedStick: "yes", stickSize: Number.NaN, frameRate: 45 })).toEqual(TOUCH_DEFAULTS);
+    expect(readTouch({ frameRate: 0 }).frameRate).toBe(0);
+    expect(TOUCH_DEFAULTS.frameRate).toBe(60);
+  });
+
+  it("the Frame Rate: a 120 Hz screen's every other frame at 60, every fourth at 30; a 60 Hz screen's each at 60; uncapped every one", () => {
+    const drawnAt = (screenHz: number, cap: number, seconds = 2): number => {
+      let drawn = 0;
+      let count = 0;
+      for (let i = 1; i <= screenHz * seconds; i++) {
+        // (the browser's frame times jitter a little)
+        const now = (i * 1000) / screenHz + (i % 3) * 0.3;
+        const at = frameDue(now, drawn, cap);
+        drawn = at.drawn;
+        if (at.due) count++;
+      }
+      return count / seconds;
+    };
+    expect(drawnAt(120, 60)).toBeCloseTo(60, -0.5);
+    expect(drawnAt(120, 30)).toBeCloseTo(30, -0.5);
+    expect(drawnAt(60, 60)).toBeCloseTo(60, -0.5);
+    expect(drawnAt(120, 0)).toBe(120);
+    // (a long stall: drawn at once, the cadence from then)
+    expect(frameDue(5000, 0, 60)).toEqual({ due: true, drawn: 5000 });
   });
 
   it("shape the stick: nothing inside its deadzone, rescaled past it, full tilt sooner with more sensitivity; its direction kept", () => {
@@ -59,7 +83,21 @@ describe("the buttons' layout", () => {
       }),
     ).toEqual({ buttons: { jump: { x: 1, y: 0, scale: 1.6, opacity: 0.2, hidden: false }, hover: { scale: 1.1, opacity: 1, hidden: false } } });
     expect(readLayout("nonsense")).toEqual(EMPTY_LAYOUT);
+    expect(readLayout({ buttons: { jump: [1, 2] } }).buttons["jump"]).toEqual({ scale: 1, opacity: 1, hidden: false });
     expect(loadLayout({ getItem: () => "{not json", setItem: () => undefined, removeItem: () => undefined })).toEqual(EMPTY_LAYOUT);
+  });
+
+  it("keeps a later page's fields of a button when this page saves it (an older tab, a rollback: RV-1236)", () => {
+    const s = store();
+    s.data.set("carball.touchLayout", JSON.stringify({ version: 2, buttons: { jump: { x: 0.8, y: 0.7, scale: 1, opacity: 1, hidden: false, tint: 3 } } }));
+    const layout = loadLayout(s);
+    saveLayout({ buttons: { jump: { ...(layout.buttons["jump"] ?? { scale: 1, opacity: 1, hidden: false }), scale: 1.2 } } }, s);
+    expect(JSON.parse(s.data.get("carball.touchLayout") ?? "{}")).toMatchObject({ buttons: { jump: { scale: 1.2, tint: 3 } } });
+  });
+
+  it("keeps the fixed stick in the left half, where a thumb takes it (RV-1233)", () => {
+    expect(readLayout({ buttons: {}, stick: { x: 0.8, y: 0.6 } }).stick).toEqual({ x: STICK_X_MAX, y: 0.6 });
+    expect(readLayout({ buttons: {}, stick: { x: 0.2, y: 0.6 } }).stick).toEqual({ x: 0.2, y: 0.6 });
   });
 });
 
